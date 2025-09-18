@@ -87,6 +87,9 @@ async def transcribe_audio(
             },
         )
     
+    # Log file details for debugging
+    logger.info(f"Processing audio file: {audio_file.filename}, size: {audio_file.size}, content_type: {audio_file.content_type}")
+    
     temp_file_path = None
     
     try:
@@ -114,8 +117,22 @@ async def transcribe_audio(
         # Decode opaque patient id from client
         try:
             internal_patient_id = decode_patient_id(patient_id)
-        except Exception:
-            internal_patient_id = patient_id  # fallback if already internal
+            logger.info(f"Successfully decoded patient_id: {internal_patient_id}")
+        except Exception as e:
+            logger.warning(f"Failed to decode patient_id '{patient_id}': {e}")
+            # If decryption fails, try to use the raw patient_id if it's in the correct format
+            if '_' in patient_id and patient_id.count('_') >= 1:
+                internal_patient_id = patient_id
+                logger.info(f"Using raw patient_id as fallback: {internal_patient_id}")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "INVALID_PATIENT_ID",
+                        "message": "Invalid patient ID format",
+                        "details": {"patient_id": patient_id},
+                    },
+                )
 
         # Create request
         request = AudioTranscriptionRequest(
@@ -125,10 +142,21 @@ async def transcribe_audio(
         )
         
         # Execute use case
-        use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
-        result = await use_case.execute(request)
-        
-        return result
+        try:
+            use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
+            result = await use_case.execute(request)
+            logger.info(f"Transcription completed successfully for patient {internal_patient_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Transcription use case failed: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "TRANSCRIPTION_FAILED",
+                    "message": f"Transcription failed: {str(e)}",
+                    "details": {},
+                },
+            )
         
     except ValueError as e:
         raise HTTPException(
