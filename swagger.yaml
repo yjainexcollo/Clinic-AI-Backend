@@ -1,0 +1,1757 @@
+openapi: 3.0.3
+info:
+  title: Clinic-AI Intake Assistant API
+  description: |
+    AI-powered clinical intake system for small and mid-sized clinics.
+
+    This API provides endpoints for patient registration, intake management,
+    audio transcription, and SOAP note generation.
+
+    ## Features
+    ### Step-01: Patient Registration & Intake
+    - Patient registration with automatic ID generation
+    - AI-powered adaptive questioning based on primary symptom
+    - Intake session management with question tracking
+    - Supports any symptom/complaint (free-text)
+    - Maximum 8 questions per intake with early stopping capability (minimum ~3)
+
+    ### Step-02: Pre-Visit Summary
+    - AI-generated clinical summaries from intake data
+    - SOAP-compatible structured output
+    - EHR-ready format for doctor review
+
+    ### Step-03: Audio Transcription & SOAP Generation
+    - Audio file upload and transcription using Whisper AI
+    - Support for multiple audio formats (MP3, WAV, M4A, FLAC, OGG, MPEG)
+    - Real-time SOAP note generation from consultation transcripts
+    - Structured medical documentation with highlights and red flags
+    - Visit status management and workflow integration
+
+    ## Authentication
+    Currently no authentication is required for development.
+
+    ## Rate Limiting
+    No rate limiting is currently implemented.
+  version: 0.1.0
+  contact:
+    name: Clinic-AI Support
+    email: support@clinicai.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.clinicai.com
+    description: Production server
+
+tags:
+  - name: health
+    description: Health check endpoints
+  - name: patients
+    description: Patient management and intake endpoints
+  - name: notes
+    description: Audio transcription and SOAP note generation endpoints
+
+paths:
+  /:
+    get:
+      tags:
+        - health
+      summary: Root endpoint
+      description: Get API information and available endpoints
+      operationId: get_root
+      responses:
+        "200":
+          description: API information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service:
+                    type: string
+                    example: "Clinic-AI Intake Assistant"
+                  version:
+                    type: string
+                    example: "0.1.0"
+                  environment:
+                    type: string
+                    example: "development"
+                  status:
+                    type: string
+                    example: "running"
+                  docs:
+                    type: string
+                    example: "/docs"
+                  endpoints:
+                    type: object
+                    properties:
+                      health:
+                        type: string
+                        example: "/health"
+                      register_patient:
+                        type: string
+                        example: "POST /patients/"
+                      answer_intake:
+                        type: string
+                        example: "POST /patients/consultations/answer"
+                      edit_answer:
+                        type: string
+                        example: "PATCH /patients/consultations/answer"
+                      pre_visit_summary:
+                        type: string
+                        example: "POST /patients/summary/previsit"
+                      get_summary:
+                        type: string
+                        example: "GET /patients/{patient_id}/visits/{visit_id}/summary"
+                      # Step-03 endpoints
+                      transcribe_audio:
+                        type: string
+                        example: "POST /notes/transcribe"
+                      generate_soap:
+                        type: string
+                        example: "POST /notes/soap/generate"
+                      get_transcript:
+                        type: string
+                        example: "GET /notes/{patient_id}/visits/{visit_id}/transcript"
+                      get_soap:
+                        type: string
+                        example: "GET /notes/{patient_id}/visits/{visit_id}/soap"
+
+  /health/:
+    get:
+      tags:
+        - health
+      summary: Health check
+      description: Check if the service is healthy and running
+      operationId: health_check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "healthy"
+                timestamp: "2025-01-03T12:00:00Z"
+                version: "0.1.0"
+                service: "Clinic-AI Intake Assistant"
+
+  /health/ready:
+    get:
+      tags:
+        - health
+      summary: Readiness check
+      description: Check if the service is ready to handle requests
+      operationId: readiness_check
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ready"
+                  timestamp:
+                    type: string
+                    format: date-time
+                  checks:
+                    type: object
+                    properties:
+                      database:
+                        type: string
+                        example: "ok"
+                      openai:
+                        type: string
+                        example: "ok"
+                      memory:
+                        type: string
+                        example: "ok"
+
+  /health/live:
+    get:
+      tags:
+        - health
+      summary: Liveness check
+      description: Check if the service is alive
+      operationId: liveness_check
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "alive"
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /patients/:
+    post:
+      tags:
+        - patients
+      summary: Register a new patient
+      description: |
+        Register a new patient and start an intake session.
+
+        This endpoint:
+        1. Validates patient data (name, mobile, age, gender, consent)
+        2. Generates a patient ID in format: {NAME}_{MOBILE}
+        3. If the same name and mobile already exist, a new visit is created for that patient
+        4. Generates the first AI-powered question based on the primary symptom
+        5. Returns patient_id, visit_id, and the first question
+      operationId: register_patient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterPatientRequest"
+            examples:
+              hypertension_patient:
+                summary: Hypertension Patient
+                value:
+                  name: "John Doe"
+                  mobile: "9123456789"
+                  age: 35
+                  gender: "male"
+                  recently_travelled: false
+              diabetes_patient:
+                summary: Diabetes Patient
+                value:
+                  name: "Jane Smith"
+                  mobile: "9876543210"
+                  age: 45
+                  gender: "female"
+                  recently_travelled: true
+                  consent: true
+              chest_pain_patient:
+                summary: Chest Pain Patient
+                value:
+                  name: "Bob Johnson"
+                  mobile: "5551234567"
+                  age: 60
+                  gender: "male"
+                  recently_travelled: false
+      responses:
+        "201":
+          description: Patient registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterPatientResponse"
+              examples:
+                success_response:
+                  summary: Successful Registration
+                  value:
+                    patient_id: "OPAQUE_TOKEN"
+                    visit_id: "CONSULT-20250103-001"
+                    first_question: "What specific symptoms are you experiencing with your hypertension?"
+                    message: "Patient registered successfully. Intake session started."
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation_error:
+                  summary: Validation Error
+                  value:
+                    error: "VALIDATION_ERROR"
+                    message: "Name cannot be empty"
+                    details: {}
+
+        "422":
+          description: Invalid symptom
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_symptom:
+                  summary: Invalid Symptom
+                  value:
+                    error: "INVALID_SYMPTOM"
+                    message: "Invalid symptom: InvalidSymptom"
+                    details:
+                      symptom: "InvalidSymptom"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /patients/consultations/answer:
+    post:
+      tags:
+        - patients
+      summary: Answer an intake question
+      description: |
+        Answer an intake question and get the next question or completion status.
+
+        This endpoint:
+        1. Validates the answer and finds the patient/visit
+        2. Adds the answer to the intake session
+        3. Uses AI to determine if sufficient information has been collected
+        4. Generates the next adaptive question or completes the intake
+        5. Returns the next question or completion status
+
+        ## Question Flow
+        - Maximum 8 questions per intake session
+        - AI can stop early if sufficient information is collected
+        - No duplicate questions are asked
+        - Questions are adaptive based on previous answers
+        - If a question about current medicines/treatments is asked, clients should show a camera/file picker when the question ends with: "[You can upload a clear photo of the medication/ prescription label.]". Voice input (speech-to-text) may be used client-side and submitted as text.
+      operationId: answer_intake_question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerIntakeRequest"
+            examples:
+              json_example:
+                summary: JSON body example
+                value:
+                  patient_id: "OPAQUE_TOKEN"
+                  visit_id: "CONSULT-20250103-001"
+                  answer: "I have been experiencing high blood pressure for 3 months"
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - patient_id
+                - visit_id
+                - answer
+              properties:
+                patient_id:
+                  type: string
+                  description: Opaque Patient ID from registration
+                  example: "OPAQUE_TOKEN"
+                visit_id:
+                  type: string
+                  pattern: '^CONSULT-\\d{8}-\\d{3}$'
+                  description: Visit ID from registration
+                  example: "CONSULT-20250103-001"
+                answer:
+                  type: string
+                  description: Answer text
+                medication_images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: Medication or prescription photos (optional)
+            encoding:
+              medication_images:
+                style: form
+                explode: true
+                contentType: image/*
+            examples:
+              first_answer:
+                summary: First Answer
+                value:
+                  patient_id: "OPAQUE_TOKEN"
+                  visit_id: "CONSULT-20250103-001"
+                  answer: "I have been experiencing high blood pressure for 3 months"
+              follow_up_answer:
+                summary: Follow-up Answer
+                value:
+                  patient_id: "OPAQUE_TOKEN"
+                  visit_id: "CONSULT-20250103-001"
+                  answer: "The headaches are severe, about 8 out of 10 on the pain scale"
+      responses:
+        "200":
+          description: Answer processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnswerIntakeResponse"
+              examples:
+                next_question:
+                  summary: Next Question Available
+                  value:
+                    next_question: "How long have you been experiencing these symptoms?"
+                    is_complete: false
+                    question_count: 1
+                    max_questions: 8
+                    completion_percent: 25
+                    allows_image_upload: false
+                    message: "Question 2 of 8"
+                intake_complete:
+                  summary: Intake Completed
+                  value:
+                    next_question: null
+                    is_complete: true
+                    question_count: 5
+                    max_questions: 8
+                    completion_percent: 100
+                    allows_image_upload: false
+                    message: "Intake completed successfully. Ready for next step."
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                patient_not_found:
+                  summary: Patient Not Found
+                  value:
+                    error: "PATIENT_NOT_FOUND"
+                    message: "Patient with ID 'INVALID_1234567890' not found"
+                    details:
+                      patient_id: "INVALID_1234567890"
+                visit_not_found:
+                  summary: Visit Not Found
+                  value:
+                    error: "VISIT_NOT_FOUND"
+                    message: "Visit with ID 'CONSULT-20250103-999' not found"
+                    details:
+                      visit_id: "CONSULT-20250103-999"
+        "409":
+          description: Intake already completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                intake_completed:
+                  summary: Intake Already Completed
+                  value:
+                    error: "INTAKE_ALREADY_COMPLETED"
+                    message: "Intake already completed for visit: CONSULT-20250103-001"
+                    details:
+                      visit_id: "CONSULT-20250103-001"
+        "422":
+          description: Question limit exceeded or duplicate question
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                question_limit:
+                  summary: Question Limit Exceeded
+                  value:
+                    error: "QUESTION_LIMIT_EXCEEDED"
+                    message: "Question limit exceeded. Current: 8, Max: 8"
+                    details:
+                      current_count: 8
+                      max_count: 8
+                duplicate_question:
+                  summary: Duplicate Question
+                  value:
+                    error: "DUPLICATE_QUESTION"
+                    message: "Duplicate question detected: What symptoms are you experiencing?"
+                    details:
+                      question: "What symptoms are you experiencing?"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - patients
+      summary: Edit an intake answer
+      description: |
+        Edit an existing answer by question number.
+
+        This endpoint:
+        1. Validates the patient and visit exist
+        2. Finds the question by number
+        3. Updates the answer
+        4. Returns success status
+      operationId: edit_intake_answer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditAnswerRequest"
+            examples:
+              edit_answer:
+                summary: Edit Answer Request
+                value:
+                  patient_id: "JOHNDOE_9123456789"
+                  visit_id: "CONSULT-20250103-001"
+                  question_number: 2
+                  new_answer: "I have been experiencing headaches for 2 weeks, not 3 months"
+      responses:
+        "200":
+          description: Answer edited successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditAnswerResponse"
+              examples:
+                success_response:
+                  summary: Successful Edit
+                  value:
+                    success: true
+                    message: "Answer updated successfully"
+        "404":
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /patients/summary/previsit:
+    post:
+      tags:
+        - patients
+      summary: Generate pre-visit clinical summary
+      description: |
+        Generate a clinical pre-visit summary from completed intake data.
+
+        This endpoint:
+        1. Validates patient and visit exist
+        2. Checks intake is completed
+        3. Generates AI-powered clinical summary in SOAP format
+        4. Returns structured summary for doctor review
+      operationId: generate_pre_visit_summary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreVisitSummaryRequest"
+            examples:
+              summary_request:
+                summary: Generate Summary Request
+                value:
+                  patient_id: "JOHNDOE_9123456789"
+                  visit_id: "CONSULT-20250103-001"
+      responses:
+        "200":
+          description: Summary generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreVisitSummaryResponse"
+              examples:
+                success_response:
+                  summary: Successful Summary Generation
+                  value:
+                    patient_id: "JOHNDOE_9123456789"
+                    visit_id: "CONSULT-20250103-001"
+                    summary: "## PRE-VISIT SUMMARY\n\n### Chief Complaint\nPatient presents with hypertension...\n\n### History of Present Illness\nPatient reports high blood pressure for 3 months..."
+                    structured_data:
+                      chief_complaint: "Hypertension"
+                      key_findings:
+                        ["High blood pressure", "Headaches", "Dizziness"]
+                      recommendations:
+                        ["Blood pressure monitoring", "Lifestyle modifications"]
+                    generated_at: "2025-01-03T12:30:00Z"
+                    message: "Pre-visit summary generated successfully"
+        "404":
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Intake not completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                intake_not_completed:
+                  summary: Intake Not Completed
+                  value:
+                    error: "INTAKE_NOT_COMPLETED"
+                    message: "Cannot generate summary for incomplete intake"
+                    details: {}
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /patients/{patient_id}/visits/{visit_id}/summary:
+    get:
+      tags:
+        - patients
+      summary: Retrieve pre-visit summary from EHR
+      description: |
+        Retrieve stored pre-visit summary from Electronic Health Record.
+
+        This endpoint:
+        1. Validates patient and visit exist
+        2. Retrieves stored pre-visit summary from EHR
+        3. Returns the clinical summary for doctor review
+      operationId: get_pre_visit_summary
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema:
+            type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        - in: path
+          name: visit_id
+          required: true
+          schema:
+            type: string
+            pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+      responses:
+        "200":
+          description: Summary retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreVisitSummaryResponse"
+              examples:
+                success_response:
+                  summary: Successful Summary Retrieval
+                  value:
+                    patient_id: "JOHNDOE_9123456789"
+                    visit_id: "CONSULT-20250103-001"
+                    summary: "## PRE-VISIT SUMMARY\n\n### Chief Complaint\nPatient presents with hypertension..."
+                    structured_data:
+                      chief_complaint: "Hypertension"
+                      key_findings:
+                        ["High blood pressure", "Headaches", "Dizziness"]
+                      recommendations:
+                        ["Blood pressure monitoring", "Lifestyle modifications"]
+                    generated_at: "2025-01-03T12:30:00Z"
+                    message: "Pre-visit summary retrieved from EHR"
+        "404":
+          description: Patient, visit, or summary not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                summary_not_found:
+                  summary: Summary Not Found
+                  value:
+                    error: "SUMMARY_NOT_FOUND"
+                    message: "No pre-visit summary found for visit CONSULT-20250103-001"
+                    details:
+                      visit_id: "CONSULT-20250103-001"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notes/transcribe:
+    post:
+      tags:
+        - notes
+      summary: Transcribe audio file for a visit
+      description: |
+        Upload and transcribe an audio file from a doctor-patient consultation.
+        
+        This endpoint:
+        1. Validates the audio file format and size
+        2. Saves the file temporarily
+        3. Transcribes using AI service (Whisper)
+        4. Updates visit status to soap_generation
+        5. Cleans up temporary file
+        
+        ## Supported Audio Formats
+        - MP3 (.mp3)
+        - WAV (.wav)
+        - M4A (.m4a)
+        - FLAC (.flac)
+        - OGG (.ogg)
+        - MPEG (.mpeg, .mpg)
+        
+        ## File Size Limits
+        - Maximum file size: 25MB
+        - Recommended duration: 2-10 minutes
+      operationId: transcribe_audio
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - patient_id
+                - visit_id
+                - audio_file
+              properties:
+                patient_id:
+                  type: string
+                  description: Opaque Patient ID from registration
+                  example: "OPAQUE_TOKEN"
+                visit_id:
+                  type: string
+                  pattern: '^CONSULT-\d{8}-\d{3}$'
+                  description: Visit ID from registration
+                  example: "CONSULT-20250103-001"
+                audio_file:
+                  type: string
+                  format: binary
+                  description: Audio file to transcribe
+      responses:
+        "200":
+          description: Audio transcribed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioTranscriptionResponse"
+              examples:
+                success_response:
+                  summary: Successful Transcription
+                  value:
+                    patient_id: "JOHNDOE_9123456789"
+                    visit_id: "CONSULT-20250103-001"
+                    transcript: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain for the past two days..."
+                    word_count: 245
+                    audio_duration: 180.5
+                    transcription_status: "completed"
+                    message: "Audio transcribed successfully"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid audio file or visit status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_file_type:
+                  summary: Invalid File Type
+                  value:
+                    error: "INVALID_FILE_TYPE"
+                    message: "File must be an audio file"
+                    details:
+                      content_type: "text/plain"
+                visit_not_ready:
+                  summary: Visit Not Ready
+                  value:
+                    error: "INVALID_REQUEST"
+                    message: "Visit not ready for transcription. Current status: intake"
+                    details: {}
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notes/soap/generate:
+    post:
+      tags:
+        - notes
+      summary: Generate SOAP note from transcript
+      description: |
+        Generate a structured SOAP (Subjective, Objective, Assessment, Plan) note from a consultation transcript.
+        
+        This endpoint:
+        1. Validates patient and visit exist
+        2. Checks transcript is available
+        3. Generates SOAP note using AI (GPT-4)
+        4. Updates visit status to prescription_analysis
+        5. Returns structured SOAP note
+        
+        ## SOAP Note Structure
+        - **Subjective**: Patient's reported symptoms and concerns
+        - **Objective**: Observable findings and vital signs
+        - **Assessment**: Clinical impressions and reasoning
+        - **Plan**: Treatment plan and follow-up instructions
+        - **Highlights**: Key clinical points (max 5)
+        - **Red Flags**: Concerning symptoms or findings (max 5)
+      operationId: generate_soap_note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoapGenerationRequest"
+            examples:
+              soap_request:
+                summary: Generate SOAP Request
+                value:
+                  patient_id: "JOHNDOE_9123456789"
+                  visit_id: "CONSULT-20250103-001"
+                  transcript: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain..."
+      responses:
+        "200":
+          description: SOAP note generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoapGenerationResponse"
+              examples:
+                success_response:
+                  summary: Successful SOAP Generation
+                  value:
+                    patient_id: "JOHNDOE_9123456789"
+                    visit_id: "CONSULT-20250103-001"
+                    soap_note:
+                      subjective: "Patient reports chest pain for 2 days, described as sharp and stabbing, rated 7/10 on pain scale. Pain worsens with deep breathing and movement."
+                      objective: "Vital signs: BP 140/90, HR 88, RR 18, Temp 98.6°F. Patient appears anxious but alert and oriented. No obvious distress at rest."
+                      assessment: "Chest pain of unclear etiology. Differential includes musculoskeletal pain, pleuritic pain, or cardiac etiology. No acute distress noted."
+                      plan: "1. Order EKG and chest X-ray. 2. Consider cardiac enzymes if indicated. 3. Prescribe pain management. 4. Follow up in 1 week or sooner if symptoms worsen."
+                      highlights: ["Chest pain for 2 days", "Sharp, stabbing quality", "Pain with breathing", "Vital signs stable"]
+                      red_flags: ["Sharp chest pain", "Pain with movement"]
+                      model_info:
+                        model: "gpt-4"
+                        temperature: 0.1
+                        max_tokens: 2000
+                      confidence_score: 0.95
+                    generated_at: "2025-01-03T13:00:00Z"
+                    message: "SOAP note generated successfully"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: No transcript available or invalid visit status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                no_transcript:
+                  summary: No Transcript Available
+                  value:
+                    error: "INVALID_REQUEST"
+                    message: "No transcript available for SOAP generation"
+                    details: {}
+                visit_not_ready:
+                  summary: Visit Not Ready
+                  value:
+                    error: "INVALID_REQUEST"
+                    message: "Visit not ready for SOAP generation. Current status: transcription"
+                    details: {}
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notes/{patient_id}/visits/{visit_id}/transcript:
+    get:
+      tags:
+        - notes
+      summary: Retrieve transcript for a visit
+      description: |
+        Retrieve the stored transcript for a specific visit.
+        
+        This endpoint:
+        1. Validates patient and visit exist
+        2. Retrieves stored transcript data
+        3. Returns transcript with metadata
+      operationId: get_transcript
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema:
+            type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        - in: path
+          name: visit_id
+          required: true
+          schema:
+            type: string
+            pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+      responses:
+        "200":
+          description: Transcript retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptionSessionDTO"
+              examples:
+                success_response:
+                  summary: Successful Transcript Retrieval
+                  value:
+                    audio_file_path: "/tmp/audio_12345.mp3"
+                    transcript: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain..."
+                    transcription_status: "completed"
+                    started_at: "2025-01-03T12:45:00Z"
+                    completed_at: "2025-01-03T12:47:30Z"
+                    error_message: null
+                    audio_duration_seconds: 180.5
+                    word_count: 245
+        "404":
+          description: Patient, visit, or transcript not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                transcript_not_found:
+                  summary: Transcript Not Found
+                  value:
+                    error: "TRANSCRIPT_NOT_FOUND"
+                    message: "No transcript found for visit CONSULT-20250103-001"
+                    details:
+                      visit_id: "CONSULT-20250103-001"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notes/{patient_id}/visits/{visit_id}/soap:
+    get:
+      tags:
+        - notes
+      summary: Retrieve SOAP note for a visit
+      description: |
+        Retrieve the stored SOAP note for a specific visit.
+        
+        This endpoint:
+        1. Validates patient and visit exist
+        2. Retrieves stored SOAP note data
+        3. Returns structured SOAP note
+      operationId: get_soap_note
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema:
+            type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        - in: path
+          name: visit_id
+          required: true
+          schema:
+            type: string
+            pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+      responses:
+        "200":
+          description: SOAP note retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoapNoteDTO"
+              examples:
+                success_response:
+                  summary: Successful SOAP Retrieval
+                  value:
+                    subjective: "Patient reports chest pain for 2 days, described as sharp and stabbing, rated 7/10 on pain scale."
+                    objective: "Vital signs: BP 140/90, HR 88, RR 18, Temp 98.6°F. Patient appears anxious but alert."
+                    assessment: "Chest pain of unclear etiology. Differential includes musculoskeletal pain, pleuritic pain, or cardiac etiology."
+                    plan: "1. Order EKG and chest X-ray. 2. Consider cardiac enzymes if indicated. 3. Prescribe pain management."
+                    highlights: ["Chest pain for 2 days", "Sharp, stabbing quality", "Pain with breathing", "Vital signs stable"]
+                    red_flags: ["Sharp chest pain", "Pain with movement"]
+                    generated_at: "2025-01-03T13:00:00Z"
+                    model_info:
+                      model: "gpt-4"
+                      temperature: 0.1
+                      max_tokens: 2000
+                    confidence_score: 0.95
+        "404":
+          description: Patient, visit, or SOAP note not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                soap_not_found:
+                  summary: SOAP Note Not Found
+                  value:
+                    error: "SOAP_NOTE_NOT_FOUND"
+                    message: "No SOAP note found for visit CONSULT-20250103-001"
+                    details:
+                      visit_id: "CONSULT-20250103-001"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    RegisterPatientRequest:
+      type: object
+      required:
+        - name
+        - mobile
+        - age
+        - gender
+        - consent
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+          description: Patient's full name
+          example: "John Doe"
+        mobile:
+          type: string
+          minLength: 10
+          maxLength: 15
+          pattern: '^\d{10,15}$'
+          description: Mobile phone number (digits only)
+          example: "9123456789"
+        age:
+          type: integer
+          minimum: 0
+          maximum: 120
+          description: Patient's age in years
+          example: 35
+        gender:
+          type: string
+          description: Patient's gender
+          example: "male"
+        recently_travelled:
+          type: boolean
+          default: false
+          description: Has the patient travelled recently
+          example: false
+        consent:
+          type: boolean
+          description: Patient consent for data processing (must be true)
+          example: true
+
+    RegisterPatientResponse:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - first_question
+        - message
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID token (do not parse)
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Generated visit ID in format CONSULT-YYYYMMDD-XXX
+          example: "CONSULT-20250103-001"
+        first_question:
+          type: string
+          description: AI-generated first question based on the primary symptom
+          example: "What specific symptoms are you experiencing with your hypertension?"
+        message:
+          type: string
+          description: Success message
+          example: "Patient registered successfully. Intake session started."
+
+    AnswerIntakeRequest:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - answer
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID from registration
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID from registration
+          example: "CONSULT-20250103-001"
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Patient's answer to the question
+          example: "I have been experiencing high blood pressure for 3 months"
+
+    OCRQualityInfo:
+      type: object
+      required:
+        - quality
+        - confidence
+        - extracted_text
+        - extracted_medications
+        - suggestions
+        - word_count
+        - has_medication_keywords
+      properties:
+        quality:
+          type: string
+          enum: [excellent, good, poor, failed]
+          description: OCR quality assessment
+          example: "good"
+        confidence:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: OCR confidence score (0.0 to 1.0)
+          example: 0.75
+        extracted_text:
+          type: string
+          description: Text extracted from the image
+          example: "Paracetamol 500mg tablets, Take 1-2 tablets every 4-6 hours"
+        extracted_medications:
+          type: array
+          items:
+            type: string
+          description: Potential medication names found
+          example: ["Paracetamol"]
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: Suggestions for better image quality
+          example: ["Text quality is acceptable but could be better:", "Consider retaking with better lighting"]
+        word_count:
+          type: integer
+          description: Number of words extracted
+          example: 12
+        has_medication_keywords:
+          type: boolean
+          description: Whether medication-related keywords were found
+          example: true
+
+    AnswerIntakeResponse:
+      type: object
+      required:
+        - next_question
+        - is_complete
+        - question_count
+        - max_questions
+        - completion_percent
+        - message
+        - allows_image_upload
+      properties:
+        next_question:
+          type: string
+          nullable: true
+          description: Next question to ask (null if intake is complete)
+          example: "How long have you been experiencing these symptoms?"
+        is_complete:
+          type: boolean
+          description: Whether the intake session is complete
+          example: false
+        question_count:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: Current number of questions asked
+          example: 1
+        max_questions:
+          type: integer
+          description: Maximum number of questions allowed
+          example: 8
+        completion_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: LLM-assessed completion percent
+          example: 25
+        message:
+          type: string
+          description: Status message
+          example: "Question 2 of 8"
+        allows_image_upload:
+          type: boolean
+          description: Whether the next question allows image upload
+          example: false
+        ocr_quality:
+          $ref: '#/components/schemas/OCRQualityInfo'
+          nullable: true
+          description: OCR quality information if image was uploaded
+
+    EditAnswerRequest:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - question_number
+        - new_answer
+      properties:
+        patient_id:
+          type: string
+          pattern: '^[A-Z0-9]+_\d+$'
+          description: Patient ID from registration
+          example: "JOHNDOE_9123456789"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID from registration
+          example: "CONSULT-20250103-001"
+        question_number:
+          type: integer
+          minimum: 1
+          description: Question number to edit (1-based)
+          example: 2
+        new_answer:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Replacement answer
+          example: "I have been experiencing headaches for 2 weeks, not 3 months"
+
+    EditAnswerResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          description: Whether the edit was successful
+          example: true
+        message:
+          type: string
+          description: Status message
+          example: "Answer updated successfully"
+        next_question:
+          type: string
+          nullable: true
+          description: Regenerated next question after edit
+        question_count:
+          type: integer
+          nullable: true
+          description: Current question count after truncation
+        max_questions:
+          type: integer
+          nullable: true
+          description: Maximum questions allowed
+        completion_percent:
+          type: integer
+          format: int32
+          nullable: true
+          description: Updated completion percent after edit
+        allows_image_upload:
+          type: boolean
+          nullable: true
+          description: Whether the next question allows image upload
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - version
+        - service
+      properties:
+        status:
+          type: string
+          enum: ["healthy", "unhealthy"]
+          description: Service health status
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          description: Current timestamp
+          example: "2025-01-03T12:00:00Z"
+        version:
+          type: string
+          description: API version
+          example: "0.1.0"
+        service:
+          type: string
+          description: Service name
+          example: "Clinic-AI Intake Assistant"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type code
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Name cannot be empty"
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+          example:
+            field: "name"
+            value: ""
+
+    QuestionAnswer:
+      type: object
+      required:
+        - question_id
+        - question
+        - answer
+        - timestamp
+        - question_number
+      properties:
+        question_id:
+          type: string
+          description: Unique question identifier
+          example: "Q12345678"
+        question:
+          type: string
+          description: Question text
+          example: "What specific symptoms are you experiencing?"
+        answer:
+          type: string
+          description: Patient's answer
+          example: "I have been experiencing headaches and dizziness"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the question was asked
+          example: "2025-01-03T12:00:00Z"
+        question_number:
+          type: integer
+          description: Question number in sequence
+          example: 1
+
+    IntakeSummary:
+      type: object
+      required:
+        - visit_id
+        - symptom
+        - status
+        - questions_asked
+        - total_questions
+        - max_questions
+        - intake_status
+        - started_at
+      properties:
+        visit_id:
+          type: string
+          description: Visit identifier
+          example: "CONSULT-20250103-001"
+        symptom:
+          type: string
+          description: Primary symptom
+          example: "Chest pain"
+        status:
+          type: string
+          description: Visit status
+          example: "intake"
+        questions_asked:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuestionAnswer"
+          description: List of questions and answers
+        total_questions:
+          type: integer
+          description: Total questions asked
+          example: 3
+        max_questions:
+          type: integer
+          description: Maximum questions allowed
+          example: 8
+        intake_status:
+          type: string
+          enum: ["in_progress", "completed", "cancelled"]
+          description: Intake session status
+          example: "in_progress"
+        started_at:
+          type: string
+          format: date-time
+          description: When intake started
+          example: "2025-01-03T12:00:00Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When intake completed (null if not completed)
+          example: "2025-01-03T12:15:00Z"
+
+    PreVisitSummaryRequest:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID from registration
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID from registration
+          example: "CONSULT-20250103-001"
+
+    PreVisitSummaryResponse:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - summary
+        - generated_at
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+        summary:
+          type: string
+          description: Clinical summary in markdown format
+          example: "## PRE-VISIT SUMMARY\n\n### Chief Complaint\nPatient presents with hypertension..."
+        generated_at:
+          type: string
+          format: date-time
+          description: Summary generation timestamp
+          example: "2025-01-03T12:30:00Z"
+
+    # Step-03: Audio Transcription & SOAP Generation Schemas
+    AudioTranscriptionRequest:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - audio_file_path
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID from registration
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID from registration
+          example: "CONSULT-20250103-001"
+        audio_file_path:
+          type: string
+          description: Path to audio file for transcription
+          example: "/tmp/audio_12345.mp3"
+        audio_duration:
+          type: number
+          format: float
+          description: Audio duration in seconds (optional)
+          example: 180.5
+
+    AudioTranscriptionResponse:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - transcript
+        - word_count
+        - transcription_status
+        - message
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+        transcript:
+          type: string
+          description: Transcribed text from audio
+          example: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain for the past two days..."
+        word_count:
+          type: integer
+          description: Number of words in transcript
+          example: 245
+        audio_duration:
+          type: number
+          format: float
+          nullable: true
+          description: Audio duration in seconds
+          example: 180.5
+        transcription_status:
+          type: string
+          enum: ["pending", "processing", "completed", "failed"]
+          description: Status of transcription process
+          example: "completed"
+        message:
+          type: string
+          description: Status message
+          example: "Audio transcribed successfully"
+
+    SoapGenerationRequest:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID from registration
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          pattern: '^CONSULT-\d{8}-\d{3}$'
+          description: Visit ID from registration
+          example: "CONSULT-20250103-001"
+        transcript:
+          type: string
+          description: Optional transcript text (if not provided, will use stored transcript)
+          example: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain..."
+
+    SoapGenerationResponse:
+      type: object
+      required:
+        - patient_id
+        - visit_id
+        - soap_note
+        - generated_at
+        - message
+      properties:
+        patient_id:
+          type: string
+          description: Opaque Patient ID
+          example: "OPAQUE_TOKEN"
+        visit_id:
+          type: string
+          description: Visit ID
+          example: "CONSULT-20250103-001"
+        soap_note:
+          $ref: "#/components/schemas/SoapNoteData"
+        generated_at:
+          type: string
+          format: date-time
+          description: SOAP note generation timestamp
+          example: "2025-01-03T13:00:00Z"
+        message:
+          type: string
+          description: Status message
+          example: "SOAP note generated successfully"
+
+    SoapNoteData:
+      type: object
+      required:
+        - subjective
+        - objective
+        - assessment
+        - plan
+        - highlights
+        - red_flags
+      properties:
+        subjective:
+          type: string
+          description: Patient's reported symptoms and concerns
+          example: "Patient reports chest pain for 2 days, described as sharp and stabbing, rated 7/10 on pain scale."
+        objective:
+          type: string
+          description: Observable findings and vital signs
+          example: "Vital signs: BP 140/90, HR 88, RR 18, Temp 98.6°F. Patient appears anxious but alert."
+        assessment:
+          type: string
+          description: Clinical impressions and reasoning
+          example: "Chest pain of unclear etiology. Differential includes musculoskeletal pain, pleuritic pain, or cardiac etiology."
+        plan:
+          type: string
+          description: Treatment plan and follow-up instructions
+          example: "1. Order EKG and chest X-ray. 2. Consider cardiac enzymes if indicated. 3. Prescribe pain management."
+        highlights:
+          type: array
+          items:
+            type: string
+          maxItems: 5
+          description: Key clinical points
+          example: ["Chest pain for 2 days", "Sharp, stabbing quality", "Pain with breathing", "Vital signs stable"]
+        red_flags:
+          type: array
+          items:
+            type: string
+          maxItems: 5
+          description: Concerning symptoms or findings
+          example: ["Sharp chest pain", "Pain with movement"]
+        model_info:
+          type: object
+          description: AI model information used for generation
+          properties:
+            model:
+              type: string
+              example: "gpt-4"
+            temperature:
+              type: number
+              format: float
+              example: 0.1
+            max_tokens:
+              type: integer
+              example: 2000
+        confidence_score:
+          type: number
+          format: float
+          description: Confidence score for the generated SOAP note
+          example: 0.95
+
+    SoapNoteDTO:
+      type: object
+      required:
+        - subjective
+        - objective
+        - assessment
+        - plan
+        - highlights
+        - red_flags
+        - generated_at
+      properties:
+        subjective:
+          type: string
+          description: Patient's reported symptoms and concerns
+          example: "Patient reports chest pain for 2 days, described as sharp and stabbing, rated 7/10 on pain scale."
+        objective:
+          type: string
+          description: Observable findings and vital signs
+          example: "Vital signs: BP 140/90, HR 88, RR 18, Temp 98.6°F. Patient appears anxious but alert."
+        assessment:
+          type: string
+          description: Clinical impressions and reasoning
+          example: "Chest pain of unclear etiology. Differential includes musculoskeletal pain, pleuritic pain, or cardiac etiology."
+        plan:
+          type: string
+          description: Treatment plan and follow-up instructions
+          example: "1. Order EKG and chest X-ray. 2. Consider cardiac enzymes if indicated. 3. Prescribe pain management."
+        highlights:
+          type: array
+          items:
+            type: string
+          description: Key clinical points
+          example: ["Chest pain for 2 days", "Sharp, stabbing quality", "Pain with breathing", "Vital signs stable"]
+        red_flags:
+          type: array
+          items:
+            type: string
+          description: Concerning symptoms or findings
+          example: ["Sharp chest pain", "Pain with movement"]
+        generated_at:
+          type: string
+          format: date-time
+          description: SOAP note generation timestamp
+          example: "2025-01-03T13:00:00Z"
+        model_info:
+          type: object
+          nullable: true
+          description: AI model information used for generation
+          properties:
+            model:
+              type: string
+              example: "gpt-4"
+            temperature:
+              type: number
+              format: float
+              example: 0.1
+            max_tokens:
+              type: integer
+              example: 2000
+        confidence_score:
+          type: number
+          format: float
+          nullable: true
+          description: Confidence score for the generated SOAP note
+          example: 0.95
+
+    TranscriptionSessionDTO:
+      type: object
+      required:
+        - transcription_status
+      properties:
+        audio_file_path:
+          type: string
+          nullable: true
+          description: Path to the audio file
+          example: "/tmp/audio_12345.mp3"
+        transcript:
+          type: string
+          nullable: true
+          description: Transcribed text from audio
+          example: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain..."
+        transcription_status:
+          type: string
+          enum: ["pending", "processing", "completed", "failed"]
+          description: Status of transcription process
+          example: "completed"
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When transcription started
+          example: "2025-01-03T12:45:00Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When transcription completed
+          example: "2025-01-03T12:47:30Z"
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if transcription failed
+          example: null
+        audio_duration_seconds:
+          type: number
+          format: float
+          nullable: true
+          description: Audio duration in seconds
+          example: 180.5
+        word_count:
+          type: integer
+          nullable: true
+          description: Number of words in transcript
+          example: 245
+
+  securitySchemes:
+    # Future authentication schemes can be added here
+    # BearerAuth:
+    #   type: http
+    #   scheme: bearer
+    #   bearerFormat: JWT
+
+security:
+  # No security requirements for development
+  - {}
