@@ -32,20 +32,29 @@ async def lifespan(app: FastAPI):
             PatientMongo,
             VisitMongo,
         )
-        # stable_* models removed
 
-        # Use configured URI and enable TLS with CA bundle for Atlas
+        # Use configured URI
         mongo_uri = settings.database.uri
         db_name = settings.database.db_name
-        ca_path = certifi.where()
-        print(f"🔐 Using certifi CA bundle: {ca_path}")
-        client = AsyncIOMotorClient(
-            mongo_uri,
-            serverSelectionTimeoutMS=15000,
-            tls=True,
-            tlsCAFile=ca_path,
-            tlsAllowInvalidCertificates=False,
-        )
+        print(f"🗄️ Connecting to Mongo: {mongo_uri}")
+
+        # Enable TLS only for Atlas SRV URIs
+        if mongo_uri.startswith("mongodb+srv://"):
+            ca_path = certifi.where()
+            client = AsyncIOMotorClient(
+                mongo_uri,
+                serverSelectionTimeoutMS=15000,
+                tls=True,
+                tlsCAFile=ca_path,
+                tlsAllowInvalidCertificates=False,
+            )
+        else:
+            # Local/standard connection (no TLS)
+            client = AsyncIOMotorClient(
+                mongo_uri,
+                serverSelectionTimeoutMS=15000,
+            )
+
         db = client[db_name]
         await init_beanie(
             database=db,

@@ -5,6 +5,11 @@ from ...domain.value_objects.patient_id import PatientId
 from ..dto.patient_dto import AudioTranscriptionRequest, AudioTranscriptionResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.services.transcription_service import TranscriptionService
+from ...core.config import get_settings
+from typing import Dict, Any
+import asyncio
+
+from openai import OpenAI  # type: ignore
 
 
 class TranscribeAudioUseCase:
@@ -54,9 +59,66 @@ class TranscribeAudioUseCase:
                 medical_context=True
             )
 
+            raw_transcript = transcription_result.get("transcript", "") or ""
+
+            # Post-process with LLM to clean PII and structure Doctor/Patient dialogue
+            settings = get_settings()
+            client = OpenAI(api_key=settings.openai.api_key)
+
+            system_prompt = (
+                "You are an AI assistant processing clinical consultation transcripts.\n"
+                "Goal: produce highly accurate speaker-attributed dialogue.\n"
+                "STRICT RULES:\n"
+                "- Remove personal identifiers (names, phone numbers, addresses).\n"
+                "- Correct obvious transcription errors (spelling, spacing, casing) without changing meaning.\n"
+                "- Attribute each utterance to the correct speaker: Doctor vs Patient.\n"
+                "- Use medical context cues to determine speaker.\n"
+                "- Output valid JSON ONLY, with alternating keys 'Doctor' and 'Patient' where possible.\n"
+                "- If the same speaker talks twice in a row, still output two consecutive keys (do not invent turns).\n"
+                "- Do not include any commentary or Markdown. JSON only."
+            )
+            user_prompt = (
+                "Use these diarization heuristics in order of priority:\n"
+                "1) The Doctor typically greets, asks questions, gives instructions, summarizes, or explains plans.\n"
+                "2) The Patient typically reports symptoms, answers, describes history, denies symptoms, or asks for help.\n"
+                "3) Question-like sentences (who/what/when/where/why/how, or ending with '?') are usually Doctor unless clearly the Patient asking.\n"
+                "4) Phrases like 'I prescribe', 'Let's order', 'We will do', 'Follow up', 'Take this', 'I'll examine' => Doctor.\n"
+                "5) Phrases like 'I feel', 'I have', 'It started', 'My pain', 'Since yesterday', 'I took' => Patient.\n"
+                "6) If ambiguous, prefer continuity with previous speaker unless a question/answer pattern indicates a switch.\n"
+                "7) Keep the original order of utterances.\n\n"
+                "Few-shot examples (not part of output):\n"
+                "RAW: 'Hi, I'm Dr. Smith. How can I help you today?' → {\"Doctor\": \"Hello, how can I help you today?\"}\n"
+                "RAW: 'I've had a cough for three days.' → {\"Patient\": \"I have had a cough for three days.\"}\n"
+                "RAW: 'Do you have fever or shortness of breath?' → {\"Doctor\": \"Do you have a fever or shortness of breath?\"}\n"
+                "RAW: 'Yes, fever since yesterday.' → {\"Patient\": \"Yes, fever since yesterday.\"}\n\n"
+                "OUTPUT FORMAT (single JSON object; keys repeat as turns):\n"
+                "{\n  \"Doctor\": \"...\",\n  \"Patient\": \"...\",\n  \"Doctor\": \"...\",\n  \"Patient\": \"...\"\n}\n\n"
+                "Transcript to process (clean PII and structure; JSON only):\n" + raw_transcript
+            )
+
+            def _call_openai() -> str:
+                resp = client.chat.completions.create(
+                    model=settings.openai.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=min(2200, settings.openai.max_tokens),
+                    temperature=0.0,
+                    top_p=0.9,
+                    presence_penalty=0.0,
+                    frequency_penalty=0.0,
+                )
+                return (resp.choices[0].message.content or "").strip()
+
+            structured_content = await asyncio.to_thread(_call_openai)
+
+            # Prefer storing the structured JSON text in place of raw transcript
+            cleaned_transcript_text = structured_content or raw_transcript
+
             # Complete transcription
             visit.complete_transcription(
-                transcript=transcription_result["transcript"],
+                transcript=cleaned_transcript_text,
                 audio_duration=transcription_result.get("duration")
             )
 
@@ -66,7 +128,7 @@ class TranscribeAudioUseCase:
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
                 visit_id=visit.visit_id.value,
-                transcript=transcription_result["transcript"],
+                transcript=cleaned_transcript_text,
                 word_count=transcription_result.get("word_count", 0),
                 audio_duration=transcription_result.get("duration"),
                 transcription_status=visit.transcription_session.transcription_status,

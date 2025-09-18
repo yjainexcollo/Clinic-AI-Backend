@@ -2,9 +2,12 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
-from typing import Optional
+from typing import Optional, Dict, Any
 import tempfile
 import os
+import asyncio
+
+from openai import OpenAI  # type: ignore
 
 from clinicai.application.dto.patient_dto import (
     AudioTranscriptionRequest,
@@ -23,6 +26,7 @@ from clinicai.domain.errors import (
 from ..deps import PatientRepositoryDep, TranscriptionServiceDep, SoapServiceDep
 from ...core.utils.crypto import decode_patient_id
 from ..schemas.patient import ErrorResponse
+from ...core.config import get_settings
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 logger = logging.getLogger("clinicai")
@@ -235,13 +239,31 @@ async def get_transcript(
     try:
         from ...domain.value_objects.patient_id import PatientId
         from ...core.utils.crypto import decode_patient_id
+        import urllib.parse
         
         # Find patient (decode opaque id from client)
+        # URL-decode first to restore any encoded '=' characters in Fernet tokens
+        decoded_path_param = urllib.parse.unquote(patient_id)
+        # Attempt to decrypt opaque token. If decryption fails, only accept the raw value
+        # if it already conforms to our internal PatientId format; otherwise return 422.
         try:
-            internal_patient_id = decode_patient_id(patient_id)
+            internal_patient_id = decode_patient_id(decoded_path_param)
         except Exception:
-            internal_patient_id = patient_id
-        patient_id_obj = PatientId(internal_patient_id)
+            internal_patient_id = decoded_path_param
+        try:
+            patient_id_obj = PatientId(internal_patient_id)
+        except ValueError as ve:
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "INVALID_PATIENT_ID",
+                    "message": str(ve),
+                    "details": {
+                        "hint": "Provide a valid opaque patient_id token or an internal id like {name}_{phone}",
+                    },
+                },
+            )
         patient = await patient_repo.find_by_id(patient_id_obj)
         if not patient:
             raise PatientNotFoundError(patient_id)
@@ -379,6 +401,143 @@ async def get_soap_note(
         )
     except Exception as e:
         logger.error("Unhandled error in get_soap_note", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred",
+                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
+            },
+        )
+
+
+@router.post(
+    "/{patient_id}/visits/{visit_id}/dialogue/structure",
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorResponse, "description": "Patient, visit, or transcript not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def structure_dialogue(
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+) -> Dict[str, Any]:
+    """Clean PII and structure transcript into alternating Doctor/Patient JSON using LLM."""
+    try:
+        # Resolve patient and transcript
+        from ...domain.value_objects.patient_id import PatientId
+        from urllib.parse import unquote
+
+        decoded = unquote(patient_id)
+        try:
+            internal_patient_id = decode_patient_id(decoded)
+        except Exception:
+            internal_patient_id = decoded
+
+        try:
+            pid = PatientId(internal_patient_id)
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "INVALID_PATIENT_ID",
+                    "message": str(ve),
+                    "details": {},
+                },
+            )
+
+        patient = await patient_repo.find_by_id(pid)
+        if not patient:
+            raise PatientNotFoundError(internal_patient_id)
+
+        visit = patient.get_visit_by_id(visit_id)
+        if not visit:
+            raise VisitNotFoundError(visit_id)
+        if not visit.transcription_session or not visit.transcription_session.transcript:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": "TRANSCRIPT_NOT_FOUND",
+                    "message": f"No transcript found for visit {visit_id}",
+                    "details": {"visit_id": visit_id},
+                },
+            )
+
+        raw_transcript = visit.transcription_session.transcript
+
+        # Build prompt
+        system_prompt = (
+            "You are an AI assistant processing raw transcripts generated from audio recordings.\n"
+            "Your tasks are:\n"
+            "1) Understand and clean the transcript: remove any names, phone numbers, or personal identifiers;\n"
+            "   correct obvious transcription errors (spelling, spacing); keep only conversational content.\n"
+            "2) Format the dialogue clearly into structured JSON with alternating keys \"Doctor\" and \"Patient\".\n"
+            "   Preserve the natural flow and output valid JSON only, no extra commentary."
+        )
+        user_prompt = (
+            "Example:\n"
+            "{\n  \"Doctor\": \"How are you feeling today?\",\n  \"Patient\": \"I have been coughing for three days.\",\n"
+            "  \"Doctor\": \"Do you have a fever?\",\n  \"Patient\": \"Yes, since yesterday.\"\n}\n\n"
+            "Transcript to process (clean PII and structure):\n" + (raw_transcript or "")
+        )
+
+        settings = get_settings()
+        client = OpenAI(api_key=settings.openai.api_key)
+
+        def _call_openai() -> str:
+            resp = client.chat.completions.create(
+                model=settings.openai.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=min(2000, settings.openai.max_tokens),
+                temperature=0.1,
+            )
+            return (resp.choices[0].message.content or "").strip()
+
+        content = await asyncio.to_thread(_call_openai)
+
+        # Try to parse JSON; if not valid JSON object, return as text under 'dialogue'
+        import json
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return {"dialogue": data}
+            # If it's a list of pairs, convert to dict-like sequence
+            if isinstance(data, list):
+                merged: Dict[str, Any] = {}
+                for item in data:
+                    if isinstance(item, dict):
+                        merged.update(item)
+                return {"dialogue": merged or {"text": content}}
+        except Exception:
+            pass
+
+        return {"dialogue": {"text": content}}
+
+    except PatientNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "PATIENT_NOT_FOUND",
+                "message": e.message,
+                "details": e.details,
+            },
+        )
+    except VisitNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "VISIT_NOT_FOUND",
+                "message": e.message,
+                "details": e.details,
+            },
+        )
+    except Exception as e:
+        logger.error("Unhandled error in structure_dialogue", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
