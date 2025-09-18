@@ -76,16 +76,18 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
-    # In debug, allow local frontend origins and common methods/headers for ease of dev
-    debug_origins = [
+    # Always include common local dev origins; merge with configured origins
+    common_local_origins = [
         "http://localhost:8080",
         "http://127.0.0.1:8080",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ]
-    allow_origins = (
-        (settings.cors.allowed_origins or []) + (debug_origins if settings.debug else [])
-    ) or ["*"]
+    configured_origins = settings.cors.allowed_origins or []
+    allow_origins = list({*common_local_origins, *configured_origins}) or ["*"]
+
     allow_methods = settings.cors.allowed_methods or ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
     # Ensure PATCH and OPTIONS are always allowed for browser preflights
     allow_methods = list({m.upper() for m in allow_methods} | {"PATCH", "OPTIONS"})
@@ -97,9 +99,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
+        allow_origin_regex=r"https?://.*",
         allow_credentials=settings.cors.allow_credentials,
         allow_methods=allow_methods,
-        allow_headers=allow_headers if settings.debug else allow_headers,
+        allow_headers=allow_headers,
     )
 
     # Include routers
