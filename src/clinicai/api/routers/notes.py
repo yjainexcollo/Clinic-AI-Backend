@@ -275,7 +275,8 @@ async def get_transcript(
         # if it already conforms to our internal PatientId format; otherwise return 422.
         try:
             internal_patient_id = decode_patient_id(decoded_path_param)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
             internal_patient_id = decoded_path_param
         try:
             patient_id_obj = PatientId(internal_patient_id)

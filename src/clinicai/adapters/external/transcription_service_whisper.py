@@ -101,7 +101,7 @@ class WhisperTranscriptionService(TranscriptionService):
             if file_size > 25 * 1024 * 1024:
                 return {
                     "is_valid": False,
-                    "error": "Audio file too large (max 25MB)",
+                    "error": f"Audio file too large ({file_size / (1024*1024):.1f}MB, max 25MB)",
                     "file_size": file_size,
                     "duration": 0
                 }

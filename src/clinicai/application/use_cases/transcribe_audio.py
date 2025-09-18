@@ -8,6 +8,7 @@ from ..ports.services.transcription_service import TranscriptionService
 from ...core.config import get_settings
 from typing import Dict, Any
 import asyncio
+import logging
 
 from openai import OpenAI  # type: ignore
 
@@ -54,14 +55,19 @@ class TranscribeAudioUseCase:
             await self._patient_repository.save(patient)
 
             # Transcribe audio
+            logger = logging.getLogger("clinicai")
+            logger.info(f"Starting Whisper transcription for file: {request.audio_file_path}")
+            
             transcription_result = await self._transcription_service.transcribe_audio(
                 request.audio_file_path,
                 medical_context=True
             )
 
             raw_transcript = transcription_result.get("transcript", "") or ""
+            logger.info(f"Whisper transcription completed. Transcript length: {len(raw_transcript)} characters")
 
             # Post-process with LLM to clean PII and structure Doctor/Patient dialogue
+            logger.info("Starting LLM processing for transcript cleaning and structuring")
             settings = get_settings()
             client = OpenAI(api_key=settings.openai.api_key)
 
@@ -97,21 +103,28 @@ class TranscribeAudioUseCase:
             )
 
             def _call_openai() -> str:
-                resp = client.chat.completions.create(
-                    model=settings.openai.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=min(8000, settings.openai.max_tokens),
-                    temperature=0.0,
-                    top_p=0.9,
-                    presence_penalty=0.0,
-                    frequency_penalty=0.0,
-                )
-                return (resp.choices[0].message.content or "").strip()
+                try:
+                    resp = client.chat.completions.create(
+                        model=settings.openai.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=min(8000, settings.openai.max_tokens),
+                        temperature=0.0,
+                        top_p=0.9,
+                        presence_penalty=0.0,
+                        frequency_penalty=0.0,
+                    )
+                    return (resp.choices[0].message.content or "").strip()
+                except Exception as e:
+                    logger = logging.getLogger("clinicai")
+                    logger.error(f"OpenAI LLM processing failed: {str(e)}")
+                    # Return the raw transcript if LLM processing fails
+                    return raw_transcript
 
             structured_content = await asyncio.to_thread(_call_openai)
+            logger.info(f"LLM processing completed. Structured content length: {len(structured_content)} characters")
 
             # Prefer storing the structured JSON text in place of raw transcript
             cleaned_transcript_text = structured_content or raw_transcript
@@ -124,6 +137,7 @@ class TranscribeAudioUseCase:
 
             # Save updated visit
             await self._patient_repository.save(patient)
+            logger.info(f"Transcription completed successfully for patient {patient.patient_id.value}, visit {visit.visit_id.value}")
 
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
@@ -136,6 +150,10 @@ class TranscribeAudioUseCase:
             )
 
         except Exception as e:
+            # Log the full error for debugging
+            logger = logging.getLogger("clinicai")
+            logger.error(f"Transcription failed for patient {patient.patient_id.value}, visit {visit.visit_id.value}: {str(e)}", exc_info=True)
+            
             # Mark transcription as failed
             visit.fail_transcription(str(e))
             await self._patient_repository.save(patient)

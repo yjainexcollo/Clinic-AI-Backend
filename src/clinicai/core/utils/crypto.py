@@ -65,6 +65,10 @@ def decrypt_text(token_str: str) -> str:
         plaintext = f.decrypt(token_str.encode("utf-8"))
         return plaintext.decode("utf-8")
     except InvalidToken as exc:
+        # Log the error for debugging but don't crash the system
+        logging.getLogger("clinicai").warning(
+            "Failed to decrypt token, possibly due to key mismatch: %s", str(exc)
+        )
         raise ValueError("Invalid opaque token") from exc
 
 
