@@ -37,11 +37,14 @@ async def lifespan(app: FastAPI):
         # Use configured URI and enable TLS with CA bundle for Atlas
         mongo_uri = settings.database.uri
         db_name = settings.database.db_name
+        ca_path = certifi.where()
+        print(f"🔐 Using certifi CA bundle: {ca_path}")
         client = AsyncIOMotorClient(
             mongo_uri,
-            serverSelectionTimeoutMS=10000,
+            serverSelectionTimeoutMS=15000,
             tls=True,
-            tlsCAFile=certifi.where(),
+            tlsCAFile=ca_path,
+            tlsAllowInvalidCertificates=False,
         )
         db = client[db_name]
         await init_beanie(
