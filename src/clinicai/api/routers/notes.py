@@ -32,6 +32,18 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 logger = logging.getLogger("clinicai")
 
 
+@router.options("/transcribe")
+async def transcribe_audio_options():
+    """Handle preflight OPTIONS request for transcribe endpoint."""
+    return {"message": "OK"}
+
+
+@router.get("/test-cors")
+async def test_cors():
+    """Test endpoint to verify CORS is working."""
+    return {"message": "CORS is working", "timestamp": "2024-01-01T00:00:00Z"}
+
+
 @router.post(
     "/transcribe",
     response_model=AudioTranscriptionResponse,
@@ -60,6 +72,21 @@ async def transcribe_audio(
     4. Updates visit status to soap_generation
     5. Cleans up temporary file
     """
+    logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}")
+    logger.info(f"Audio file: {audio_file.filename}, content_type: {audio_file.content_type}, size: {audio_file.size}")
+    
+    # Check if this is a preflight request
+    if not audio_file.filename:
+        logger.warning("Received request without audio file - might be preflight")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "NO_AUDIO_FILE",
+                "message": "No audio file provided",
+                "details": {},
+            },
+        )
+    
     temp_file_path = None
     
     try:

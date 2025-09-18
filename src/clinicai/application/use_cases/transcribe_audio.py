@@ -103,7 +103,7 @@ class TranscribeAudioUseCase:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    max_tokens=min(2200, settings.openai.max_tokens),
+                    max_tokens=min(8000, settings.openai.max_tokens),
                     temperature=0.0,
                     top_p=0.9,
                     presence_penalty=0.0,

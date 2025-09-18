@@ -42,7 +42,7 @@ class OpenAISettings(BaseSettings):
 
     api_key: str = Field(default="", description="OpenAI API key")
     model: str = Field(default="gpt-4", description="Default OpenAI model")
-    max_tokens: int = Field(default=4000, description="Maximum tokens for responses")
+    max_tokens: int = Field(default=8000, description="Maximum tokens for responses")
     temperature: float = Field(
         default=0.7, description="Temperature for model responses"
     )

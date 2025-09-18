@@ -4,9 +4,10 @@ FastAPI application factory and main app configuration.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import logging
 
 from .api.routers import health, patients, notes, prescriptions
 from .core.config import get_settings
@@ -91,7 +92,21 @@ def create_app() -> FastAPI:
     allow_headers = settings.cors.allowed_headers or ["*"]
     if allow_headers != ["*"] and "content-type" not in {h.lower() for h in allow_headers}:
         allow_headers = [*allow_headers, "content-type"]
+    
+    # Add specific headers for file uploads
+    if allow_headers != ["*"]:
+        upload_headers = ["content-type", "content-disposition", "authorization", "x-requested-with"]
+        for header in upload_headers:
+            if header not in {h.lower() for h in allow_headers}:
+                allow_headers.append(header)
 
+    # Debug CORS configuration
+    print(f"🔧 CORS Configuration:")
+    print(f"   - Origins: * (all)")
+    print(f"   - Methods: {allow_methods}")
+    print(f"   - Headers: {allow_headers}")
+    print(f"   - Credentials: False")
+    
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -99,7 +114,38 @@ def create_app() -> FastAPI:
         allow_methods=allow_methods,
         allow_headers=allow_headers,
         max_age=600,
+        expose_headers=["*"],  # Expose all headers to client
     )
+    
+    # Add request logging middleware for debugging
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        logger = logging.getLogger("clinicai")
+        logger.info(f"🌐 {request.method} {request.url.path} from {request.client.host if request.client else 'unknown'}")
+        logger.info(f"   Headers: {dict(request.headers)}")
+        
+        response = await call_next(request)
+        
+        logger.info(f"   Response: {response.status_code}")
+        return response
+    
+    # Add explicit CORS headers for all responses
+    @app.middleware("http")
+    async def add_cors_headers(request: Request, call_next):
+        # Handle preflight OPTIONS requests
+        if request.method == "OPTIONS":
+            response = JSONResponse(content={"message": "OK"})
+        else:
+            response = await call_next(request)
+        
+        # Add CORS headers to all responses
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "600"
+        
+        return response
 
     # Include routers
     app.include_router(health.router)
