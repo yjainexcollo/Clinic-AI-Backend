@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     try:
         from beanie import init_beanie  # type: ignore
         from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
+        import certifi  # type: ignore
 
         # Import models for registration
         from .adapters.db.mongo.models.patient_m import (
@@ -33,10 +34,15 @@ async def lifespan(app: FastAPI):
         )
         # stable_* models removed
 
-        # Use configured URI and fail fast in dev with shorter selection timeout
+        # Use configured URI and enable TLS with CA bundle for Atlas
         mongo_uri = settings.database.uri
         db_name = settings.database.db_name
-        client = AsyncIOMotorClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client = AsyncIOMotorClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=10000,
+            tls=True,
+            tlsCAFile=certifi.where(),
+        )
         db = client[db_name]
         await init_beanie(
             database=db,
