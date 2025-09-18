@@ -144,7 +144,7 @@ class OpenAIQuestionService(QuestionService):
         ):
             return "family"
         if any(k in t for k in ["smoke", "alcohol", "diet", "exercise", "occupation", "work", "exposure", "routine"]):
-            return "social"
+            return "lifestyle"
         if any(k in t for k in ["pregnan", "gyneco", "obstet", "menstru", "period", "lmp", "vaginal"]):
             return "gyn"
         if any(k in t for k in ["functional", "mobility", "walk", "daily activity", "impair", "adl"]):
@@ -330,7 +330,7 @@ No lists, no category names, no explanations.
             "medications",
             "hpi",
             "family",
-            "social",
+            "lifestyle",
             "gyn",
             "functional",
         ]
@@ -385,7 +385,7 @@ No lists, no category names, no explanations.
                 return "Have you had any recent acute symptoms like fever, cough, chest pain, stomach pain, or infection?"
             if key == "family":
                 return "Does anyone in your family have diabetes, hypertension, heart disease, cancer, or similar conditions?"
-            if key == "social":
+            if key == "lifestyle":
                 return "Are there any lifestyle factors—diet, exercise, occupation, or exposures—relevant to your symptoms?"
             if key == "gyn":
                 return "If applicable, when was your last menstrual period and are your cycles regular?"
@@ -430,7 +430,7 @@ No lists, no category names, no explanations.
                 "medications",
                 "hpi",
                 "family",
-                "social",
+                "lifestyle",
                 "gyn",
                 "functional",
             }
@@ -485,7 +485,7 @@ No lists, no category names, no explanations.
             "  Temporal pattern, Severity (1–10), Associated symptoms, Relevant negatives.\n"
             "  Keep it natural and coherent (e.g., \"The patient reports …\"). If some OLDCARTS elements are unknown, simply omit them (do not write placeholders).\n"
             "- History: One line combining any patient-reported items using semicolons in this order if present:\n"
-            "  Medical: …; Surgical: …; Family: …; Social: …\n"
+            "  Medical: …; Surgical: …; Family: …; Lifestyle: …\n"
             "  (Include only parts provided by the patient; omit absent parts entirely.)\n"
             "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list.\n"
             "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them.\n\n"
