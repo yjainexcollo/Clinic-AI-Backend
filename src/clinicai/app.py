@@ -76,33 +76,20 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
-    # Always include common local dev origins; merge with configured origins
-    common_local_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-    configured_origins = settings.cors.allowed_origins or []
-    allow_origins = list({*common_local_origins, *configured_origins}) or ["*"]
-
+    # Allow all origins (no credentials) to resolve preflight failures
     allow_methods = settings.cors.allowed_methods or ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
-    # Ensure PATCH and OPTIONS are always allowed for browser preflights
     allow_methods = list({m.upper() for m in allow_methods} | {"PATCH", "OPTIONS"})
     allow_headers = settings.cors.allowed_headers or ["*"]
-    # Ensure common headers present
     if allow_headers != ["*"] and "content-type" not in {h.lower() for h in allow_headers}:
         allow_headers = [*allow_headers, "content-type"]
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_origin_regex=r"https?://.*",
-        allow_credentials=settings.cors.allow_credentials,
+        allow_origins=["*"],
+        allow_credentials=False,
         allow_methods=allow_methods,
         allow_headers=allow_headers,
+        max_age=600,
     )
 
     # Include routers
