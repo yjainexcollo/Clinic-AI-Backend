@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: clinic-ai-backend
+    env: docker
+    plan: free   # change to "starter" or "standard" if you need more resources
+    dockerfilePath: docker/Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    build:
+      args:
+        WHISPER_MODEL: tiny
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: WHISPER_MODEL
+        value: tiny
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: clinicai
