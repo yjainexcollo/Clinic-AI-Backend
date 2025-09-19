@@ -38,6 +38,142 @@ AI-powered clinic management system with speech-to-text, large language model in
   - HIPAA-compliant data handling
   - Secure external service integration
 
+## 🧱 Architecture and Tech Stack (Backend)
+
+This backend follows Clean Architecture and domain-driven design. Responsibilities are separated into presentation (APIs), application (use cases), domain (entities, value objects), and infrastructure (adapters for DB, AI, storage). Below is a concrete mapping of each tool/technology, why it is used, and where it lives in the codebase.
+
+### Core Runtime
+- **Python 3.11**: Modern typing, performance improvements, and ecosystem compatibility for async workloads.
+- **Uvicorn** (`uvicorn[standard]`): ASGI server to run FastAPI in production/dev.
+  - Used via `make dev` and `src/clinicai/app.py` app factory.
+
+### Web Framework & API Layer
+- **FastAPI**: High-performance async web framework with automatic OpenAPI.
+  - Entry/app wiring: `src/clinicai/app.py`
+  - Routers (presentation layer):
+    - `api/routers/patients.py` – intake lifecycle, pre-visit summary
+    - `api/routers/notes.py` – transcription, SOAP generation, retrieval
+    - `api/routers/prescriptions.py` – prescription upload & analysis
+    - `api/routers/health.py` – health and readiness
+  - Schemas (request/response models): `api/schemas/*`
+  - Dependencies: `api/deps.py`
+
+### Validation & Settings
+- **Pydantic v2** (`pydantic`, `pydantic-settings`): Data validation and typed settings.
+  - Settings/config: `core/config.py` (loads env like `MONGO_DB_NAME`, models, limits)
+  - DTOs: `application/dto/*` and `api/schemas/*`
+
+### Database & Persistence
+- **MongoDB** with **Motor** (async driver) and **Beanie** (ODM): Flexible document storage for patients, visits, transcripts, SOAP, etc.
+  - Models: `adapters/db/mongo/models/*` (e.g., `patient_m.py`)
+  - Repositories: `adapters/db/mongo/repositories/*` (e.g., `patient_repository.py`)
+  - Unit of Work: `application/uow.py`
+  - Notes:
+    - Connection configured in `core/config.py` and app bootstrap `bootstrap.py`/`app.py`.
+    - `dnspython` and `certifi` support SRV and TLS trust stores.
+
+### Caching & State
+- **Redis**: Optional caching/session layer for low-latency operations.
+  - Accessed via adapters/utilities when enabled (see `core/config.py`).
+
+### AI & NLP Services
+- **OpenAI** (`openai`):
+  - Intake Q&A, next-question generation, and pre-visit summaries.
+  - Files: `adapters/external/question_service_openai.py`, `adapters/external/soap_service_openai.py`
+  - Config: `OPENAI_API_KEY`, `OPENAI_MODEL`, `SOAP_MODEL`, token/temperature limits in `.env` via `core/config.py`.
+
+- **Mistral AI** (`mistralai`):
+  - Prescription understanding from images; structured extraction of medicines/tests/instructions.
+  - File: `adapters/external/prescription_service_mistral.py`
+  - Config: `MISTRAL_API_KEY` via `core/config.py`.
+
+### Speech-to-Text & Audio Processing (Step‑03)
+- **OpenAI Whisper** (`openai-whisper`, `torch`, `torchaudio`): Local/hosted transcription of consultations.
+  - File: `adapters/external/transcription_service_whisper.py`
+  - API route: `api/routers/notes.py` → `POST /notes/transcribe`
+  - System dependency: `ffmpeg` (see Quick Start).
+
+### Security & Auth
+- **python-jose[cryptography]**: JWT creation/verification; future-proofing for auth.
+- **passlib[bcrypt]**: Password hashing if/when user auth is enabled.
+- **python-multipart**: Multipart parsing for audio/image uploads.
+  - Usage: `api/routers/notes.py` and `api/routers/prescriptions.py` handle multipart forms.
+
+### HTTP & Async IO
+- **httpx**, **aiohttp**: Async HTTP clients for calling external AI or webhooks when needed.
+  - Used within external adapters and future integrations.
+
+### Observability
+- **structlog**: Structured logging with context-rich events.
+  - Config: `observability/logging_conf.py`
+  - Usage across layers via logger injection.
+- Custom modules:
+  - `observability/tracing.py` – tracing hooks (extensible for OpenTelemetry)
+  - `observability/metrics.py` – counters/histograms (extensible for Prometheus)
+  - `observability/audit.py` – audit logging for PHI-sensitive events
+
+### Error Handling & Exceptions
+- Centralized exceptions in `core/exceptions.py` and `domain/errors.py`.
+- API-level error handlers in router layer; consistent 4xx/5xx mapping.
+
+### Utilities & Core
+- `core/utils/*`: datetime, strings, crypto helpers, OCR scaffolding, patient matching.
+- `core/container.py`: DI/service registry for ports/adapters.
+- `bootstrap.py`: Wiring of infrastructure and app startup.
+
+### Testing & Quality
+- **pytest**, **pytest-asyncio**, **pytest-cov**: Unit/integration/e2e tests with coverage.
+- **black**, **isort**, **flake8**, **mypy**: Formatting, import order, linting, and static typing.
+  - Commands: `make test`, `make lint`, `make format`.
+
+### Packaging & Dependencies
+- `requirements.txt`: Runtime and dev dependencies (pinned by ranges).
+- `pyproject.toml`: Tooling config, project metadata.
+
+### Containerization & Local Dev
+- **Docker** and **docker-compose**: Local orchestration of API, MongoDB, Redis.
+  - Files: `docker/Dockerfile`, `docker-compose.yml`, `docker/mongo-init/`
+  - Make targets: `make docker-build`, `make docker-run`.
+
+### API Schema & Docs
+- OpenAPI/Swagger auto-generated by FastAPI at `/docs` and `/openapi.json`.
+- Hand-authored API reference: `swagger.yaml` (source of truth for external consumers).
+
+### Data Privacy & Compliance
+- No training on PHI; prompts/responses are not persisted beyond required storage.
+- Full audit logging for significant actions; transport secured via TLS.
+- Encryption utilities available in `core/utils/crypto.py` and `crypto_utils.py`.
+
+### Service-by-Service Mapping
+- Patients & Intake (Step‑01/02):
+  - Routes: `api/routers/patients.py`
+  - External services: `question_service_openai.py` (next question, completion), `soap_service_openai.py` (pre-visit summary when applicable)
+  - Persistence: `adapters/db/mongo/...`
+
+- Notes: Transcription & SOAP (Step‑03):
+  - Routes: `api/routers/notes.py`
+  - External services: `transcription_service_whisper.py` (STT), `soap_service_openai.py` (SOAP)
+  - Persistence: transcripts/SOAP stored via Mongo repositories
+
+- Prescriptions:
+  - Routes: `api/routers/prescriptions.py`
+  - External services: `prescription_service_mistral.py`
+  - Storage of results and raw text via Mongo repositories
+
+- Health & Readiness:
+  - Route: `api/routers/health.py`
+  - Checks DB, cache, and overall service liveness
+
+### Configuration Snapshot (env)
+- `MONGO_URI`, `MONGO_DB_NAME` – database connection and DB name
+- `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MAX_TOKENS`, `OPENAI_TEMPERATURE`
+- `SOAP_MODEL`, `SOAP_MAX_TOKENS`, `SOAP_TEMPERATURE`
+- `WHISPER_MODEL`, `WHISPER_LANGUAGE`
+- `MISTRAL_API_KEY`
+- `AUDIO_MAX_SIZE_MB`, `AUDIO_ALLOWED_FORMATS`, `FILE_STORAGE_TYPE`
+
+Where to look: `core/config.py` centralizes reading and validation of these environment variables.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

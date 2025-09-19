@@ -37,7 +37,6 @@ async def lifespan(app: FastAPI):
         # Use configured URI
         mongo_uri = settings.database.uri
         db_name = settings.database.db_name
-        print(f"🗄️ Connecting to Mongo: {mongo_uri}")
 
         # Enable TLS only for Atlas SRV URIs
         if mongo_uri.startswith("mongodb+srv://"):
