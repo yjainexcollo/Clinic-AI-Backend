@@ -1,7 +1,7 @@
 """Note-related API endpoints for Step-03 functionality."""
 import logging
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from typing import Optional, Dict, Any
 import tempfile
 import os
@@ -46,9 +46,9 @@ async def test_cors():
 
 @router.post(
     "/transcribe",
-    response_model=AudioTranscriptionResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_202_ACCEPTED,
     responses={
+        202: {"description": "Queued for transcription"},
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
         422: {"model": ErrorResponse, "description": "Invalid audio file or visit status"},
@@ -58,150 +58,94 @@ async def test_cors():
 async def transcribe_audio(
     patient_repo: PatientRepositoryDep,
     transcription_service: TranscriptionServiceDep,
+    background: BackgroundTasks,
     patient_id: str = Form(...),
     visit_id: str = Form(...),
     audio_file: UploadFile = File(...),
 ):
-    """
-    Transcribe audio file for a visit.
-    
-    This endpoint:
-    1. Validates the audio file format and size
-    2. Saves the file temporarily
-    3. Transcribes using AI service
-    4. Updates visit status to soap_generation
-    5. Cleans up temporary file
-    """
+    """Queue audio transcription and return immediately (202)."""
     logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}")
-    logger.info(f"Audio file: {audio_file.filename}, content_type: {audio_file.content_type}, size: {audio_file.size}")
-    
-    # Check if this is a preflight request
+
     if not audio_file.filename:
-        logger.warning("Received request without audio file - might be preflight")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "NO_AUDIO_FILE",
-                "message": "No audio file provided",
-                "details": {},
-            },
+            detail={"error": "NO_AUDIO_FILE", "message": "No audio file provided", "details": {}},
         )
-    
-    # Log file details for debugging
-    logger.info(f"Processing audio file: {audio_file.filename}, size: {audio_file.size}, content_type: {audio_file.content_type}")
-    
-    temp_file_path = None
-    
-    try:
-        # Validate file type (allow common audio types and mpeg containers)
-        content_type = audio_file.content_type or ""
-        is_audio_like = content_type.startswith("audio/")
-        is_mpeg_container = content_type in ("video/mpeg",)
-        is_generic_stream = content_type in ("application/octet-stream",)
-        if not (is_audio_like or is_mpeg_container or is_generic_stream):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "INVALID_FILE_TYPE",
-                    "message": "File must be an audio file",
-                    "details": {"content_type": audio_file.content_type},
-                },
-            )
-        
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{audio_file.filename.split('.')[-1]}") as temp_file:
-            content = await audio_file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
-        
-        # Decode opaque patient id from client
-        try:
-            internal_patient_id = decode_patient_id(patient_id)
-            logger.info(f"Successfully decoded patient_id: {internal_patient_id}")
-        except Exception as e:
-            logger.warning(f"Failed to decode patient_id '{patient_id}': {e}")
-            # If decryption fails, try to use the raw patient_id if it's in the correct format
-            if '_' in patient_id and patient_id.count('_') >= 1:
-                internal_patient_id = patient_id
-                logger.info(f"Using raw patient_id as fallback: {internal_patient_id}")
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "INVALID_PATIENT_ID",
-                        "message": "Invalid patient ID format",
-                        "details": {"patient_id": patient_id},
-                    },
-                )
 
-        # Create request
-        request = AudioTranscriptionRequest(
-            patient_id=internal_patient_id,
-            visit_id=visit_id,
-            audio_file_path=temp_file_path
-        )
-        
-        # Execute use case
-        try:
-            use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
-            result = await use_case.execute(request)
-            logger.info(f"Transcription completed successfully for patient {internal_patient_id}")
-            return result
-        except Exception as e:
-            logger.error(f"Transcription use case failed: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": "TRANSCRIPTION_FAILED",
-                    "message": f"Transcription failed: {str(e)}",
-                    "details": {},
-                },
-            )
-        
-    except ValueError as e:
+    # Validate file type (allow common audio types and mpeg containers)
+    content_type = audio_file.content_type or ""
+    is_audio_like = content_type.startswith("audio/")
+    is_mpeg_container = content_type in ("video/mpeg",)
+    is_generic_stream = content_type in ("application/octet-stream",)
+    if not (is_audio_like or is_mpeg_container or is_generic_stream):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
-                "error": "INVALID_REQUEST",
-                "message": str(e),
-                "details": {},
+                "error": "INVALID_FILE_TYPE",
+                "message": "File must be an audio file",
+                "details": {"content_type": audio_file.content_type},
             },
         )
-    except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "PATIENT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
-    except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "VISIT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+
+    # Decode opaque patient id from client
+    try:
+        internal_patient_id = decode_patient_id(patient_id)
+    except Exception:
+        if '_' in patient_id and patient_id.count('_') >= 1:
+            internal_patient_id = patient_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_PATIENT_ID", "message": "Invalid patient ID format", "details": {}},
+            )
+
+    # Stream to temp file to avoid loading entire file in memory
+    temp_file_path = None
+    try:
+        suffix = f".{(audio_file.filename or 'audio').split('.')[-1]}"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file_path = temp_file.name
+            while True:
+                chunk = await audio_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                temp_file.write(chunk)
+
+        # Mark visit as queued if possible (best-effort via use case during processing)
+
+        async def _run_background():
+            try:
+                req = AudioTranscriptionRequest(
+                    patient_id=internal_patient_id,
+                    visit_id=visit_id,
+                    audio_file_path=temp_file_path,
+                )
+                use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
+                await use_case.execute(req)
+                logger.info(f"Transcription completed for patient {internal_patient_id}")
+            except Exception as e:
+                logger.error(f"Background transcription failed: {e}", exc_info=True)
+            finally:
+                try:
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                except Exception:
+                    pass
+
+        # Schedule background processing
+        asyncio.create_task(_run_background())
+
+        return {"status": "queued", "patient_id": internal_patient_id, "visit_id": visit_id}
+
+    except HTTPException:
+        # Reraise HTTPException directly
+        raise
     except Exception as e:
-        logger.error("Unhandled error in transcribe_audio", exc_info=True)
+        logger.error("Unhandled error queuing transcription", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
+            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
         )
-    finally:
-        # Clean up temporary file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception:
-                pass  # Ignore cleanup errors
 
 
 @router.post(
