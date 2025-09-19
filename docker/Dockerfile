@@ -22,8 +22,7 @@ RUN pip install -e .
 
 # Prefetch Whisper model at build time to avoid large downloads on first boot
 # You can override WHISPER_MODEL via build-arg (tiny|base|small|medium|large)
-ARG WHISPER_MODEL=base
-ENV WHISPER_MODEL=${WHISPER_MODEL}
+ENV WHISPER_MODEL=tiny
 ENV XDG_CACHE_HOME=/root/.cache
 ENV WHISPER_CACHE_DIR=/root/.cache/whisper
 RUN python - <<'PYCODE'
