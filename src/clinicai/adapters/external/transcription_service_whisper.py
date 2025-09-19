@@ -18,8 +18,21 @@ class WhisperTranscriptionService(TranscriptionService):
 
     def __init__(self):
         self._settings = get_settings()
-        # Load Whisper model from configuration
-        self._model = whisper.load_model(self._settings.whisper.model)
+        # Prepare cache directory if configured
+        download_root = None
+        cache_dir = self._settings.whisper.cache_dir
+        if cache_dir:
+            try:
+                Path(cache_dir).mkdir(parents=True, exist_ok=True)
+                download_root = cache_dir
+            except Exception:
+                download_root = None
+
+        # Load Whisper model from configuration with optional persistent download root
+        if download_root:
+            self._model = whisper.load_model(self._settings.whisper.model, download_root=download_root)
+        else:
+            self._model = whisper.load_model(self._settings.whisper.model)
 
     async def transcribe_audio(
         self, 

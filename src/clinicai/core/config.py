@@ -138,6 +138,10 @@ class WhisperSettings(BaseSettings):
     model: str = Field(default="base", description="Whisper model size")
     language: str = Field(default="en", description="Audio language")
     medical_context: bool = Field(default=True, description="Enable medical context processing")
+    cache_dir: Optional[str] = Field(
+        default=None,
+        description="Directory to cache Whisper model weights (set to persistent disk on Render)"
+    )
 
     @validator("model")
     def validate_model(cls, v: str) -> str:
