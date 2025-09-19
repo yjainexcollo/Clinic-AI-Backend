@@ -20,21 +20,7 @@ COPY pyproject.toml .
 # Install the package
 RUN pip install -e .
 
-# Prefetch Whisper model at build time to avoid large downloads on first boot
-# You can override WHISPER_MODEL via build-arg (tiny|base|small|medium|large)
-ARG WHISPER_MODEL=tiny
-ENV WHISPER_MODEL=${WHISPER_MODEL}
-ENV XDG_CACHE_HOME=/root/.cache
-ENV WHISPER_CACHE_DIR=/root/.cache/whisper
-RUN python - <<'PYCODE'
-import os
-import whisper
-model = os.environ.get('WHISPER_MODEL','tiny')
-download_root = os.environ.get('WHISPER_CACHE_DIR')
-print(f"Prefetching Whisper model: {model} → {download_root}")
-whisper.load_model(model, download_root=download_root)
-print("Whisper model cached.")
-PYCODE
+# Whisper prefetch disabled to reduce image size and memory during build
 
 # Expose port (Render provides $PORT at runtime)
 EXPOSE 10000

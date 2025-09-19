@@ -19,32 +19,15 @@ class WhisperTranscriptionService(TranscriptionService):
     def __init__(self):
         self._settings = get_settings()
         self._model = None
-        self._download_root = None
-        
-        # Prepare cache directory if configured
-        cache_dir = self._settings.whisper.cache_dir
-        if cache_dir:
-            try:
-                Path(cache_dir).mkdir(parents=True, exist_ok=True)
-                self._download_root = cache_dir
-            except Exception:
-                self._download_root = None
+        self._download_root = None  # cache disabled per deployment request
 
     def _get_model(self):
         """Lazy load the Whisper model only when needed."""
         if self._model is None:
-            try:
-                print(f"Loading Whisper model: {self._settings.whisper.model}")
-                if self._download_root:
-                    print(f"Using cache directory: {self._download_root}")
-                    self._model = whisper.load_model(self._settings.whisper.model, download_root=self._download_root)
-                else:
-                    print("Using default cache location")
-                    self._model = whisper.load_model(self._settings.whisper.model)
-                print("Whisper model loaded successfully")
-            except Exception as e:
-                print(f"Error loading Whisper model: {e}")
-                raise
+            print(f"Loading Whisper model: {self._settings.whisper.model}")
+            # Load without explicit download_root (let whisper handle temp cache)
+            self._model = whisper.load_model(self._settings.whisper.model)
+            print("Whisper model loaded successfully")
         return self._model
 
     async def transcribe_audio(

@@ -12,7 +12,6 @@ import logging
 from .api.routers import health, patients, notes, prescriptions
 from .core.config import get_settings
 from .domain.errors import DomainError
-from .api.deps import get_transcription_service
 import asyncio
 
 
@@ -67,15 +66,7 @@ async def lifespan(app: FastAPI):
         print(f"❌ Database connection failed: {e}")
         raise
 
-    # Warm Whisper model once per process so first user request is fast
-    try:
-        svc = get_transcription_service()
-        loop = asyncio.get_event_loop()
-        if hasattr(svc, "_get_model"):
-            await loop.run_in_executor(None, getattr(svc, "_get_model"))
-        print("✅ Whisper model warm-up successful")
-    except Exception as e:
-        print(f"⚠️ Whisper warm-up skipped: {e}")
+    # Whisper warm-up disabled to reduce startup memory footprint
 
     yield
 
