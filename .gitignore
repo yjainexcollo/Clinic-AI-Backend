@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+scripts/deploy_cloud_run.sh
+
 # C extensions
 *.so
 

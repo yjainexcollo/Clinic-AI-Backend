@@ -12,7 +12,7 @@ from clinicai.adapters.db.mongo.repositories.patient_repository import (
     MongoPatientRepository,
 )
 from clinicai.adapters.external.question_service_openai import OpenAIQuestionService
-from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
+from clinicai.adapters.external.transcription_service_openai import OpenAITranscriptionService
 from clinicai.adapters.external.soap_service_openai import OpenAISoapService
 from clinicai.application.ports.repositories.patient_repo import PatientRepository
 from clinicai.application.ports.services.question_service import QuestionService
@@ -46,7 +46,7 @@ def get_transcription_service() -> TranscriptionService:
     """Get transcription service instance (singleton)."""
     global _TRANSCRIPTION_SERVICE_SINGLETON
     if _TRANSCRIPTION_SERVICE_SINGLETON is None:
-        _TRANSCRIPTION_SERVICE_SINGLETON = WhisperTranscriptionService()
+        _TRANSCRIPTION_SERVICE_SINGLETON = OpenAITranscriptionService()
     return _TRANSCRIPTION_SERVICE_SINGLETON
 
 
