@@ -15,19 +15,23 @@ class PatientId:
     value: str
 
     def __post_init__(self) -> None:
-        """Validate patient ID format."""
+        """Validate patient ID format.
+
+        Relaxed in dev: allow any non-empty string so opaque tokens
+        (e.g., Fernet) or raw internal IDs are accepted.
+        """
         if not self.value:
             raise ValueError("Patient ID cannot be empty")
 
         if not isinstance(self.value, str):
             raise ValueError("Patient ID must be a string")
 
-        # Validate format: {patient_name}_{patient_phone_number}
-        pattern = r"^[a-zA-Z0-9_]+_\d+$"
-        if not re.match(pattern, self.value):
-            raise ValueError(
-                "Patient ID must follow format: {PATIENT_NAME}_{PATIENT_PHONE_NUMBER}"
-            )
+        # NOTE: Strict format enforcement disabled to support opaque tokens
+        # pattern = r"^[a-zA-Z0-9_]+_\d+$"
+        # if not re.match(pattern, self.value):
+        #     raise ValueError(
+        #         "Patient ID must follow format: {PATIENT_NAME}_{PATIENT_PHONE_NUMBER}"
+        #     )
 
     def __str__(self) -> str:
         """String representation."""

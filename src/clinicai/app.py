@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
         from .adapters.db.mongo.models.patient_m import (
             PatientMongo,
             VisitMongo,
+            MedicationImageMongo,
         )
 
         # Use configured URI
@@ -59,7 +60,7 @@ async def lifespan(app: FastAPI):
         db = client[db_name]
         await init_beanie(
             database=db,
-            document_models=[PatientMongo, VisitMongo],
+            document_models=[PatientMongo, VisitMongo, MedicationImageMongo],
         )
         print("✅ Database connection established")
     except Exception as e:

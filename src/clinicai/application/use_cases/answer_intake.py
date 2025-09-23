@@ -65,54 +65,9 @@ class AnswerIntakeUseCase:
                 )
 
         # Add the question and answer
-        # Extract OCR texts from embedded markers in answer if present
-        ocr_texts: list[str] = []
-        ocr_quality_info = None
-        
-        if "[OCR]:" in request.answer:
-            try:
-                marker = request.answer.split("[OCR]:", 1)[1].strip()
-                # split on '|' separator when we added multiple texts
-                parts = [p.strip() for p in marker.split("|") if p.strip()]
-                if parts:
-                    ocr_texts = parts
-            except Exception:
-                ocr_texts = []
-        
-        # Process OCR quality if we have image attachments
-        if request.attachment_image_paths and len(request.attachment_image_paths) > 0:
-            # Use the first image for quality assessment
-            first_image_path = request.attachment_image_paths[0]
-            try:
-                from clinicai.core.utils.image_ocr import extract_text_with_quality
-                ocr_result = extract_text_with_quality(first_image_path)
-                
-                ocr_quality_info = OCRQualityInfo(
-                    quality=ocr_result.quality,
-                    confidence=ocr_result.confidence,
-                    extracted_text=ocr_result.text,
-                    extracted_medications=ocr_result.extracted_medications,
-                    suggestions=ocr_result.suggestions,
-                    word_count=ocr_result.word_count,
-                    has_medication_keywords=ocr_result.has_medication_keywords
-                )
-            except Exception:
-                # If OCR processing fails, create a failed quality info
-                ocr_quality_info = OCRQualityInfo(
-                    quality="failed",
-                    confidence=0.0,
-                    extracted_text="",
-                    extracted_medications=[],
-                    suggestions=["OCR processing failed. Please try uploading a clearer image."],
-                    word_count=0,
-                    has_medication_keywords=False
-                )
-        
         visit.add_question_answer(
             current_question,
             request.answer,
-            attachment_image_paths=request.attachment_image_paths,
-            ocr_texts=ocr_texts or None,
         )
         # If this is the first answer, set the visit.symptom from patient's response
         if visit.symptom == "" and visit.intake_session.current_question_count == 1:
@@ -209,7 +164,6 @@ class AnswerIntakeUseCase:
             completion_percent=completion_percent,
             message=message,
             allows_image_upload=allows_image_upload,
-            ocr_quality=ocr_quality_info,
         )
 
     async def edit(self, request: EditAnswerRequest) -> EditAnswerResponse:
@@ -230,27 +184,9 @@ class AnswerIntakeUseCase:
         if idx < 0 or idx >= len(visit.intake_session.questions_asked):
             raise ValueError("Invalid question_number")
 
-        # Apply edit (update answer and any attachments/ocr markers)
+        # Apply edit (update answer)
         qa = visit.intake_session.questions_asked[idx]
         qa.answer = request.new_answer.strip()
-        # Parse markers for attachments and OCR
-        try:
-            if "[IMAGES]:" in qa.answer:
-                # extract comma-separated paths after [IMAGES]:
-                trailing = qa.answer.split("[IMAGES]:", 1)[1]
-                first_line = trailing.split("\n", 1)[0]
-                paths = [p.strip() for p in first_line.split(",") if p.strip()]
-                if paths:
-                    qa.attachment_image_paths = paths
-            if "[OCR]:" in qa.answer:
-                trailing = qa.answer.split("[OCR]:", 1)[1]
-                first_line = trailing.split("\n", 1)[0]
-                texts = [p.strip() for p in first_line.split("|") if p.strip()]
-                if texts:
-                    qa.ocr_texts = texts
-        except Exception:
-            # ignore parsing errors; keep best-effort
-            pass
 
         # Truncate all questions AFTER the edited one to allow dynamic regeneration
         visit.truncate_questions_after(request.question_number)

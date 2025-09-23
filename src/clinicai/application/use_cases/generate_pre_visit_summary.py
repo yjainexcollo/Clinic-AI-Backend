@@ -52,6 +52,26 @@ class GeneratePreVisitSummaryUseCase:
             patient_data, intake_answers
         )
 
+        # Attach references to any uploaded medication images for this visit
+        try:
+            from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+            docs = await MedicationImageMongo.find(
+                MedicationImageMongo.patient_id == visit.patient_id,
+                MedicationImageMongo.visit_id == visit.visit_id.value,
+            ).to_list()
+            if docs:
+                summary_result["medication_images"] = [
+                    {
+                        "id": str(getattr(d, "id", "")),
+                        "filename": getattr(d, "filename", "unknown"),
+                        "content_type": getattr(d, "content_type", ""),
+                    }
+                    for d in docs
+                ]
+        except Exception:
+            # Non-fatal if images cannot be listed
+            pass
+
         # Store minimal summary in visit for EHR
         visit.store_pre_visit_summary(summary_result["summary"])
 
@@ -63,4 +83,5 @@ class GeneratePreVisitSummaryUseCase:
             visit_id=visit.visit_id.value,
             summary=summary_result["summary"],
             generated_at=visit.updated_at.isoformat(),
+            medication_images=summary_result.get("medication_images") if isinstance(summary_result, dict) else None,
         )

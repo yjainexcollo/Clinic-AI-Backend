@@ -27,7 +27,10 @@ class RegisterPatientRequest(BaseModel):
 
     first_name: str = Field(..., min_length=1, max_length=40, description="Patient first name")
     last_name: str = Field(..., min_length=1, max_length=40, description="Patient last name")
-    mobile: str = Field(..., min_length=8, max_length=16, description="Phone in E.164 format: +[country][national number]")
+    mobile: str = Field(
+        ..., min_length=8, max_length=16,
+        description="Phone in E.164 (+country and 7-14 digits) or 8-16 local digits"
+    )
     age: int = Field(..., ge=0, le=120, description="Patient age (0-120)")
     gender: str = Field(..., description="Patient gender (e.g., male, female, other)")
     recently_travelled: bool = Field(False, description="Has the patient travelled recently")
@@ -42,13 +45,16 @@ class RegisterPatientRequest(BaseModel):
 
     @validator("mobile")
     def validate_mobile(cls, v):
-        # Accept generic E.164 phones: +[1-9][7-14 digits]
-        # (overall 8-16 chars incl '+')
+        # Relaxed validation: accept either E.164 (+country and 7-14 digits) OR 8-16 local digits
         import re
         s = (v or "").strip()
-        if not re.fullmatch(r"^\+[1-9]\d{7,14}$", s):
-            raise ValueError("Phone must be E.164 (+ country code followed by 7-14 digits), e.g., +14155552671")
-        return s
+        if re.fullmatch(r"^\+[1-9]\d{7,14}$", s):
+            return s
+        if re.fullmatch(r"^\d{8,16}$", s):
+            return s
+        raise ValueError(
+            "Phone must be E.164 (+country code and 7-14 digits) or 8-16 local digits"
+        )
 
     @validator("gender")
     def validate_gender(cls, v):
@@ -139,8 +145,6 @@ class QuestionAnswerSchema(BaseModel):
     answer: str = Field(..., description="Answer text")
     timestamp: datetime = Field(..., description="Timestamp")
     question_number: int = Field(..., description="Question number in sequence")
-    attachment_image_paths: Optional[List[str]] = Field(None, description="Paths to attached images")
-    ocr_texts: Optional[List[str]] = Field(None, description="OCR extracted text from images")
 
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
@@ -208,3 +212,6 @@ class PreVisitSummaryResponse(BaseModel):
     visit_id: str = Field(..., description="Visit ID")
     summary: str = Field(..., description="Clinical summary in markdown/plain text")
     generated_at: str = Field(..., description="Summary generation timestamp")
+    medication_images: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Uploaded medication images metadata for the visit, if any"
+    )

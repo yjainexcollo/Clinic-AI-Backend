@@ -18,8 +18,6 @@ class QuestionAnswerMongo(BaseModel):
     answer: str = Field(..., description="Answer text")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     question_number: int = Field(..., description="Question number in sequence")
-    attachment_image_paths: Optional[List[str]] = Field(None, description="Local paths to attached images, if any")
-    ocr_texts: Optional[List[str]] = Field(None, description="Extracted OCR texts from images")
 
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
@@ -118,3 +116,17 @@ class PatientMongo(Document):
             "mobile",
             "created_at"
         ]
+
+
+class MedicationImageMongo(Document):
+    """MongoDB model for uploaded medication images linked to a visit."""
+    patient_id: str = Field(..., description="Patient ID reference")
+    visit_id: str = Field(..., description="Visit ID reference")
+    image_data: bytes = Field(..., description="Base64 encoded image data")
+    content_type: str = Field(..., description="MIME type of the image")
+    filename: str = Field(..., description="Original filename")
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "medication_images"
+        indexes = ["patient_id", "visit_id", "uploaded_at"]

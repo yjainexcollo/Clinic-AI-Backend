@@ -237,7 +237,6 @@ async def get_transcript(
     """Get transcript for a visit."""
     try:
         from ...domain.value_objects.patient_id import PatientId
-        from ...core.utils.crypto import decode_patient_id
         import urllib.parse
         
         # Find patient (decode opaque id from client)
@@ -253,7 +252,6 @@ async def get_transcript(
         try:
             patient_id_obj = PatientId(internal_patient_id)
         except ValueError as ve:
-            from fastapi import HTTPException, status
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={

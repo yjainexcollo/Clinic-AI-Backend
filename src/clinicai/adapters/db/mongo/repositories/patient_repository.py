@@ -141,8 +141,6 @@ class MongoPatientRepository(PatientRepository):
                         answer=qa.answer,
                         timestamp=qa.timestamp,
                         question_number=qa.question_number,
-                        attachment_image_paths=qa.attachment_image_paths,
-                        ocr_texts=qa.ocr_texts,
                     )
                     questions_asked_mongo.append(qa_mongo)
 
@@ -244,8 +242,6 @@ class MongoPatientRepository(PatientRepository):
                         answer=qa_mongo.answer,
                         timestamp=qa_mongo.timestamp,
                         question_number=qa_mongo.question_number,
-                        attachment_image_paths=qa_mongo.attachment_image_paths,
-                        ocr_texts=getattr(qa_mongo, "ocr_texts", None),
                     )
                     questions_asked.append(qa)
 

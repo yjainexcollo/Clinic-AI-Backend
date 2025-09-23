@@ -38,7 +38,6 @@ class AnswerIntakeRequest:
     patient_id: str
     visit_id: str
     answer: str
-    attachment_image_paths: Optional[List[str]] = None
 
 
 @dataclass

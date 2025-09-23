@@ -17,6 +17,6 @@ services:
       - key: MISTRAL_API_KEY
         sync: false
       - key: MONGO_URI
-        sync: false
+        value: mongodb+srv://clinicai:clinicai@cluster0.7j6rzof.mongodb.net/
       - key: MONGO_DB_NAME
         value: clinicai

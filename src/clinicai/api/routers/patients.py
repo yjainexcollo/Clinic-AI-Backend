@@ -39,6 +39,12 @@ from ..schemas.patient import (
     EditAnswerResponse as EditAnswerResponseSchema,
 )
 from ..schemas.patient import RegisterPatientRequest as RegisterPatientRequestSchema
+from fastapi import UploadFile, File, Form
+from fastapi.responses import Response
+from pathlib import Path
+from datetime import datetime
+import os
+from beanie import PydanticObjectId
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 logger = logging.getLogger("clinicai")
@@ -164,8 +170,16 @@ async def answer_intake_question(
         logger.info(f"[AnswerIntake] Incoming content-type: {content_type}")
         if content_type.startswith("application/json"):
             body = await request.json()
+            raw_pid = (body.get("patient_id", "").strip())
+            try:
+                internal_pid = decode_patient_id(raw_pid)
+            except Exception as e:
+                logger.warning("[AnswerIntake][JSON] Failed to decode patient_id '%s': %s; using raw value", raw_pid, e)
+                internal_pid = raw_pid
+            # If internal_pid looks like an opaque token (has non-alnum/underscore), don't construct PatientId later
+            # The use case accepts raw string; repository lookup will handle both forms.
             dto_request = AnswerIntakeRequest(
-                patient_id=decode_patient_id((body.get("patient_id", "").strip())),
+                patient_id=internal_pid,
                 visit_id=(body.get("visit_id", "").strip()),
                 answer=(body.get("answer", "").strip()),
             )
@@ -176,6 +190,12 @@ async def answer_intake_question(
                 form_patient_id = form_patient_id or (form.get("patient_id") or "").strip()
                 form_visit_id = form_visit_id or (form.get("visit_id") or "").strip()
                 form_answer = form_answer or (form.get("answer") or "").strip()
+            logger.info(
+                "[AnswerIntake][FORM] Received form fields: patient_id=%s visit_id=%s answer_len=%s",
+                (form_patient_id or "").strip(),
+                (form_visit_id or "").strip(),
+                len((form_answer or "").strip()),
+            )
 
             if not (form_patient_id and form_visit_id and form_answer):
                 raise HTTPException(
@@ -187,7 +207,6 @@ async def answer_intake_question(
                     },
                 )
 
-            image_paths: List[str] = []
             files: List[UploadFile] = medication_images or []
             if not files:
                 # Fallback to reading via form in case Swagger binds differently
@@ -203,41 +222,52 @@ async def answer_intake_question(
                     files = [f for f in candidates if getattr(f, "filename", None)]
                 except Exception:
                     files = []
+            
+            # Store images directly in database if any
             if files:
-                import os
-                from uuid import uuid4
-                from clinicai.core.utils.file_utils import create_directory
-                from clinicai.core.utils.image_ocr import extract_text_from_image
-
-                uploads_dir = os.getenv("UPLOADS_DIR", "/tmp/clinicai_uploads")
-                create_directory(uploads_dir)
-
-                ocr_texts: list[str] = []
-                logger.info(f"[AnswerIntake] Received {len(files)} file(s) for upload")
+                logger.info("[AnswerIntake] Received %d file(s) for upload", len(files))
+                try:
+                    for i, f in enumerate(files):
+                        logger.info("[AnswerIntake] File[%d]: name=%s type=%s", i, getattr(f, "filename", None), getattr(f, "content_type", None))
+                except Exception:
+                    pass
+                try:
+                    internal_pid = decode_patient_id(form_patient_id)
+                except Exception as e:
+                    logger.warning("[AnswerIntake][FORM] Failed to decode patient_id '%s': %s; using raw value", form_patient_id, e)
+                    internal_pid = form_patient_id
+                
+                # Store each image in database
+                from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
                 for file in files:
                     if isinstance(file, UploadFile) and file.filename:
-                        filename = f"med_{uuid4().hex}_{file.filename}"
-                        dest_path = os.path.join(uploads_dir, filename)
-                        with open(dest_path, "wb") as f:
-                            f.write(await file.read())
-                        image_paths.append(dest_path)
-                        # OCR extraction (best-effort)
-                        text = extract_text_from_image(dest_path)
-                        if text:
-                            ocr_texts.append(text)
-
-            # Pass images and OCR text through the answer payload via markers for downstream usage
-            if image_paths:
-                form_answer = f"{form_answer}\n[IMAGES]: {', '.join(image_paths)}"
-                if 'ocr_texts' in locals() and ocr_texts:
-                    form_answer = f"{form_answer}\n[OCR]: {' | '.join(ocr_texts)}"
+                        raw_ct = (file.content_type or "").lower()
+                        content_type = raw_ct.split(";")[0].strip().strip(",")
+                        valid_types = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
+                        if content_type in valid_types:
+                            content = await file.read()
+                            doc = MedicationImageMongo(
+                                patient_id=str(internal_pid),
+                                visit_id=str(form_visit_id),
+                                image_data=content,
+                                content_type=content_type,
+                                filename=file.filename,
+                            )
+                            await doc.insert()
+                            logger.info(f"[AnswerIntake] Stored image {file.filename} in database")
+                        else:
+                            logger.warning(f"[AnswerIntake] Skipping invalid file type: {content_type}")
+            
+            try:
+                internal_pid = decode_patient_id(form_patient_id)
+            except Exception as e:
+                logger.warning("[AnswerIntake][FORM] Failed to decode patient_id '%s': %s; using raw value", form_patient_id, e)
+                internal_pid = form_patient_id
             dto_request = AnswerIntakeRequest(
-                patient_id=decode_patient_id(form_patient_id),
+                patient_id=internal_pid,
                 visit_id=form_visit_id,
                 answer=form_answer,
-                attachment_image_paths=image_paths if image_paths else None,
             )
-            logger.info(f"[AnswerIntake] Attachment paths to persist: {image_paths}")
         else:
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -355,6 +385,232 @@ async def edit_intake_answer(
                 "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
             },
         )
+
+
+# Lightweight webhook to receive medication images during intake (per requirements)
+@router.post("/webhook/image")
+async def upload_medication_image(
+    image: UploadFile = File(...),
+    patient_id: str = Form(...),
+    visit_id: str = Form(...),
+):
+    try:
+        # Normalize/resolve patient id (opaque token from client → internal id)
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        # Validate content type
+        raw_ct = (image.content_type or "").lower()
+        content_type = raw_ct.split(";")[0].strip().strip(",")
+        valid_types = {"image/jpeg", "image/jpg", "image/png"}
+        if content_type not in valid_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "INVALID_FILE_TYPE",
+                    "message": f"Only jpg, jpeg, png allowed (got {content_type or 'unknown'})",
+                    "details": {},
+                },
+            )
+
+        # Read image data
+        content = await image.read()
+        
+        # Store DB record with image data
+        from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+        doc = MedicationImageMongo(
+            patient_id=str(internal_patient_id),
+            visit_id=str(visit_id),
+            image_data=content,
+            content_type=content_type,
+            filename=image.filename or "unknown",
+        )
+        inserted = await doc.insert()
+
+        return {
+            "status": "success",
+            "patient_id": internal_patient_id,
+            "visit_id": visit_id,
+            "id": str(getattr(inserted, "id", "")),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Unhandled error in upload_medication_image", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "message": "Failed to upload image",
+                "details": {"exception": str(e), "type": e.__class__.__name__},
+            },
+        )
+
+
+# Endpoint for multiple image uploads
+@router.post("/webhook/images")
+async def upload_multiple_medication_images(
+    request: Request,
+    patient_id: str = Form(...),
+    visit_id: str = Form(...),
+    images: Optional[List[UploadFile]] = File(None),
+):
+    try:
+        logger.info("[WebhookImages] Incoming upload for patient_id=%s visit_id=%s", patient_id, visit_id)
+        # Normalize/resolve patient id (opaque token from client → internal id)
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        valid_types = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
+        uploaded_images = []
+        errors = []
+        
+        # Prefer FastAPI-bound files; fallback to manual parse
+        file_list: List[UploadFile] = [f for f in (images or []) if getattr(f, "filename", None)]
+        if not file_list:
+            try:
+                form = await request.form()
+                candidates: List[UploadFile] = []
+                for key in ["images", "medication_images", "medication_image", "image", "file", "photo"]:
+                    try:
+                        items = form.getlist(key)
+                        for item in items:
+                            if isinstance(item, UploadFile) and getattr(item, "filename", None):
+                                candidates.append(item)
+                    except Exception:
+                        pass
+                file_list = candidates
+            except Exception:
+                file_list = []
+
+        logger.info("[WebhookImages] Parsed %d file(s) from form", len(file_list))
+        for i, image in enumerate(file_list):
+            try:
+                logger.info("[WebhookImages] File[%d]: name=%s type=%s", i, getattr(image, "filename", None), getattr(image, "content_type", None))
+            except Exception:
+                pass
+
+        # Store each image in database
+        from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+        for i, image in enumerate(file_list):
+            try:
+                # Validate content type
+                raw_ct = (image.content_type or "").lower()
+                content_type = raw_ct.split(";")[0].strip().strip(",")
+                if content_type not in valid_types:
+                    errors.append(f"Image {i+1}: Invalid file type {content_type}")
+                    continue
+                
+                # Read image data
+                content = await image.read()
+                
+                # Store DB record with image data
+                doc = MedicationImageMongo(
+                    patient_id=str(internal_patient_id),
+                    visit_id=str(visit_id),
+                    image_data=content,
+                    content_type=content_type,
+                    filename=image.filename or f"image_{i+1}",
+                )
+                inserted = await doc.insert()
+                
+                uploaded_images.append({
+                    "id": str(getattr(inserted, "id", "")),
+                    "filename": image.filename or f"image_{i+1}",
+                    "content_type": content_type
+                })
+                logger.info("[WebhookImages] Stored image[%d] id=%s filename=%s", i, str(getattr(inserted, "id", "")), image.filename or f"image_{i+1}")
+                
+            except Exception as e:
+                errors.append(f"Image {i+1}: {str(e)}")
+                logger.error(f"Error uploading image {i+1}: {e}")
+        
+        return {
+            "status": "success" if not errors else "partial_success",
+            "patient_id": internal_patient_id,
+            "visit_id": visit_id,
+            "uploaded_images": uploaded_images,
+            "errors": errors,
+            "total_uploaded": len(uploaded_images),
+            "total_errors": len(errors)
+        }
+    except Exception as e:
+        logger.error("Unhandled error in upload_multiple_medication_images", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "message": "Failed to upload images",
+                "details": {"exception": str(e), "type": e.__class__.__name__},
+            },
+        )
+
+
+# Stream image bytes by id
+@router.get("/images/{image_id}/content")
+async def get_medication_image_content(image_id: str):
+    from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+    try:
+        doc = await MedicationImageMongo.get(PydanticObjectId(image_id))
+        if not doc:
+            raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": "Image not found"})
+        return Response(content=doc.image_data, media_type=getattr(doc, "content_type", "application/octet-stream"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error reading medication image", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+# List uploaded images for a visit
+@router.get("/{patient_id}/visits/{visit_id}/images")
+async def list_medication_images(patient_id: str, visit_id: str):
+    from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+    try:
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        docs = await MedicationImageMongo.find(
+            MedicationImageMongo.patient_id == str(internal_patient_id),
+            MedicationImageMongo.visit_id == str(visit_id),
+        ).to_list()
+        return {
+            "patient_id": internal_patient_id,
+            "visit_id": visit_id,
+            "images": [
+                {
+                    "id": str(getattr(d, "id", "")),
+                    "filename": getattr(d, "filename", "unknown"),
+                    "content_type": getattr(d, "content_type", ""),
+                    "uploaded_at": getattr(d, "uploaded_at", None),
+                }
+                for d in docs
+            ],
+        }
+    except Exception as e:
+        logger.error("Error listing medication images", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+# Delete one uploaded image by id
+@router.delete("/images/{image_id}")
+async def delete_medication_image(image_id: str):
+    from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+    try:
+        doc = await MedicationImageMongo.get(PydanticObjectId(image_id))
+        if not doc:
+            raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": "Image not found"})
+        await doc.delete()
+        return {"status": "deleted", "id": image_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting medication image", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
 
 
 @router.post(
@@ -490,11 +746,27 @@ async def get_pre_visit_summary(
         # Get stored summary
         summary_data = visit.get_pre_visit_summary()
 
+        # Attach any uploaded medication images
+        from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+        docs = await MedicationImageMongo.find(
+            MedicationImageMongo.patient_id == patient.patient_id.value,
+            MedicationImageMongo.visit_id == visit.visit_id.value,
+        ).to_list()
+        images_meta = [
+            {
+                "id": str(getattr(d, "id", "")),
+                "filename": getattr(d, "filename", "unknown"),
+                "content_type": getattr(d, "content_type", ""),
+            }
+            for d in docs
+        ] if docs else None
+
         return PreVisitSummaryResponse(
             patient_id=encode_patient_id(patient.patient_id.value),
             visit_id=visit.visit_id.value,
             summary=summary_data["summary"],
             generated_at=summary_data["generated_at"],
+            medication_images=images_meta,
         )
 
     except PatientNotFoundError as e:

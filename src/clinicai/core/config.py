@@ -20,7 +20,7 @@ class DatabaseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MONGO_")
 
     uri: str = Field(
-        default="mongodb+srv://vishrutrela:Vishrut123@cluster0.idwtat0.mongodb.net/", description="MongoDB connection URI"
+        default="", description="MongoDB connection URI"
     )
     db_name: str = Field(default="clinicai", description="MongoDB database name")
     collection: str = Field(default="clinicAi", description="MongoDB collection name")
@@ -28,6 +28,8 @@ class DatabaseSettings(BaseSettings):
     @validator("uri")
     def validate_mongo_uri(cls, v: str) -> str:
         """Validate MongoDB URI format."""
+        if not v:
+            raise ValueError("MongoDB URI is required. Please set MONGO_URI environment variable.")
         if not v.startswith(("mongodb://", "mongodb+srv://")):
             raise ValueError(
                 "MongoDB URI must start with 'mongodb://' or 'mongodb+srv://'"
