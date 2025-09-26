@@ -116,8 +116,8 @@ class WhisperTranscriptionService(TranscriptionService):
                     "duration": 0
                 }
 
-            # Check file extension
-            valid_extensions = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mpeg', '.mpg']
+            # Check file extension (include browser-recorded WebM)
+            valid_extensions = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mpeg', '.mpg', '.webm']
             file_ext = Path(audio_file_path).suffix.lower()
             
             if file_ext not in valid_extensions:

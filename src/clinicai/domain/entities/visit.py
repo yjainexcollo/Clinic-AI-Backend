@@ -45,15 +45,14 @@ class IntakeSession:
         if self.symptom:
             self.symptom = self.symptom.strip()
 
-    def add_question_answer(self, question: str, answer: str) -> None:
-        """Add a question and answer to the intake."""
-        # Check if intake is already completed
-        if self.status == "completed":
-            raise IntakeAlreadyCompletedError(
-                "Cannot add questions to completed intake"
-            )
-
-        # Check question limit
+    def add_question_answer(
+        self,
+        question: str,
+        answer: str,
+        attachment_image_paths: Optional[List[str]] = None,
+        ocr_texts: Optional[List[str]] = None,
+    ) -> None:
+        # Check limit
         if self.current_question_count >= self.max_questions:
             raise QuestionLimitExceededError(
                 self.current_question_count, self.max_questions
@@ -151,6 +150,8 @@ class TranscriptionSession:
     error_message: Optional[str] = None
     audio_duration_seconds: Optional[float] = None
     word_count: Optional[int] = None
+    # Cached structured dialogue turns (ordered Doctor/Patient), to avoid re-structuring on the fly
+    structured_dialogue: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -190,6 +191,8 @@ class Visit:
     # Step 3: Audio Transcription & SOAP Generation
     transcription_session: Optional[TranscriptionSession] = None
     soap_note: Optional[SoapNote] = None
+    # Objective Vitals (optional)
+    vitals: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         """Initialize intake session."""
@@ -308,7 +311,7 @@ class Visit:
         self.status = "transcription"
         self.updated_at = datetime.utcnow()
 
-    def complete_transcription(self, transcript: str, audio_duration: Optional[float] = None) -> None:
+    def complete_transcription(self, transcript: str, audio_duration: Optional[float] = None, structured_dialogue: Optional[List[Dict[str, Any]]] = None) -> None:
         """Complete the transcription process."""
         if not self.transcription_session:
             raise ValueError("No active transcription session")
@@ -318,6 +321,10 @@ class Visit:
         self.transcription_session.completed_at = datetime.utcnow()
         self.transcription_session.audio_duration_seconds = audio_duration
         self.transcription_session.word_count = len(transcript.split()) if transcript else 0
+        
+        # Store structured dialogue if provided
+        if structured_dialogue:
+            self.transcription_session.structured_dialogue = structured_dialogue
         
         # Move to SOAP generation status
         self.status = "soap_generation"
@@ -352,6 +359,15 @@ class Visit:
         # Move to prescription analysis status
         self.status = "prescription_analysis"
         self.updated_at = datetime.utcnow()
+
+    def store_vitals(self, vitals: Dict[str, Any]) -> None:
+        """Store objective vitals for the visit."""
+        self.vitals = vitals or {}
+        self.updated_at = datetime.utcnow()
+
+    def get_vitals(self) -> Optional[Dict[str, Any]]:
+        """Get stored objective vitals, if any."""
+        return self.vitals
 
     def get_transcript(self) -> Optional[str]:
         """Get the transcript if available."""

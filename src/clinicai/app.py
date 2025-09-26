@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from .api.routers import health, patients, notes, prescriptions
+from .api.routers import transcription as transcription_router
 from .core.config import get_settings
 from .domain.errors import DomainError
 import asyncio
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
             PatientMongo,
             VisitMongo,
             MedicationImageMongo,
+            AdhocTranscriptMongo,
         )
 
         # Use configured URI
@@ -60,7 +62,7 @@ async def lifespan(app: FastAPI):
         db = client[db_name]
         await init_beanie(
             database=db,
-            document_models=[PatientMongo, VisitMongo, MedicationImageMongo],
+            document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo],
         )
         print("✅ Database connection established")
     except Exception as e:
@@ -155,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(patients.router)
     app.include_router(notes.router)
     app.include_router(prescriptions.router)
+    app.include_router(transcription_router.router)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)
@@ -200,11 +203,20 @@ async def root():
             "answer_intake": "POST /patients/consultations/answer",
             "pre_visit_summary": "POST /patients/summary/previsit",
             "get_summary": "GET /patients/{patient_id}/visits/{visit_id}/summary",
+            # Image upload endpoints
+            "upload_images": "POST /patients/webhook/images",
+            "upload_single_image": "POST /patients/webhook/image",
+            "get_image_content": "GET /patients/images/{image_id}/content",
+            "list_images": "GET /patients/{patient_id}/visits/{visit_id}/images",
+            "delete_image": "DELETE /patients/images/{image_id}",
             # Step-03 endpoints
             "transcribe_audio": "POST /notes/transcribe",
             "generate_soap": "POST /notes/soap/generate",
             "get_transcript": "GET /notes/{patient_id}/visits/{visit_id}/transcript",
             "get_soap": "GET /notes/{patient_id}/visits/{visit_id}/soap",
+            # Vitals endpoints
+            "store_vitals": "POST /notes/vitals",
+            "get_vitals": "GET /notes/{patient_id}/visits/{visit_id}/vitals",
             # Prescription endpoints
             "upload_prescriptions": "POST /prescriptions/upload",
         },

@@ -166,6 +166,7 @@ class MongoPatientRepository(PatientRepository):
                     error_message=visit.transcription_session.error_message,
                     audio_duration_seconds=visit.transcription_session.audio_duration_seconds,
                     word_count=visit.transcription_session.word_count,
+                    structured_dialogue=getattr(visit.transcription_session, "structured_dialogue", None),
                 )
 
             # Convert SOAP note
@@ -193,6 +194,7 @@ class MongoPatientRepository(PatientRepository):
                 pre_visit_summary=visit.pre_visit_summary,
                 transcription_session=transcription_session_mongo,
                 soap_note=soap_note_mongo,
+                vitals=visit.vitals,
             )
             visits_mongo.append(visit_mongo)
 
@@ -268,6 +270,7 @@ class MongoPatientRepository(PatientRepository):
                     error_message=visit_mongo.transcription_session.error_message,
                     audio_duration_seconds=visit_mongo.transcription_session.audio_duration_seconds,
                     word_count=visit_mongo.transcription_session.word_count,
+                    structured_dialogue=getattr(visit_mongo.transcription_session, "structured_dialogue", None),
                 )
 
             # Convert SOAP note
@@ -297,6 +300,8 @@ class MongoPatientRepository(PatientRepository):
                 transcription_session=transcription_session,
                 soap_note=soap_note,
             )
+            # Attach vitals if present
+            visit.vitals = getattr(visit_mongo, "vitals", None)
             visits.append(visit)
 
         return Patient(

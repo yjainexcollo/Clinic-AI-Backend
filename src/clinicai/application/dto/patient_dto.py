@@ -197,6 +197,25 @@ class PreVisitSummaryResponse:
     generated_at: str
 
 
+# Post-Visit Summary DTOs
+@dataclass
+class PostVisitSummaryRequest:
+    """Request DTO for generating post-visit summary."""
+
+    patient_id: str
+    visit_id: str
+
+
+@dataclass
+class PostVisitSummaryResponse:
+    """Response DTO for post-visit summary."""
+
+    patient_id: str
+    visit_id: str
+    summary: str
+    generated_at: str
+
+
 # Step-03: Audio Transcription & SOAP Generation DTOs
 @dataclass
 class AudioTranscriptionRequest:
@@ -268,3 +287,5 @@ class TranscriptionSessionDTO:
     error_message: Optional[str]
     audio_duration_seconds: Optional[float]
     word_count: Optional[int]
+    # Optional: cached structured dialogue (ordered Doctor/Patient turns)
+    structured_dialogue: Optional[List[Dict[str, Any]]] = None

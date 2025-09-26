@@ -52,6 +52,7 @@ class GenerateSoapNoteUseCase:
         # Get intake data and pre-visit summary
         intake_data = visit.get_intake_summary() if visit.is_intake_complete() else None
         pre_visit_summary = visit.get_pre_visit_summary()
+        vitals = visit.get_vitals()
 
         try:
             # Generate SOAP note
@@ -59,7 +60,8 @@ class GenerateSoapNoteUseCase:
                 transcript=transcript,
                 patient_context=patient_context,
                 intake_data=intake_data,
-                pre_visit_summary=pre_visit_summary
+                pre_visit_summary=pre_visit_summary,
+                vitals=vitals,
             )
 
             # Validate SOAP structure

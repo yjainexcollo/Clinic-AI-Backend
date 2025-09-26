@@ -215,3 +215,20 @@ class PreVisitSummaryResponse(BaseModel):
     medication_images: Optional[List[Dict[str, Any]]] = Field(
         None, description="Uploaded medication images metadata for the visit, if any"
     )
+
+
+# Post-Visit Summary Schemas
+class PostVisitSummaryRequest(BaseModel):
+    """Request schema for generating post-visit summary."""
+
+    patient_id: str = Field(..., description="Opaque Patient ID")
+    visit_id: str = Field(..., description="Visit ID")
+
+
+class PostVisitSummaryResponse(BaseModel):
+    """Response schema for post-visit summary."""
+
+    patient_id: str = Field(..., description="Patient ID")
+    visit_id: str = Field(..., description="Visit ID")
+    summary: str = Field(..., description="Post-consultation recap in markdown/plain text")
+    generated_at: str = Field(..., description="Summary generation timestamp")

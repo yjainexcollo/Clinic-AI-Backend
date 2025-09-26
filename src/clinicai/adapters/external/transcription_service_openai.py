@@ -66,6 +66,7 @@ class OpenAITranscriptionService(TranscriptionService):
                     "file_size": file_size,
                     "duration": 0,
                 }
+            # Accept common browser-recorded WebM for OpenAI Whisper; API accepts various containers
             return {
                 "is_valid": True,
                 "error": None,

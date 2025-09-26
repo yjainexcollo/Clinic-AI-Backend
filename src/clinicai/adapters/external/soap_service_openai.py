@@ -48,7 +48,8 @@ class OpenAISoapService(SoapService):
         transcript: str,
         patient_context: Optional[Dict[str, Any]] = None,
         intake_data: Optional[Dict[str, Any]] = None,
-        pre_visit_summary: Optional[Dict[str, Any]] = None
+        pre_visit_summary: Optional[Dict[str, Any]] = None,
+        vitals: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Generate SOAP note using OpenAI GPT-4."""
         
@@ -67,6 +68,54 @@ class OpenAISoapService(SoapService):
             for qa in intake_data['questions_asked']:
                 intake_responses.append(f"Q: {qa['question']}\nA: {qa['answer']}")
             context_parts.append(f"Intake Responses:\n" + "\n\n".join(intake_responses))
+
+        # Include Vitals in context for Objective section
+        if vitals:
+            try:
+                v = vitals or {}
+                def _val(k: str) -> Optional[str]:
+                    x = v.get(k)
+                    if x in (None, ""):
+                        return None
+                    return str(x)
+                vitals_parts: list[str] = []
+                if _val("systolic") and _val("diastolic"):
+                    arm = f" ({v.get('bpArm')} arm)" if v.get('bpArm') else ""
+                    pos = f" ({v.get('bpPosition')})" if v.get('bpPosition') else ""
+                    vitals_parts.append(f"Blood pressure {_val('systolic')}/{_val('diastolic')} mmHg{arm}{pos}")
+                if _val("heartRate"):
+                    rhythm = f" ({v.get('rhythm')})" if v.get('rhythm') else ""
+                    vitals_parts.append(f"Heart rate {_val('heartRate')} bpm{rhythm}")
+                if _val("respiratoryRate"):
+                    vitals_parts.append(f"Respiratory rate {_val('respiratoryRate')} breaths/min")
+                if _val("temperature"):
+                    unit = (v.get("tempUnit") or "C").replace("°", "")
+                    method = f" ({v.get('tempMethod')})" if v.get('tempMethod') else ""
+                    vitals_parts.append(f"Temperature {_val('temperature')}{unit}{method}")
+                if _val("oxygenSaturation"):
+                    vitals_parts.append(f"SpO₂ {_val('oxygenSaturation')}% on room air")
+                h = _val("height"); w = _val("weight")
+                if h or w:
+                    h_unit = v.get("heightUnit") or "cm"
+                    w_unit = v.get("weightUnit") or "kg"
+                    hw: list[str] = []
+                    if h:
+                        hw.append(f"Height {h} {h_unit}")
+                    if w:
+                        hw.append(f"Weight {w} {w_unit}")
+                    if hw:
+                        vitals_parts.append(", ".join(hw))
+                if _val("painScore"):
+                    vitals_parts.append(f"Pain score {_val('painScore')}/10")
+                if v.get("notes"):
+                    vitals_parts.append(f"Observation notes: {v.get('notes')}")
+                if vitals_parts:
+                    context_parts.append("Objective Vitals (from form):\n- " + "\n- ".join(vitals_parts))
+            except Exception:
+                try:
+                    context_parts.append("Objective Vitals (raw JSON):\n" + json.dumps(vitals))
+                except Exception:
+                    pass
         
         context = "\n\n".join(context_parts) if context_parts else "No additional context available"
         
@@ -87,11 +136,16 @@ INSTRUCTIONS:
 4. Be objective and factual
 5. If information is unclear or missing, mark as "Unclear" or "Not discussed"
 6. Focus on what was actually said during the consultation
+7. In the Objective, include BOTH:
+   - Vital signs from the provided Objective Vitals, if present
+   - Physical exam and other transcript-derived observable findings (e.g., general appearance, HEENT, cardiac, respiratory, abdominal, neuro, extremities, gait) when mentioned
+   If explicit exam elements are not stated, include any transcript-derived objective observations (e.g., affect, speech, respiratory effort) when available.
+8. Incorporate the Objective Vitals provided in CONTEXT succinctly; do not replace transcript-derived exam with vitals—combine them.
 
 REQUIRED FORMAT (JSON):
 {{
     "subjective": "Patient's reported symptoms, concerns, and history as discussed",
-    "objective": "Observable findings, vital signs, physical exam findings mentioned",
+    "objective": "Observable findings, vital signs, and physical exam findings mentioned",
     "assessment": "Clinical impressions and reasoning discussed by the physician",
     "plan": "Treatment plan, follow-up instructions, and next steps discussed",
     "highlights": ["Key clinical points 1", "Key clinical points 2", "Key clinical points 3"],
