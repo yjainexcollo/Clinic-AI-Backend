@@ -19,6 +19,7 @@ class RegisterPatientRequest:
     gender: str
     recently_travelled: bool = False
     consent: bool = True
+    language: str = "en"
 
 
 @dataclass
@@ -196,6 +197,17 @@ class PreVisitSummaryResponse:
     summary: str
     generated_at: str
 
+# Step-03: Audio Transcription & SOAP Generation DTOs
+@dataclass
+class AudioTranscriptionRequest:
+    """Request DTO for audio transcription."""
+    
+    patient_id: str
+    visit_id: str
+    audio_file_path: str
+    language: str = "en"
+    audio_duration: Optional[float] = None
+
 
 # Post-Visit Summary DTOs
 @dataclass
@@ -215,16 +227,6 @@ class PostVisitSummaryResponse:
     summary: str
     generated_at: str
 
-
-# Step-03: Audio Transcription & SOAP Generation DTOs
-@dataclass
-class AudioTranscriptionRequest:
-    """Request DTO for audio transcription."""
-    
-    patient_id: str
-    visit_id: str
-    audio_file_path: str
-    audio_duration: Optional[float] = None
 
 
 @dataclass
@@ -265,7 +267,7 @@ class SoapNoteDTO:
     """DTO for SOAP note data."""
     
     subjective: str
-    objective: str
+    objective: Dict[str, Any]
     assessment: str
     plan: str
     highlights: List[str]

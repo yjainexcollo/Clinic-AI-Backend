@@ -30,12 +30,25 @@ class OpenAITranscriptionService(TranscriptionService):
         # OpenAI v1 SDK
         # Whisper models: "whisper-1" or newer transcription-capable models
         # Note: duration/word_count aren't returned; provide best-effort fields
+        
+        # Map our language codes to Whisper language codes
+        language_map = {
+            "en": "en",
+            "sp": "es",  # Spanish
+        }
+        whisper_language = language_map.get(language, "en")
+        
+        # Debug logging
+        import logging
+        logger = logging.getLogger("clinicai")
+        logger.info(f"TranscriptionService: Input language='{language}', mapped to whisper_language='{whisper_language}'")
+        
         try:
             with open(audio_file_path, "rb") as f:
                 resp = self._client.audio.transcriptions.create(
                     model="whisper-1",
                     file=f,
-                    language=language or "en",
+                    language=whisper_language,
                     # prompt could be set based on medical_context
                 )
             text = (resp.text or "").strip()
@@ -66,7 +79,6 @@ class OpenAITranscriptionService(TranscriptionService):
                     "file_size": file_size,
                     "duration": 0,
                 }
-            # Accept common browser-recorded WebM for OpenAI Whisper; API accepts various containers
             return {
                 "is_valid": True,
                 "error": None,
@@ -76,5 +88,4 @@ class OpenAITranscriptionService(TranscriptionService):
             }
         except Exception as e:
             return {"is_valid": False, "error": f"Validation error: {e}", "file_size": 0, "duration": 0}
-
 

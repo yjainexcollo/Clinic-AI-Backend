@@ -716,28 +716,38 @@ paths:
                   pattern: '^CONSULT-\d{8}-\d{3}$'
                   description: Visit ID from registration
                   example: "CONSULT-20250103-001"
+                language:
+                  type: string
+                  description: Transcript language code ("en" for English, "sp"/"es" for Spanish)
+                  example: "en"
                 audio_file:
                   type: string
                   format: binary
                   description: Audio file to transcribe
       responses:
-        "200":
-          description: Audio transcribed successfully
+        "202":
+          description: Transcription queued for background processing
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AudioTranscriptionResponse"
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "queued"
+                  patient_id:
+                    type: string
+                    example: "JOHNDOE_9123456789"
+                  visit_id:
+                    type: string
+                    example: "CONSULT-20250103-001"
               examples:
-                success_response:
-                  summary: Successful Transcription
+                queued_response:
+                  summary: Transcription queued
                   value:
+                    status: "queued"
                     patient_id: "JOHNDOE_9123456789"
                     visit_id: "CONSULT-20250103-001"
-                    transcript: "Doctor: Good morning, how are you feeling today? Patient: I've been experiencing chest pain for the past two days..."
-                    word_count: 245
-                    audio_duration: 180.5
-                    transcription_status: "completed"
-                    message: "Audio transcribed successfully"
         "400":
           description: Validation error
           content:
@@ -1473,6 +1483,10 @@ components:
           type: string
           description: Path to audio file for transcription
           example: "/tmp/audio_12345.mp3"
+        language:
+          type: string
+          description: Transcript language code ("en" for English, "sp"/"es" for Spanish)
+          example: "en"
         audio_duration:
           type: number
           format: float
@@ -1744,6 +1758,13 @@ components:
           nullable: true
           description: Number of words in transcript
           example: 245
+        structured_dialogue:
+          type: array
+          nullable: true
+          description: Cached structured dialogue turns as ordered Doctor/Patient pairs
+          items:
+            type: object
+            additionalProperties: true
 
   securitySchemes:
     # Future authentication schemes can be added here

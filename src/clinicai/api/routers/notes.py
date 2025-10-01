@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 import tempfile
 import os
 import asyncio
+from datetime import datetime
 
 from openai import OpenAI  # type: ignore
 
@@ -19,6 +20,7 @@ from clinicai.application.dto.patient_dto import (
     SoapNoteDTO,
     TranscriptionSessionDTO
 )
+from pydantic import BaseModel
 from clinicai.application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from ...application.utils.structure_dialogue import structure_dialogue_from_text
 from clinicai.application.use_cases.generate_soap_note import GenerateSoapNoteUseCase
@@ -28,13 +30,46 @@ from clinicai.domain.errors import (
 )
 from ..deps import PatientRepositoryDep, TranscriptionServiceDep, SoapServiceDep
 from ...core.utils.crypto import decode_patient_id
-# removed adhoc structured dialogue generation for ad-hoc transcribe
 from ..schemas.patient import ErrorResponse
 from ...core.config import get_settings
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 logger = logging.getLogger("clinicai")
+
+
+# Vitals data models
+class VitalsData(BaseModel):
+    # Make types align with JSON schema
+    systolic: int
+    diastolic: int
+    bpArm: str = ""  # optional: "Left" | "Right"
+    bpPosition: str = ""  # optional: "Sitting" | "Standing" | "Lying"
+    heartRate: int
+    rhythm: str = ""  # optional
+    respiratoryRate: int
+    temperature: float
+    tempUnit: str = "C"  # "C" | "F"
+    tempMethod: str = ""  # optional
+    oxygenSaturation: int
+    height: Optional[float] = None  # optional cm
+    heightUnit: str = "cm"
+    weight: float
+    weightUnit: str = "kg"
+    painScore: Optional[int] = None
+    notes: str = ""
+
+
+class VitalsRequest(BaseModel):
+    patient_id: str
+    visit_id: str
+    vitals: VitalsData
+
+
+class VitalsResponse(BaseModel):
+    success: bool
+    message: str
+    vitals_id: str
 
 
 @router.options("/transcribe")
@@ -66,10 +101,11 @@ async def transcribe_audio(
     background: BackgroundTasks,
     patient_id: str = Form(...),
     visit_id: str = Form(...),
+    language: str = Form("en"),
     audio_file: UploadFile = File(...),
 ):
     """Queue audio transcription and return immediately (202)."""
-    logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}")
+    logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}, language: {language}")
 
     if not audio_file.filename:
         raise HTTPException(
@@ -159,6 +195,7 @@ async def transcribe_audio(
                     patient_id=internal_patient_id,
                     visit_id=visit_id,
                     audio_file_path=temp_file_path,
+                    language=language,
                 )
                 use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
                 
@@ -203,11 +240,6 @@ async def transcribe_audio(
         )
 
 
-# ------------------------
-# (adhoc transcription moved to /transcription router)
-# ------------------------
-
-
 @router.post(
     "/soap/generate",
     response_model=SoapGenerationResponse,
@@ -235,7 +267,8 @@ async def generate_soap_note(
     5. Returns structured SOAP note
     """
     try:
-        # Decode opaque patient id from client before passing to use case
+        # Decode opaque patient_id if provided by client
+        from ...core.utils.crypto import decode_patient_id
         try:
             # Some environments may URL-encode the token inadvertently
             import urllib.parse as _up
@@ -388,6 +421,9 @@ async def get_vitals(
         if not visit.vitals:
             raise HTTPException(status_code=404, detail={"error": "VITALS_NOT_FOUND", "message": "No vitals found"})
         return visit.vitals
+    except HTTPException:
+        # Re-raise HTTPException directly (like 404 for vitals not found)
+        raise
     except PatientNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -595,12 +631,17 @@ async def get_soap_note(
     """Get SOAP note for a visit."""
     try:
         from ...domain.value_objects.patient_id import PatientId
-        
-        # Find patient (decode opaque id)
+        from ...core.utils.crypto import decode_patient_id
+        import urllib.parse
+
+        # Support opaque patient_id tokens from clients
+        decoded_param = urllib.parse.unquote(patient_id)
         try:
-            internal_patient_id = decode_patient_id(patient_id)
+            internal_patient_id = decode_patient_id(decoded_param)
         except Exception:
-            internal_patient_id = patient_id
+            internal_patient_id = decoded_param
+
+        # Find patient
         patient_id_obj = PatientId(internal_patient_id)
         patient = await patient_repo.find_by_id(patient_id_obj)
         if not patient:
@@ -636,6 +677,9 @@ async def get_soap_note(
             confidence_score=soap.confidence_score
         )
 
+    except HTTPException:
+        # Re-raise HTTPException directly (like 404 for SOAP note not found)
+        raise
     except PatientNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -959,7 +1003,7 @@ async def structure_dialogue(
             },
         )
     except Exception as e:
-        logger.error("Unhandled error in structure_dialogue", exc_info=True)
+        logger.error("Unhandled error in get_vitals", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

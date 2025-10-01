@@ -37,7 +37,10 @@ async def transcribe_audio_adhoc(
     audio_file: UploadFile = File(...),
     language: str = Form("en"),
 ):
+    logger.info(f"Adhoc transcription request: filename={audio_file.filename}, content_type={audio_file.content_type}, language={language}")
+    
     if not audio_file.filename:
+        logger.error("No audio file filename provided")
         raise HTTPException(
             status_code=400,
             detail={"error": "NO_AUDIO_FILE", "message": "No audio file provided", "details": {}},
@@ -47,7 +50,11 @@ async def transcribe_audio_adhoc(
     is_audio_like = content_type.startswith("audio/")
     is_supported_video = content_type in ("video/mpeg", "video/webm", "video/mp4")
     is_generic_stream = content_type in ("application/octet-stream",)
+    
+    logger.info(f"Content type validation: audio_like={is_audio_like}, supported_video={is_supported_video}, generic_stream={is_generic_stream}")
+    
     if not (is_audio_like or is_supported_video or is_generic_stream):
+        logger.error(f"Invalid file type: {content_type}")
         raise HTTPException(
             status_code=422,
             detail={
@@ -70,8 +77,11 @@ async def transcribe_audio_adhoc(
 
         # Validate and transcribe
         try:
+            logger.info(f"Validating audio file: {temp_file_path}")
             meta = await transcription_service.validate_audio_file(temp_file_path)
+            logger.info(f"Validation result: {meta}")
             if not meta.get("is_valid"):
+                logger.error(f"Audio validation failed: {meta}")
                 raise HTTPException(
                     status_code=422,
                     detail={

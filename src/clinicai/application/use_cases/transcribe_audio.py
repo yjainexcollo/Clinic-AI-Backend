@@ -66,6 +66,7 @@ class TranscribeAudioUseCase:
             
             transcription_result = await self._transcription_service.transcribe_audio(
                 request.audio_file_path,
+                language=request.language,
                 medical_context=True
             )
 
@@ -86,7 +87,7 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:200]}...")
             
             structured_content = await self._process_transcript_with_chunking(
-                client, raw_transcript, settings, LOGGER
+                client, raw_transcript, settings, LOGGER, request.language or "en"
             )
 
             # Process structured dialogue separately from raw transcript
@@ -207,61 +208,100 @@ class TranscribeAudioUseCase:
         client: OpenAI, 
         raw_transcript: str, 
         settings, 
-        logger
+        logger,
+        language: str = "en"
     ) -> str:
         """Process transcript with robust chunking strategy for long content."""
         
-        # Highly refined system prompt for superior speaker attribution
-        system_prompt = (
-            "You are an expert medical conversation analyzer. Your task is to convert a raw medical consultation transcript into a perfectly structured dialogue between a Doctor and Patient.\n\n"
-            
-            "🎯 PRIMARY OBJECTIVE:\n"
-            "Transform the transcript into a JSON array where each element is a dialogue turn with exactly one key: \"Doctor\" or \"Patient\"\n\n"
-            
-            "📋 PROCESSING RULES:\n"
-            "1. REMOVE all personal identifiers (names, addresses, phone numbers, specific dates, ages)\n"
-            "2. FIX obvious transcription errors while preserving medical meaning\n"
-            "3. CLEAN up filler words (um, uh, like, you know) and false starts\n"
-            "4. MAINTAIN natural conversation flow and medical context\n\n"
-            
-            "👨‍⚕️ DOCTOR IDENTIFICATION (High Priority):\n"
-            "• Questions about: symptoms, medical history, medications, allergies, family history\n"
-            "• Medical instructions: prescriptions, treatments, follow-ups, referrals\n"
-            "• Clinical language: examination procedures, test orders, diagnoses\n"
-            "• Professional phrases: \"Let me examine\", \"I'll prescribe\", \"We'll schedule\", \"Any allergies?\", \"How long have you had\", \"Can you describe\", \"On a scale of 1-10\"\n"
-            "• Medical terminology: anatomical terms, medical conditions, drug names\n"
-            "• Authority statements: \"I recommend\", \"You should\", \"It's important that\"\n\n"
-            
-            "🤒 PATIENT IDENTIFICATION (High Priority):\n"
-            "• Personal experiences: symptoms, feelings, pain descriptions\n"
-            "• Answers to questions: \"Yes\", \"No\", \"I think\", \"Maybe\", \"I'm not sure\"\n"
-            "• Personal history: \"I have\", \"I had\", \"I took\", \"I went to\", \"I feel\"\n"
-            "• Concerns and questions: \"What does this mean?\", \"Is it serious?\", \"How long will it take?\"\n"
-            "• Emotional responses: \"I'm worried\", \"I'm scared\", \"I hope\", \"I'm relieved\"\n"
-            "• Personal context: \"At work\", \"Last night\", \"When I woke up\", \"My husband said\"\n\n"
-            
-            "🔄 CONVERSATION FLOW RULES:\n"
-            "• Medical consultations typically start with the Doctor greeting and asking about the problem\n"
-            "• Patient responds with their main complaint\n"
-            "• Doctor asks follow-up questions\n"
-            "• Patient provides answers and additional details\n"
-            "• Doctor may ask about medical history, medications, etc.\n"
-            "• Patient shares relevant information\n"
-            "• Doctor provides assessment, recommendations, or treatment plan\n"
-            "• Patient may ask clarifying questions\n\n"
-            
-            "⚠️ CRITICAL REQUIREMENTS:\n"
-            "• Output ONLY a JSON array - no explanations, no markdown, no comments, no code blocks\n"
-            "• DO NOT wrap the JSON in ```json``` or any other formatting\n"
-            "• Each dialogue turn must be a complete thought or response\n"
-            "• Combine related sentences from the same speaker into one turn\n"
-            "• If uncertain about speaker, consider the conversation context and typical medical consultation flow\n"
-            "• Ensure proper JSON formatting with proper escaping of quotes\n"
-            "• Start your response directly with [ and end with ]\n\n"
-            
-            "📤 OUTPUT FORMAT:\n"
-            "[{\"Doctor\": \"Hello, what brings you in today?\"}, {\"Patient\": \"I've been having chest pain for three days.\"}, {\"Doctor\": \"Can you describe the pain for me?\"}]"
-        )
+        # Highly refined system prompt for superior speaker attribution (language-aware)
+        if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+            system_prompt = (
+                "Eres un analista experto de conversaciones médicas. Tu tarea es convertir una transcripción cruda de una consulta médica en un diálogo perfectamente estructurado entre un Doctor y un Paciente.\n\n"
+                "🎯 OBJETIVO PRINCIPAL:\n"
+                "Transforma la transcripción en un arreglo JSON donde cada elemento es un turno de diálogo con exactamente una clave: \"Doctor\" o \"Paciente\"\n\n"
+                "📋 REGLAS DE PROCESAMIENTO:\n"
+                "1. ELIMINA identificadores personales (nombres, direcciones, teléfonos, fechas específicas, edades)\n"
+                "2. CORRIGE errores obvios de transcripción manteniendo el significado médico\n"
+                "3. LIMPIA muletillas (eh, em, este) y falsos comienzos\n"
+                "4. MANTIÉN el flujo natural de la conversación y el contexto clínico\n\n"
+                "👨‍⚕️ IDENTIFICACIÓN DEL DOCTOR (Alta prioridad):\n"
+                "• Preguntas sobre: síntomas, antecedentes, medicamentos, alergias, historia familiar\n"
+                "• Instrucciones médicas: recetas, tratamientos, seguimientos, derivaciones\n"
+                "• Lenguaje clínico: exploración, órdenes de pruebas, diagnósticos\n"
+                "• Frases profesionales: \"Voy a examinar\", \"Voy a prescribir\", \"Programaremos\", \"¿Alguna alergia?\", \"¿Desde cuándo...?\", \"¿Puede describir...?\", \"En una escala del 1 al 10\"\n"
+                "• Terminología médica: términos anatómicos, patologías, fármacos\n"
+                "• Frases de autoridad: \"Recomiendo\", \"Debe\", \"Es importante que\"\n\n"
+                "🤒 IDENTIFICACIÓN DEL PACIENTE (Alta prioridad):\n"
+                "• Experiencias personales: síntomas, sensaciones, descripciones del dolor\n"
+                "• Respuestas a preguntas: \"Sí\", \"No\", \"Creo\", \"Tal vez\", \"No estoy seguro\"\n"
+                "• Historia personal: \"Tengo\", \"Tuve\", \"Tomé\", \"Fui\", \"Siento\"\n"
+                "• Dudas y preocupaciones: \"¿Qué significa?\", \"¿Es grave?\", \"¿Cuánto tardará?\"\n"
+                "• Respuestas emocionales: \"Me preocupa\", \"Me da miedo\", \"Espero\", \"Me alivia\"\n"
+                "• Contexto personal: \"En el trabajo\", \"Anoche\", \"Al despertar\"\n\n"
+                "🔄 REGLAS DE FLUJO DE CONVERSACIÓN:\n"
+                "• Las consultas suelen empezar con el Doctor saludando y preguntando por el problema\n"
+                "• El Paciente responde con su motivo de consulta\n"
+                "• El Doctor hace preguntas de seguimiento\n"
+                "• El Paciente aporta respuestas y detalles adicionales\n"
+                "• El Doctor puede preguntar por antecedentes, medicación, etc.\n"
+                "• El Paciente comparte información relevante\n"
+                "• El Doctor ofrece evaluación, recomendaciones o plan terapéutico\n"
+                "• El Paciente puede pedir aclaraciones\n\n"
+                "⚠️ REQUISITOS CRÍTICOS:\n"
+                "• Devuelve SOLO un arreglo JSON: sin explicaciones, sin markdown, sin comentarios, sin bloques de código\n"
+                "• NO envuelvas el JSON en ```json``` ni en otro formato\n"
+                "• Cada turno debe ser una idea completa\n"
+                "• Combina oraciones relacionadas del mismo hablante en un solo turno\n"
+                "• Si dudas del hablante, usa el contexto y el flujo típico de consulta\n"
+                "• Asegura formato JSON correcto con comillas escapadas\n"
+                "• Empieza directamente con [ y termina con ]\n\n"
+                "📤 FORMATO DE SALIDA:\n"
+                "[{\"Doctor\": \"Hola, ¿qué le trae hoy?\"}, {\"Paciente\": \"Tengo dolor en el pecho desde hace tres días.\"}, {\"Doctor\": \"¿Puede describirme el dolor?\"}]"
+            )
+        else:
+            system_prompt = (
+                "You are an expert medical conversation analyzer. Your task is to convert a raw medical consultation transcript into a perfectly structured dialogue between a Doctor and Patient.\n\n"
+                "🎯 PRIMARY OBJECTIVE:\n"
+                "Transform the transcript into a JSON array where each element is a dialogue turn with exactly one key: \"Doctor\" or \"Patient\"\n\n"
+                "📋 PROCESSING RULES:\n"
+                "1. REMOVE all personal identifiers (names, addresses, phone numbers, specific dates, ages)\n"
+                "2. FIX obvious transcription errors while preserving medical meaning\n"
+                "3. CLEAN up filler words (um, uh, like, you know) and false starts\n"
+                "4. MAINTAIN natural conversation flow and medical context\n\n"
+                "👨‍⚕️ DOCTOR IDENTIFICATION (High Priority):\n"
+                "• Questions about: symptoms, medical history, medications, allergies, family history\n"
+                "• Medical instructions: prescriptions, treatments, follow-ups, referrals\n"
+                "• Clinical language: examination procedures, test orders, diagnoses\n"
+                "• Professional phrases: \"Let me examine\", \"I'll prescribe\", \"We'll schedule\", \"Any allergies?\", \"How long have you had\", \"Can you describe\", \"On a scale of 1-10\"\n"
+                "• Medical terminology: anatomical terms, medical conditions, drug names\n"
+                "• Authority statements: \"I recommend\", \"You should\", \"It's important that\"\n\n"
+                "🤒 PATIENT IDENTIFICATION (High Priority):\n"
+                "• Personal experiences: symptoms, feelings, pain descriptions\n"
+                "• Answers to questions: \"Yes\", \"No\", \"I think\", \"Maybe\", \"I'm not sure\"\n"
+                "• Personal history: \"I have\", \"I had\", \"I took\", \"I went to\", \"I feel\"\n"
+                "• Concerns and questions: \"What does this mean?\", \"Is it serious?\", \"How long will it take?\"\n"
+                "• Emotional responses: \"I'm worried\", \"I'm scared\", \"I hope\", \"I'm relieved\"\n"
+                "• Personal context: \"At work\", \"Last night\", \"When I woke up\", \"My husband said\"\n\n"
+                "🔄 CONVERSATION FLOW RULES:\n"
+                "• Medical consultations typically start with the Doctor greeting and asking about the problem\n"
+                "• Patient responds with their main complaint\n"
+                "• Doctor asks follow-up questions\n"
+                "• Patient provides answers and additional details\n"
+                "• Doctor may ask about medical history, medications, etc.\n"
+                "• Patient shares relevant information\n"
+                "• Doctor provides assessment, recommendations, or treatment plan\n"
+                "• Patient may ask clarifying questions\n\n"
+                "⚠️ CRITICAL REQUIREMENTS:\n"
+                "• Output ONLY a JSON array - no explanations, no markdown, no comments, no code blocks\n"
+                "• DO NOT wrap the JSON in ```json``` or any other formatting\n"
+                "• Each dialogue turn must be a complete thought or response\n"
+                "• Combine related sentences from the same speaker into one turn\n"
+                "• If uncertain about speaker, consider the conversation context and typical medical consultation flow\n"
+                "• Ensure proper JSON formatting with proper escaping of quotes\n"
+                "• Start your response directly with [ and end with ]\n\n"
+                "📤 OUTPUT FORMAT:\n"
+                "[{\"Doctor\": \"Hello, what brings you in today?\"}, {\"Patient\": \"I've been having chest pain for three days.\"}, {\"Doctor\": \"Can you describe the pain for me?\"}]"
+            )
         
         # Calculate optimal chunk size based on model context
         # Further reduce chunk size to ensure reliable processing
@@ -274,13 +314,22 @@ class TranscribeAudioUseCase:
         if len(raw_transcript) <= max_chars_per_chunk:
             # Single chunk processing
             logger.info("Processing as single chunk (no chunking needed)")
-            user_prompt = (
-            f"MEDICAL CONSULTATION TRANSCRIPT:\n"
-            f"{raw_transcript}\n\n"
-            f"TASK: Convert this raw transcript into a structured Doctor-Patient dialogue.\n"
-            f"Follow the conversation flow and use the identification rules to assign speakers correctly.\n\n"
-            f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
-        )
+            if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+                user_prompt = (
+                    f"TRANSCRIPCIÓN DE CONSULTA MÉDICA:\n"
+                    f"{raw_transcript}\n\n"
+                    f"TAREA: Convierte esta transcripción cruda en un diálogo estructurado Doctor-Paciente.\n"
+                    f"Sigue el flujo de la conversación y usa las reglas de identificación para asignar correctamente los hablantes.\n\n"
+                    f"SALIDA: Devuelve SOLO un arreglo JSON que empiece con [ y termine con ]. No uses markdown, bloques de código ni otro formato."
+                )
+            else:
+                user_prompt = (
+                    f"MEDICAL CONSULTATION TRANSCRIPT:\n"
+                    f"{raw_transcript}\n\n"
+                    f"TASK: Convert this raw transcript into a structured Doctor-Patient dialogue.\n"
+                    f"Follow the conversation flow and use the identification rules to assign speakers correctly.\n\n"
+                    f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
+                )
             return await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
         
         # Multi-chunk processing with overlap
@@ -308,13 +357,22 @@ class TranscribeAudioUseCase:
         # Process each chunk
         chunk_results = []
         for i, chunk in enumerate(chunks):
-            chunk_prompt = (
-                f"MEDICAL CONSULTATION TRANSCRIPT CHUNK {i+1}:\n"
-                f"{chunk}\n\n"
-                f"TASK: Convert this transcript chunk into structured Doctor-Patient dialogue.\n"
-                f"Note: This is part of a larger conversation. Use context clues and medical consultation patterns.\n\n"
-                f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
-            )
+            if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+                chunk_prompt = (
+                    f"FRAGMENTO DE TRANSCRIPCIÓN DE CONSULTA MÉDICA {i+1}:\n"
+                    f"{chunk}\n\n"
+                    f"TAREA: Convierte este fragmento en diálogo estructurado Doctor-Paciente.\n"
+                    f"Nota: Es parte de una conversación más larga. Usa pistas de contexto y patrones típicos de consulta.\n\n"
+                    f"SALIDA: Devuelve SOLO un arreglo JSON que empiece con [ y termine con ]. No uses markdown ni bloques de código."
+                )
+            else:
+                chunk_prompt = (
+                    f"MEDICAL CONSULTATION TRANSCRIPT CHUNK {i+1}:\n"
+                    f"{chunk}\n\n"
+                    f"TASK: Convert this transcript chunk into structured Doctor-Patient dialogue.\n"
+                    f"Note: This is part of a larger conversation. Use context clues and medical consultation patterns.\n\n"
+                    f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
+                )
             
             logger.info(f"Processing chunk {i+1}...")
             chunk_result = await self._process_single_chunk(

@@ -45,3 +45,21 @@ class SoapService(ABC):
             True if valid, False otherwise
         """
         pass
+
+    @abstractmethod
+    async def generate_post_visit_summary(
+        self,
+        patient_data: Dict[str, Any],
+        soap_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Generate post-visit summary for patient sharing.
+        
+        Args:
+            patient_data: Patient demographics and basic info
+            soap_data: SOAP note data from completed visit
+            
+        Returns:
+            Dict containing structured post-visit summary data
+        """
+        pass

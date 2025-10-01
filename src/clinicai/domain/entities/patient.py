@@ -24,6 +24,7 @@ class Patient:
     age: int
     gender: Optional[str] = None
     recently_travelled: bool = False
+    language: str = "en"
     visits: List["Visit"] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -55,6 +56,10 @@ class Patient:
         # Validate age
         if not isinstance(self.age, int) or self.age < 0 or self.age > 120:
             raise InvalidPatientDataError("age", self.age)
+        
+        # Validate language
+        if self.language not in ["en", "sp"]:
+            raise InvalidPatientDataError("language", f"Invalid language: {self.language}")
 
     def add_visit(self, visit: "Visit") -> None:
         """Add a new visit to the patient's history."""

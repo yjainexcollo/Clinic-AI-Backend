@@ -36,12 +36,19 @@ class RegisterPatientRequest(BaseModel):
     recently_travelled: bool = Field(False, description="Has the patient travelled recently")
     consent: bool = Field(..., description="Patient consent for data processing (must be true)")
     country: str = Field("US", description="ISO 3166-1 alpha-2 country code (default US)")
+    language: str = Field("en", description="Preferred language (en for English, es for Spanish)")
 
     @validator("first_name", "last_name")
     def validate_names(cls, v):
         if not v or not v.strip():
             raise ValueError("Name fields cannot be empty")
         return v.strip()
+
+    @validator("language")
+    def validate_language(cls, v):
+        if v not in ["en", "sp"]:
+            raise ValueError("Language must be 'en' (English) or 'sp' (Spanish)")
+        return v
 
     @validator("mobile")
     def validate_mobile(cls, v):
@@ -226,9 +233,38 @@ class PostVisitSummaryRequest(BaseModel):
 
 
 class PostVisitSummaryResponse(BaseModel):
-    """Response schema for post-visit summary."""
+    """Response schema for post-visit summary following recommended format."""
 
+    # Header Section
     patient_id: str = Field(..., description="Patient ID")
     visit_id: str = Field(..., description="Visit ID")
-    summary: str = Field(..., description="Post-consultation recap in markdown/plain text")
+    patient_name: str = Field(..., description="Patient full name")
+    visit_date: str = Field(..., description="Visit date in ISO format")
+    clinic_name: str = Field(default="AI Medical Clinic", description="Clinic name")
+    doctor_name: str = Field(default="Dr. AI Assistant", description="Attending doctor name")
+    
+    # Summary of Visit
+    chief_complaint: str = Field(..., description="Reason for visit in plain language")
+    key_findings: List[str] = Field(..., description="Key findings from exam/consultation")
+    diagnosis: str = Field(..., description="Diagnosis in layman-friendly terms")
+    
+    # Treatment Plan
+    medications: List[Dict[str, str]] = Field(default_factory=list, description="Prescribed medications with details")
+    other_recommendations: List[str] = Field(default_factory=list, description="Lifestyle, dietary, physical therapy recommendations")
+    
+    # Investigations/Tests
+    tests_ordered: List[Dict[str, str]] = Field(default_factory=list, description="Tests ordered with purpose and instructions")
+    
+    # Follow-Up
+    next_appointment: Optional[str] = Field(None, description="Next appointment details")
+    red_flag_symptoms: List[str] = Field(default_factory=list, description="Warning signs to watch for")
+    
+    # Patient Instructions
+    patient_instructions: List[str] = Field(..., description="Clear do's and don'ts in plain language")
+    
+    # Closing Note
+    reassurance_note: str = Field(..., description="Reassurance and encouragement message")
+    clinic_contact: str = Field(default="WhatsApp: +1 (555) 123-4567", description="Clinic contact information")
+    
+    # Metadata
     generated_at: str = Field(..., description="Summary generation timestamp")

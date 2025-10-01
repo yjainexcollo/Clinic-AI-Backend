@@ -2,7 +2,8 @@
 
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
-from ..dto.patient_dto import PreVisitSummaryRequest, PreVisitSummaryResponse
+from ..dto.patient_dto import PreVisitSummaryRequest
+from ...api.schemas.patient import PreVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.services.question_service import QuestionService
 
@@ -49,7 +50,7 @@ class GeneratePreVisitSummaryUseCase:
 
         # Generate summary using AI service
         summary_result = await self._question_service.generate_pre_visit_summary(
-            patient_data, intake_answers
+            patient_data, intake_answers, language=patient.language
         )
 
         # Attach references to any uploaded medication images for this visit

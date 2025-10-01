@@ -58,10 +58,28 @@ class IntakeSession:
                 self.current_question_count, self.max_questions
             )
 
-        # Check for duplicate questions
+        # Check for duplicate questions - both exact text and semantic similarity
         for qa in self.questions_asked:
+            # Exact text match (case-insensitive)
             if qa.question.lower().strip() == question.lower().strip():
                 raise DuplicateQuestionError(question)
+            
+            # Semantic duplicate check - classify both questions and compare categories
+            try:
+                from clinicai.adapters.external.question_service_openai import OpenAIQuestionService
+                question_service = OpenAIQuestionService()
+                
+                existing_category = question_service._classify_question(qa.question or "")
+                new_category = question_service._classify_question(question or "")
+                
+                # If both questions belong to the same category and it's not "other", it's a duplicate
+                if (existing_category == new_category and 
+                    existing_category != "other" and 
+                    existing_category in ["duration", "triggers", "pain", "temporal", "travel", "allergies", "medications", "hpi", "family", "lifestyle", "gyn", "functional"]):
+                    raise DuplicateQuestionError(question)
+            except Exception as e:
+                # If classification fails, fall back to exact text matching only
+                pass
 
         question_id = QuestionId.generate()
         question_answer = QuestionAnswer(
@@ -159,7 +177,7 @@ class SoapNote:
     """SOAP note data for Step-03."""
     
     subjective: str
-    objective: str
+    objective: Dict[str, Any]
     assessment: str
     plan: str
     highlights: List[str] = field(default_factory=list)
@@ -193,6 +211,8 @@ class Visit:
     soap_note: Optional[SoapNote] = None
     # Objective Vitals (optional)
     vitals: Optional[Dict[str, Any]] = None
+    # Step 4: Post-Visit Summary for patient sharing (stored JSON)
+    post_visit_summary: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         """Initialize intake session."""
@@ -295,6 +315,21 @@ class Visit:
     def has_pre_visit_summary(self) -> bool:
         """Check if pre-visit summary exists."""
         return self.pre_visit_summary is not None
+
+    # Step-04: Post-Visit Summary Methods
+    def store_post_visit_summary(self, summary: Dict[str, Any]) -> None:
+        """Persist post-visit summary JSON for patient sharing."""
+        self.post_visit_summary = {
+            **(summary or {}),
+            "stored_at": datetime.utcnow().isoformat(),
+        }
+        self.updated_at = datetime.utcnow()
+    
+    def get_post_visit_summary(self) -> Optional[Dict[str, Any]]:
+        return self.post_visit_summary
+    
+    def has_post_visit_summary(self) -> bool:
+        return self.post_visit_summary is not None
 
     # Step-03: Audio Transcription & SOAP Generation Methods
 

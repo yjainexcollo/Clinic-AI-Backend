@@ -44,12 +44,24 @@ class WhisperTranscriptionService(TranscriptionService):
             if medical_context is None:
                 medical_context = self._settings.whisper.medical_context
                 
+            # Map our language codes to Whisper language codes
+            language_map = {
+                "en": "en",
+                "sp": "es",  # Spanish
+            }
+            whisper_language = language_map.get(language, "en")
+            
+            # Debug logging
+            import logging
+            logger = logging.getLogger("clinicai")
+            logger.info(f"WhisperTranscriptionService: Input language='{language}', mapped to whisper_language='{whisper_language}'")
+                
             # Run Whisper transcription in thread pool
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 self._transcribe_sync,
                 audio_file_path,
-                language,
+                whisper_language,
                 medical_context
             )
             
