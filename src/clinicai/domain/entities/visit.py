@@ -58,28 +58,12 @@ class IntakeSession:
                 self.current_question_count, self.max_questions
             )
 
-        # Check for duplicate questions - both exact text and semantic similarity
+        # Check for duplicate questions - exact text match only
+        # Note: Semantic duplicate checking is handled at the application layer
         for qa in self.questions_asked:
             # Exact text match (case-insensitive)
             if qa.question.lower().strip() == question.lower().strip():
                 raise DuplicateQuestionError(question)
-            
-            # Semantic duplicate check - classify both questions and compare categories
-            try:
-                from clinicai.adapters.external.question_service_openai import OpenAIQuestionService
-                question_service = OpenAIQuestionService()
-                
-                existing_category = question_service._classify_question(qa.question or "")
-                new_category = question_service._classify_question(question or "")
-                
-                # If both questions belong to the same category and it's not "other", it's a duplicate
-                if (existing_category == new_category and 
-                    existing_category != "other" and 
-                    existing_category in ["duration", "triggers", "pain", "temporal", "travel", "allergies", "medications", "hpi", "family", "lifestyle", "gyn", "functional"]):
-                    raise DuplicateQuestionError(question)
-            except Exception as e:
-                # If classification fails, fall back to exact text matching only
-                pass
 
         question_id = QuestionId.generate()
         question_answer = QuestionAnswer(

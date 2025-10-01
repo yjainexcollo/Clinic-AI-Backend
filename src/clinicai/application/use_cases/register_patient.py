@@ -45,12 +45,10 @@ class RegisterPatientUseCase:
             )
             # Update patient's language preference for this visit
             existing_patient.language = request.language
-            print(f"DEBUG: RegisterPatient - Updated existing patient language from {existing_patient.language} to {request.language}")
             first_question = await self._question_service.generate_first_question(
                 disease=visit.symptom or "general consultation",
                 language=request.language
             )
-            print(f"DEBUG: RegisterPatient - Generated first question for existing patient: {first_question}")
             existing_patient.add_visit(visit)
             visit.set_pending_question(first_question)
             await self._patient_repository.save(existing_patient)
@@ -90,12 +88,10 @@ class RegisterPatientUseCase:
         )
 
         # Generate first question via QuestionService for consistency
-        print(f"DEBUG: RegisterPatient - New patient language: {patient.language}")
         first_question = await self._question_service.generate_first_question(
             disease=visit.symptom or "general consultation",
             language=patient.language
         )
-        print(f"DEBUG: RegisterPatient - Generated first question for new patient: {first_question}")
 
         # Add visit to patient and cache pending question to ensure UI/DB match
         patient.add_visit(visit)

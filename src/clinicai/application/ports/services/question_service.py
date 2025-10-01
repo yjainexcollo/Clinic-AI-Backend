@@ -25,6 +25,7 @@ class QuestionService(ABC):
         recently_travelled: bool = False,
         prior_summary: Optional[str] = None,
         prior_qas: Optional[List[str]] = None,
+        patient_gender: Optional[str] = None,
     ) -> str:
         """Generate the next question based on context."""
         pass
@@ -64,6 +65,6 @@ class QuestionService(ABC):
         pass
 
     @abstractmethod
-    def is_medication_question(self, question: str) -> bool:
+    async def is_medication_question(self, question: str) -> bool:
         """Check if a question is about medications and allows image upload."""
         pass

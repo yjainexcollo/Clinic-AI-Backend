@@ -94,6 +94,7 @@ class AnswerIntakeUseCase:
                             recently_travelled=patient.recently_travelled,
                             prior_summary=prior_summary,
                             prior_qas=prior_qas,
+                            patient_gender=patient.gender,
                         )
                         if candidate and candidate.strip() and candidate not in asked_questions:
                             current_question = candidate
@@ -171,6 +172,7 @@ class AnswerIntakeUseCase:
                         recently_travelled=patient.recently_travelled,
                         prior_summary=prior_summary,
                         prior_qas=prior_qas,
+                        patient_gender=patient.gender,
                     )
                     if candidate and candidate.strip() and candidate not in asked_questions:
                         next_question = candidate
@@ -232,7 +234,7 @@ class AnswerIntakeUseCase:
         # Check if next question allows image upload
         allows_image_upload = False
         if next_question:
-            allows_image_upload = self._question_service.is_medication_question(next_question)
+            allows_image_upload = await self._question_service.is_medication_question(next_question)
 
         return AnswerIntakeResponse(
             next_question=next_question,
@@ -283,6 +285,7 @@ class AnswerIntakeUseCase:
             max_count=max_count,
             language=patient.language,
             recently_travelled=patient.recently_travelled,
+            patient_gender=patient.gender,
         )
         visit.set_pending_question(next_question)
 
@@ -297,7 +300,7 @@ class AnswerIntakeUseCase:
 
         allows_image_upload = False
         if next_question:
-            allows_image_upload = self._question_service.is_medication_question(next_question)
+            allows_image_upload = await self._question_service.is_medication_question(next_question)
 
         # Persist changes
         await self._patient_repository.save(patient)
