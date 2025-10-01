@@ -9,6 +9,7 @@ from ..deps import TranscriptionServiceDep
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
 from beanie import PydanticObjectId
 from ...core.config import get_settings
+from ...core.utils.file_utils import save_audio_file
 from ...application.utils.structure_dialogue import structure_dialogue_from_text
 
 
@@ -97,6 +98,20 @@ async def transcribe_audio_adhoc(
 
         result = await transcription_service.transcribe_audio(temp_file_path, language=language)
 
+        # Save audio file to permanent storage if enabled
+        audio_file_path = None
+        settings = get_settings()
+        if settings.file_storage.save_audio_files:
+            audio_file_path = save_audio_file(
+                temp_file_path=temp_file_path,
+                storage_directory=settings.file_storage.audio_storage_path,
+                original_filename=audio_file.filename
+            )
+            if audio_file_path:
+                logger.info(f"Audio file saved to: {audio_file_path}")
+            else:
+                logger.warning("Failed to save audio file to permanent storage")
+
         # Persist ad-hoc transcript
         try:
             doc = AdhocTranscriptMongo(
@@ -108,6 +123,7 @@ async def transcribe_audio_adhoc(
                 word_count=result.get("word_count"),
                 model=result.get("model"),
                 filename=audio_file.filename or None,
+                audio_file_path=audio_file_path,
             )
             await doc.insert()
             result["adhoc_id"] = str(doc.id)
@@ -134,6 +150,8 @@ class StructureTextRequest(BaseModel):
     status_code=status.HTTP_200_OK,
 )
 async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, List[Dict[str, str]]]:
+    logger.info(f"Structure endpoint called with adhoc_id: {payload.adhoc_id}, transcript length: {len(payload.transcript) if payload.transcript else 0}")
+    
     if not payload.transcript or not payload.transcript.strip():
         raise HTTPException(
             status_code=422,
@@ -144,7 +162,9 @@ async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, 
     model = payload.model or settings.openai.model
     api_key = settings.openai.api_key
 
+    logger.info(f"Calling structure_dialogue_from_text with model: {model}")
     dialogue = await structure_dialogue_from_text(payload.transcript, model=model, api_key=api_key)
+    logger.info(f"Structure dialogue result: {type(dialogue)}, length: {len(dialogue) if isinstance(dialogue, list) else 'N/A'}")
 
     # Normalize dialogue to a list (empty list if None)
     normalized_dialogue: List[Dict[str, str]] = dialogue if isinstance(dialogue, list) else []
@@ -152,15 +172,22 @@ async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, 
     # Optionally persist structured dialogue back to adhoc record
     if payload.adhoc_id:
         try:
+            logger.info(f"Attempting to save structured dialogue to adhoc_id: {payload.adhoc_id}")
             oid = PydanticObjectId(payload.adhoc_id)
             doc = await AdhocTranscriptMongo.get(oid)  # type: ignore
             if doc is not None:
+                logger.info(f"Found adhoc document, updating structured_dialogue with {len(normalized_dialogue)} turns")
                 doc.structured_dialogue = normalized_dialogue
                 await doc.save()
-        except Exception:
+                logger.info("Successfully saved structured dialogue to database")
+            else:
+                logger.warning(f"Adhoc document not found for id: {payload.adhoc_id}")
+        except Exception as e:
+            logger.error(f"Failed to persist structured dialogue: {e}")
             # Swallow persistence errors to keep endpoint responsive
             pass
 
+    logger.info(f"Returning dialogue with {len(normalized_dialogue)} turns")
     return {"dialogue": normalized_dialogue}
 
 

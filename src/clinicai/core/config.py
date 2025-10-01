@@ -227,7 +227,9 @@ class FileStorageSettings(BaseSettings):
 
     storage_type: str = Field(default="local", description="Storage type (local, s3, azure)")
     storage_path: str = Field(default="./storage", description="Local storage path")
+    audio_storage_path: str = Field(default="./storage/audio", description="Audio files storage path")
     cleanup_after_hours: int = Field(default=24, description="Cleanup files after hours")
+    save_audio_files: bool = Field(default=True, description="Whether to save original audio files")
 
     @validator("storage_type")
     def validate_storage_type(cls, v: str) -> str:

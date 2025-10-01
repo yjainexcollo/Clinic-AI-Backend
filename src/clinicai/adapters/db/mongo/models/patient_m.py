@@ -148,6 +148,7 @@ class AdhocTranscriptMongo(Document):
     word_count: Optional[int] = Field(None)
     model: Optional[str] = Field(None)
     filename: Optional[str] = Field(None)
+    audio_file_path: Optional[str] = Field(None, description="Path to stored audio file")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
