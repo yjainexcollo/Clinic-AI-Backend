@@ -229,7 +229,7 @@ class FileStorageSettings(BaseSettings):
     storage_path: str = Field(default="./storage", description="Local storage path")
     audio_storage_path: str = Field(default="./storage/audio", description="Audio files storage path")
     cleanup_after_hours: int = Field(default=24, description="Cleanup files after hours")
-    save_audio_files: bool = Field(default=True, description="Whether to save original audio files")
+    save_audio_files: bool = Field(default=False, description="Whether to save original audio files (deprecated - use database storage)")
 
     @validator("storage_type")
     def validate_storage_type(cls, v: str) -> str:

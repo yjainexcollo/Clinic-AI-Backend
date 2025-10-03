@@ -12,6 +12,7 @@ import logging
 from .api.routers import health, patients, notes, prescriptions
 from .api.routers import doctor as doctor_router
 from .api.routers import transcription as transcription_router
+from .api.routers import audio as audio_router
 from .core.config import get_settings
 from .domain.errors import DomainError
 import asyncio
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
             MedicationImageMongo,
             AdhocTranscriptMongo,
             DoctorPreferencesMongo,
+            AudioFileMongo,
         )
 
         # Use configured URI
@@ -64,7 +66,7 @@ async def lifespan(app: FastAPI):
         db = client[db_name]
         await init_beanie(
             database=db,
-            document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo, DoctorPreferencesMongo],
+            document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo, DoctorPreferencesMongo, AudioFileMongo],
         )
         print("✅ Database connection established")
     except Exception as e:
@@ -161,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(prescriptions.router)
     app.include_router(transcription_router.router)
     app.include_router(doctor_router.router)
+    app.include_router(audio_router.router)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)
@@ -228,5 +231,12 @@ async def root():
             # Intake session (preferences-aware)
             "start_intake": "POST /intake/start",
             "next_question": "POST /intake/next-question",
+            # Audio management
+            "list_audio_files": "GET /audio/",
+            "get_audio_metadata": "GET /audio/{audio_id}",
+            "download_audio": "GET /audio/{audio_id}/download",
+            "stream_audio": "GET /audio/{audio_id}/stream",
+            "delete_audio": "DELETE /audio/{audio_id}",
+            "audio_stats": "GET /audio/stats/summary",
         },
     }

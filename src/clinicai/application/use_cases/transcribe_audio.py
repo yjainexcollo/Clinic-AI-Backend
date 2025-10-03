@@ -86,9 +86,16 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Starting transcript processing for {len(raw_transcript)} characters")
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:200]}...")
             
-            structured_content = await self._process_transcript_with_chunking(
-                client, raw_transcript, settings, LOGGER, request.language or "en"
-            )
+            # For very long transcripts, use simpler processing to avoid timeouts
+            if len(raw_transcript) > 5000:
+                LOGGER.info("Long transcript detected, using simplified processing to avoid timeout")
+                structured_content = await self._process_transcript_simple(
+                    client, raw_transcript, settings, LOGGER, request.language or "en"
+                )
+            else:
+                structured_content = await self._process_transcript_with_chunking(
+                    client, raw_transcript, settings, LOGGER, request.language or "en"
+                )
 
             # Process structured dialogue separately from raw transcript
             structured_dialogue = None
@@ -520,3 +527,47 @@ class TranscribeAudioUseCase:
         
         logger.info(f"Merged {len(chunk_results)} chunks into {len(merged)} dialogue turns")
         return merged
+    
+    async def _process_transcript_simple(
+        self, 
+        client: OpenAI, 
+        raw_transcript: str, 
+        settings, 
+        logger,
+        language: str = "en"
+    ) -> str:
+        """Process transcript with simplified approach for long transcripts to avoid timeouts."""
+        
+        # Simplified system prompt for faster processing
+        if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+            system_prompt = (
+                "Convierte esta transcripción médica en diálogo Doctor-Paciente. "
+                "Elimina información personal. Devuelve SOLO un JSON array con turnos de diálogo. "
+                "Formato: [{\"Doctor\": \"texto\"}, {\"Paciente\": \"texto\"}]"
+            )
+        else:
+            system_prompt = (
+                "Convert this medical transcript into Doctor-Patient dialogue. "
+                "Remove personal information. Return ONLY a JSON array with dialogue turns. "
+                "Format: [{\"Doctor\": \"text\"}, {\"Patient\": \"text\"}]"
+            )
+        
+        # Truncate very long transcripts to avoid API limits
+        max_length = 8000  # Reduced from chunking approach
+        if len(raw_transcript) > max_length:
+            logger.info(f"Truncating transcript from {len(raw_transcript)} to {max_length} characters for faster processing")
+            raw_transcript = raw_transcript[:max_length] + "..."
+        
+        if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+            user_prompt = f"TRANSCRIPCIÓN: {raw_transcript}\n\nConvierte a diálogo Doctor-Paciente en formato JSON."
+        else:
+            user_prompt = f"TRANSCRIPT: {raw_transcript}\n\nConvert to Doctor-Patient dialogue in JSON format."
+        
+        try:
+            logger.info("Starting simplified LLM processing...")
+            result = await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
+            logger.info(f"Simplified processing completed: {len(result) if result else 0} characters")
+            return result
+        except Exception as e:
+            logger.error(f"Simplified processing failed: {e}")
+            return ""

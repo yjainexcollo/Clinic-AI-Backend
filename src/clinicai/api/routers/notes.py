@@ -28,7 +28,7 @@ from clinicai.domain.errors import (
     PatientNotFoundError,
     VisitNotFoundError,
 )
-from ..deps import PatientRepositoryDep, TranscriptionServiceDep, SoapServiceDep
+from ..deps import PatientRepositoryDep, TranscriptionServiceDep, AudioRepositoryDep, SoapServiceDep
 from ...core.utils.crypto import decode_patient_id
 from ..schemas.patient import ErrorResponse
 from ...core.config import get_settings
@@ -98,6 +98,7 @@ async def test_cors():
 async def transcribe_audio(
     patient_repo: PatientRepositoryDep,
     transcription_service: TranscriptionServiceDep,
+    audio_repo: AudioRepositoryDep,
     background: BackgroundTasks,
     patient_id: str = Form(...),
     visit_id: str = Form(...),
@@ -142,6 +143,8 @@ async def transcribe_audio(
 
     # Stream to temp file to avoid loading entire file in memory
     temp_file_path = None
+    audio_data = b""
+    audio_file_record = None  # Initialize outside try block for background task access
     try:
         ext = (audio_file.filename or 'audio').split('.')[-1]
         # Normalize common MPEG container cases
@@ -155,11 +158,12 @@ async def transcribe_audio(
                 if not chunk:
                     break
                 temp_file.write(chunk)
+                audio_data += chunk
 
         # Mark visit as queued if possible (best-effort via use case during processing)
         try:
             # Check if patient and visit exist and are in correct status
-            patient = await patient_repo.get_by_id(internal_patient_id)
+            patient = await patient_repo.find_by_id(internal_patient_id)
             if not patient:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -175,8 +179,10 @@ async def transcribe_audio(
             
             logger.info(f"Patient {internal_patient_id} and visit {visit_id} found. Visit status: {visit.status}")
             
-            # Start transcription session
-            visit.start_transcription(temp_file_path)
+            # Audio file will be saved in background task where database context is properly initialized
+
+            # Start transcription session (no longer using file path)
+            visit.start_transcription(None)  # No file path needed
             await patient_repo.save(patient)
             logger.info(f"Started transcription session for patient {internal_patient_id}, visit {visit_id}")
             
@@ -188,26 +194,69 @@ async def transcribe_audio(
         async def _run_background():
             try:
                 logger.info(f"Starting background transcription for patient {internal_patient_id}, visit {visit_id}")
-                logger.info(f"Audio file path: {temp_file_path}")
-                logger.info(f"File exists: {os.path.exists(temp_file_path) if temp_file_path else False}")
                 
-                req = AudioTranscriptionRequest(
-                    patient_id=internal_patient_id,
-                    visit_id=visit_id,
-                    audio_file_path=temp_file_path,
-                    language=language,
-                )
+                # Save audio file to database in background task where database context is properly initialized
+                audio_file_record = None
+                try:
+                    logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
+                    audio_file_record = await audio_repo.create_audio_file(
+                        audio_data=audio_data,
+                        filename=audio_file.filename or "unknown_audio",
+                        content_type=audio_file.content_type or "audio/mpeg",
+                        patient_id=internal_patient_id,
+                        visit_id=visit_id,
+                        audio_type="visit",
+                    )
+                    logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save audio file to database: {e}")
+                    import traceback
+                    logger.error(f"Full traceback: {traceback.format_exc()}")
+                    # Continue without failing the transcription
+                
+                # Get audio data from database if we have an audio file record
+                if audio_file_record:
+                    logger.info(f"Using audio data from database: {audio_file_record.audio_id}")
+                    # Create a temporary file with the audio data for transcription
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{audio_file_record.filename.split('.')[-1]}") as temp_audio_file:
+                        temp_audio_file.write(audio_data)
+                        temp_audio_path = temp_audio_file.name
+                    
+                    req = AudioTranscriptionRequest(
+                        patient_id=internal_patient_id,
+                        visit_id=visit_id,
+                        audio_file_path=temp_audio_path,
+                        language=language,
+                    )
+                else:
+                    # Fallback to temp file if no database record
+                    logger.info(f"Using temp file path: {temp_file_path}")
+                    req = AudioTranscriptionRequest(
+                        patient_id=internal_patient_id,
+                        visit_id=visit_id,
+                        audio_file_path=temp_file_path,
+                        language=language,
+                    )
+                
                 use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
                 
                 logger.info("Executing transcription use case...")
                 result = await use_case.execute(req)
                 logger.info(f"Transcription completed successfully for patient {internal_patient_id}: {result}")
                 
+                # Update audio file with duration if we have the result
+                if audio_file_record and result.get("duration"):
+                    await audio_repo.update_audio_metadata(
+                        audio_file_record.audio_id,
+                        duration_seconds=result.get("duration")
+                    )
+                    logger.info(f"Updated audio file duration: {result.get('duration')} seconds")
+                
             except Exception as e:
                 logger.error(f"Background transcription failed for patient {internal_patient_id}, visit {visit_id}: {e}", exc_info=True)
                 # Mark transcription as failed in the database
                 try:
-                    patient = await patient_repo.get_by_id(internal_patient_id)
+                    patient = await patient_repo.find_by_id(internal_patient_id)
                     if patient:
                         visit = patient.get_visit_by_id(visit_id)
                         if visit and visit.transcription_session:
@@ -218,11 +267,16 @@ async def transcribe_audio(
                     logger.error(f"Failed to mark transcription as failed in database: {db_error}")
             finally:
                 try:
+                    # Clean up temp files
                     if temp_file_path and os.path.exists(temp_file_path):
                         os.unlink(temp_file_path)
                         logger.info(f"Cleaned up temp file: {temp_file_path}")
+                    # Clean up any additional temp files created in background
+                    if 'temp_audio_path' in locals() and os.path.exists(temp_audio_path):
+                        os.unlink(temp_audio_path)
+                        logger.info(f"Cleaned up background temp file: {temp_audio_path}")
                 except Exception as cleanup_error:
-                    logger.error(f"Failed to clean up temp file {temp_file_path}: {cleanup_error}")
+                    logger.error(f"Failed to clean up temp files: {cleanup_error}")
 
         # Schedule background processing
         asyncio.create_task(_run_background())

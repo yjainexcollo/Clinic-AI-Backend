@@ -366,7 +366,7 @@ class Visit:
         
         self.soap_note = SoapNote(
             subjective=soap_data.get("subjective", ""),
-            objective=soap_data.get("objective", ""),
+            objective=soap_data.get("objective", {}),
             assessment=soap_data.get("assessment", ""),
             plan=soap_data.get("plan", ""),
             highlights=soap_data.get("highlights", []),

@@ -24,6 +24,15 @@ AI-powered clinic management system with speech-to-text, large language model in
   - Medical record management
   - EHR integration capabilities
 
+- **🎵 Audio Management System**
+
+  - Database-stored audio files (no file system dependencies)
+  - Comprehensive audio player with full controls
+  - Audio file listing and management interface
+  - Support for both adhoc and visit recordings
+  - Audio streaming and download capabilities
+  - Migration tools for existing file-based audio
+
 - **🏗️ Modern Architecture**
 
   - Clean Architecture with domain-driven design
@@ -54,6 +63,7 @@ This backend follows Clean Architecture and domain-driven design. Responsibiliti
     - `api/routers/patients.py` – intake lifecycle, pre-visit summary
     - `api/routers/notes.py` – transcription, SOAP generation, retrieval
     - `api/routers/prescriptions.py` – prescription upload & analysis
+    - `api/routers/audio.py` – audio file management, streaming, and playback
     - `api/routers/health.py` – health and readiness
   - Schemas (request/response models): `api/schemas/*`
   - Dependencies: `api/deps.py`
@@ -164,6 +174,13 @@ This backend follows Clean Architecture and domain-driven design. Responsibiliti
   - Route: `api/routers/health.py`
   - Checks DB, cache, and overall service liveness
 
+- Audio Management:
+  - Routes: `api/routers/audio.py`
+  - Database storage: `AudioFileMongo` model in `adapters/db/mongo/models/patient_m.py`
+  - Repository: `adapters/db/mongo/repositories/audio_repository.py`
+  - Frontend: Audio management page with full-featured player
+  - Migration: `scripts/migrate_audio_to_db.py` for existing file-based audio
+
 ### Configuration Snapshot (env)
 - `MONGO_URI`, `MONGO_DB_NAME` – database connection and DB name
 - `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MAX_TOKENS`, `OPENAI_TEMPERATURE`
@@ -171,6 +188,7 @@ This backend follows Clean Architecture and domain-driven design. Responsibiliti
 - `WHISPER_MODEL`, `WHISPER_LANGUAGE`
 - `MISTRAL_API_KEY`
 - `AUDIO_MAX_SIZE_MB`, `AUDIO_ALLOWED_FORMATS`, `FILE_STORAGE_TYPE`
+- `FILE_SAVE_AUDIO_FILES` (deprecated - now defaults to False, use database storage)
 
 Where to look: `core/config.py` centralizes reading and validation of these environment variables.
 

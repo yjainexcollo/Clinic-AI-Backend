@@ -4,9 +4,11 @@ from typing import Optional, List, Dict
 import os
 import tempfile
 import logging
+from datetime import datetime
 
-from ..deps import TranscriptionServiceDep
+from ..deps import TranscriptionServiceDep, AudioRepositoryDep, ActionPlanServiceDep
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
+from ...adapters.db.mongo.repositories.audio_repository import AudioRepository
 from beanie import PydanticObjectId
 from ...core.config import get_settings
 from ...core.utils.file_utils import save_audio_file
@@ -35,6 +37,7 @@ class AdhocTranscriptionResponse(BaseModel):
 )
 async def transcribe_audio_adhoc(
     transcription_service: TranscriptionServiceDep,
+    audio_repo: AudioRepositoryDep,
     audio_file: UploadFile = File(...),
     language: str = Form("en"),
 ):
@@ -66,15 +69,19 @@ async def transcribe_audio_adhoc(
         )
 
     temp_file_path = None
+    audio_data = b""
     try:
+        # First, read all the audio data
+        audio_data = await audio_file.read()
+        
+        # Reset file pointer for transcription service
+        await audio_file.seek(0)
+        
+        # Create temp file for transcription
         suffix = f".{(audio_file.filename or 'audio').split('.')[-1]}"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file_path = temp_file.name
-            while True:
-                chunk = await audio_file.read(1024 * 1024)
-                if not chunk:
-                    break
-                temp_file.write(chunk)
+            temp_file.write(audio_data)
 
         # Validate and transcribe
         try:
@@ -98,19 +105,23 @@ async def transcribe_audio_adhoc(
 
         result = await transcription_service.transcribe_audio(temp_file_path, language=language)
 
-        # Save audio file to permanent storage if enabled
-        audio_file_path = None
-        settings = get_settings()
-        if settings.file_storage.save_audio_files:
-            audio_file_path = save_audio_file(
-                temp_file_path=temp_file_path,
-                storage_directory=settings.file_storage.audio_storage_path,
-                original_filename=audio_file.filename
+        # Save audio file to database
+        audio_file_record = None
+        try:
+            logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
+            audio_file_record = await audio_repo.create_audio_file(
+                audio_data=audio_data,
+                filename=audio_file.filename or "unknown_audio",
+                content_type=audio_file.content_type or "audio/mpeg",
+                audio_type="adhoc",
+                duration_seconds=result.get("duration"),
             )
-            if audio_file_path:
-                logger.info(f"Audio file saved to: {audio_file_path}")
-            else:
-                logger.warning("Failed to save audio file to permanent storage")
+            logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
+        except Exception as e:
+            logger.error(f"Failed to save audio file to database: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            # Continue without failing the transcription
 
         # Persist ad-hoc transcript
         try:
@@ -123,11 +134,18 @@ async def transcribe_audio_adhoc(
                 word_count=result.get("word_count"),
                 model=result.get("model"),
                 filename=audio_file.filename or None,
-                audio_file_path=audio_file_path,
+                audio_file_path=None,  # No longer using file paths
             )
             await doc.insert()
             result["adhoc_id"] = str(doc.id)
-        except Exception:
+            
+            # Link audio file to adhoc transcript if we have both
+            if audio_file_record:
+                await audio_repo.link_audio_to_adhoc(audio_file_record.audio_id, str(doc.id))
+                logger.info(f"Linked audio file {audio_file_record.audio_id} to adhoc transcript {doc.id}")
+                
+        except Exception as e:
+            logger.error(f"Failed to persist adhoc transcript: {e}")
             pass
 
         return AdhocTranscriptionResponse(**{**result, "filename": audio_file.filename or None})
@@ -189,5 +207,225 @@ async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, 
 
     logger.info(f"Returning dialogue with {len(normalized_dialogue)} turns")
     return {"dialogue": normalized_dialogue}
+
+
+class ActionPlanRequest(BaseModel):
+    adhoc_id: str
+
+
+class ActionPlanResponse(BaseModel):
+    adhoc_id: str
+    status: str
+    message: str
+
+
+@router.post(
+    "/adhoc/action-plan",
+    response_model=ActionPlanResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_action_plan(
+    request: ActionPlanRequest,
+    action_plan_service: ActionPlanServiceDep,
+):
+    """
+    Generate Action and Plan for an adhoc transcript.
+    This endpoint queues the action plan generation and returns immediately.
+    """
+    logger.info(f"Action plan generation request for adhoc_id: {request.adhoc_id}")
+    
+    try:
+        # Find the adhoc transcript
+        adhoc_doc = await AdhocTranscriptMongo.find_one(
+            AdhocTranscriptMongo.id == PydanticObjectId(request.adhoc_id)
+        )
+        
+        if not adhoc_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {request.adhoc_id} not found", "details": {}},
+            )
+        
+        # Check if transcript exists
+        if not adhoc_doc.transcript:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "NO_TRANSCRIPT", "message": "No transcript available for action plan generation", "details": {}},
+            )
+        
+        # Check if action plan is already being processed or completed
+        if adhoc_doc.action_plan_status in ["processing", "completed"]:
+            return ActionPlanResponse(
+                adhoc_id=request.adhoc_id,
+                status=adhoc_doc.action_plan_status,
+                message="Action plan already processed or in progress"
+            )
+        
+        # Start action plan generation
+        adhoc_doc.action_plan_status = "processing"
+        adhoc_doc.action_plan_started_at = datetime.utcnow()
+        await adhoc_doc.save()
+        
+        # Queue background processing
+        import asyncio
+        asyncio.create_task(_generate_action_plan_background(
+            request.adhoc_id, 
+            adhoc_doc.transcript, 
+            adhoc_doc.structured_dialogue,
+            adhoc_doc.language or "en",
+            action_plan_service
+        ))
+        
+        logger.info(f"Action plan generation queued for adhoc_id: {request.adhoc_id}")
+        
+        return ActionPlanResponse(
+            adhoc_id=request.adhoc_id,
+            status="processing",
+            message="Action plan generation started"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting action plan generation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
+        )
+
+
+async def _generate_action_plan_background(
+    adhoc_id: str,
+    transcript: str,
+    structured_dialogue: list[dict],
+    language: str,
+    action_plan_service: ActionPlanServiceDep
+):
+    """Background task to generate action plan."""
+    try:
+        logger.info(f"Starting background action plan generation for adhoc_id: {adhoc_id}")
+        
+        # Generate action plan
+        action_plan_data = await action_plan_service.generate_action_plan(
+            transcript=transcript,
+            structured_dialogue=structured_dialogue,
+            language=language
+        )
+        
+        # Update the adhoc transcript with the generated action plan
+        adhoc_doc = await AdhocTranscriptMongo.find_one(
+            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
+        )
+        
+        if adhoc_doc:
+            adhoc_doc.action_plan = action_plan_data
+            adhoc_doc.action_plan_status = "completed"
+            adhoc_doc.action_plan_completed_at = datetime.utcnow()
+            await adhoc_doc.save()
+            
+            logger.info(f"Action plan generation completed for adhoc_id: {adhoc_id}")
+        else:
+            logger.error(f"Adhoc document not found during action plan completion: {adhoc_id}")
+            
+    except Exception as e:
+        logger.error(f"Error in background action plan generation: {e}")
+        
+        # Update status to failed
+        try:
+            adhoc_doc = await AdhocTranscriptMongo.find_one(
+                AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
+            )
+            if adhoc_doc:
+                adhoc_doc.action_plan_status = "failed"
+                adhoc_doc.action_plan_error_message = str(e)
+                adhoc_doc.action_plan_completed_at = datetime.utcnow()
+                await adhoc_doc.save()
+        except Exception as update_error:
+            logger.error(f"Failed to update action plan status to failed: {update_error}")
+
+
+@router.get(
+    "/adhoc/{adhoc_id}/action-plan/status",
+    status_code=status.HTTP_200_OK,
+)
+async def get_action_plan_status(adhoc_id: str):
+    """
+    Get the status of action plan generation for an adhoc transcript.
+    """
+    try:
+        adhoc_doc = await AdhocTranscriptMongo.find_one(
+            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
+        )
+        
+        if not adhoc_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {adhoc_id} not found", "details": {}},
+            )
+        
+        return {
+            "adhoc_id": adhoc_id,
+            "status": adhoc_doc.action_plan_status,
+            "started_at": adhoc_doc.action_plan_started_at.isoformat() if adhoc_doc.action_plan_started_at else None,
+            "completed_at": adhoc_doc.action_plan_completed_at.isoformat() if adhoc_doc.action_plan_completed_at else None,
+            "error_message": adhoc_doc.action_plan_error_message,
+            "has_action_plan": adhoc_doc.action_plan is not None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting action plan status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
+        )
+
+
+@router.get(
+    "/adhoc/{adhoc_id}/action-plan",
+    status_code=status.HTTP_200_OK,
+)
+async def get_action_plan(adhoc_id: str):
+    """
+    Get the generated action plan for an adhoc transcript.
+    """
+    try:
+        adhoc_doc = await AdhocTranscriptMongo.find_one(
+            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
+        )
+        
+        if not adhoc_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {adhoc_id} not found", "details": {}},
+            )
+        
+        if adhoc_doc.action_plan_status != "completed":
+            raise HTTPException(
+                status_code=status.HTTP_202_ACCEPTED,
+                detail={"error": "NOT_READY", "message": f"Action plan status: {adhoc_doc.action_plan_status}", "details": {}},
+            )
+        
+        if not adhoc_doc.action_plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "NO_ACTION_PLAN", "message": "No action plan available", "details": {}},
+            )
+        
+        return {
+            "adhoc_id": adhoc_id,
+            "action_plan": adhoc_doc.action_plan,
+            "generated_at": adhoc_doc.action_plan_completed_at.isoformat() if adhoc_doc.action_plan_completed_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting action plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
+        )
 
 

@@ -212,7 +212,28 @@ class MongoPatientRepository(PatientRepository):
             existing_patient.gender = patient.gender
             existing_patient.recently_travelled = patient.recently_travelled
             existing_patient.language = patient.language
-            existing_patient.visits = visits_mongo
+            
+            # Merge visits instead of replacing them
+            # Create a map of existing visits by visit_id for efficient lookup
+            existing_visits_map = {visit.visit_id: visit for visit in existing_patient.visits}
+            
+            # Add or update visits from the domain entity
+            for visit_mongo in visits_mongo:
+                if visit_mongo.visit_id in existing_visits_map:
+                    # Update existing visit
+                    existing_visit = existing_visits_map[visit_mongo.visit_id]
+                    existing_visit.status = visit_mongo.status
+                    existing_visit.updated_at = visit_mongo.updated_at
+                    existing_visit.intake_session = visit_mongo.intake_session
+                    existing_visit.pre_visit_summary = visit_mongo.pre_visit_summary
+                    existing_visit.transcription_session = visit_mongo.transcription_session
+                    existing_visit.soap_note = visit_mongo.soap_note
+                    existing_visit.vitals = visit_mongo.vitals
+                    existing_visit.post_visit_summary = visit_mongo.post_visit_summary
+                else:
+                    # Add new visit
+                    existing_patient.visits.append(visit_mongo)
+            
             existing_patient.updated_at = datetime.utcnow()
             return existing_patient
         else:
@@ -279,9 +300,36 @@ class MongoPatientRepository(PatientRepository):
             # Convert SOAP note
             soap_note = None
             if visit_mongo.soap_note:
+                # Handle objective field - it might be a string from old data
+                objective = visit_mongo.soap_note.objective
+                if isinstance(objective, str):
+                    try:
+                        # Try to parse as JSON if it looks like a dict string
+                        if objective.strip().startswith('{') and objective.strip().endswith('}'):
+                            import json
+                            objective = json.loads(objective)
+                        else:
+                            # If it's not JSON, create a basic structure
+                            objective = {
+                                "vital_signs": {},
+                                "physical_exam": {"general_appearance": objective or "Not discussed"}
+                            }
+                    except:
+                        # If parsing fails, create a basic structure
+                        objective = {
+                            "vital_signs": {},
+                            "physical_exam": {"general_appearance": objective or "Not discussed"}
+                        }
+                elif not isinstance(objective, dict):
+                    # If it's neither string nor dict, create a basic structure
+                    objective = {
+                        "vital_signs": {},
+                        "physical_exam": {"general_appearance": "Not discussed"}
+                    }
+                
                 soap_note = SoapNote(
                     subjective=visit_mongo.soap_note.subjective,
-                    objective=visit_mongo.soap_note.objective,
+                    objective=objective,  # Now guaranteed to be a dict
                     assessment=visit_mongo.soap_note.assessment,
                     plan=visit_mongo.soap_note.plan,
                     highlights=visit_mongo.soap_note.highlights,

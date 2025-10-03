@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import List, Optional
 
 from beanie import Document
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+import json
 
 
 class QuestionAnswerMongo(BaseModel):
@@ -63,6 +64,34 @@ class SoapNoteMongo(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow)
     model_info: Optional[dict] = Field(None, description="Model information")
     confidence_score: Optional[float] = Field(None, description="Confidence score")
+    
+    @validator('objective', pre=True)
+    def validate_objective(cls, v):
+        """Convert string objective to dict if needed."""
+        if isinstance(v, str):
+            try:
+                # Try to parse as JSON if it looks like a dict string
+                if v.strip().startswith('{') and v.strip().endswith('}'):
+                    return json.loads(v)
+                else:
+                    # If it's not JSON, create a basic structure
+                    return {
+                        "vital_signs": {},
+                        "physical_exam": {"general_appearance": v or "Not discussed"}
+                    }
+            except:
+                # If parsing fails, create a basic structure
+                return {
+                    "vital_signs": {},
+                    "physical_exam": {"general_appearance": v or "Not discussed"}
+                }
+        elif not isinstance(v, dict):
+            # If it's neither string nor dict, create a basic structure
+            return {
+                "vital_signs": {},
+                "physical_exam": {"general_appearance": "Not discussed"}
+            }
+        return v
 
 
 class VisitMongo(Document):
@@ -149,11 +178,50 @@ class AdhocTranscriptMongo(Document):
     model: Optional[str] = Field(None)
     filename: Optional[str] = Field(None)
     audio_file_path: Optional[str] = Field(None, description="Path to stored audio file")
+    
+    # Action and Plan fields
+    action_plan: Optional[dict] = Field(None, description="Generated Action and Plan from transcript")
+    action_plan_status: str = Field(default="pending", description="Status: pending, processing, completed, failed")
+    action_plan_started_at: Optional[datetime] = Field(None, description="When action plan generation started")
+    action_plan_completed_at: Optional[datetime] = Field(None, description="When action plan generation completed")
+    action_plan_error_message: Optional[str] = Field(None, description="Error message if action plan generation failed")
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
         name = "adhoc_transcripts"
         indexes = ["created_at"]
+
+
+class AudioFileMongo(Document):
+    """MongoDB model for storing audio files directly in database."""
+    audio_id: str = Field(..., description="Unique audio file ID", unique=True)
+    filename: str = Field(..., description="Original filename")
+    content_type: str = Field(..., description="MIME type of the audio file")
+    audio_data: bytes = Field(..., description="Binary audio file data")
+    file_size: int = Field(..., description="File size in bytes")
+    duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
+    
+    # Metadata
+    patient_id: Optional[str] = Field(None, description="Patient ID if linked to a patient")
+    visit_id: Optional[str] = Field(None, description="Visit ID if linked to a visit")
+    adhoc_id: Optional[str] = Field(None, description="Adhoc transcript ID if linked to adhoc transcript")
+    audio_type: str = Field(default="adhoc", description="Type: adhoc, visit, or other")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "audio_files"
+        indexes = [
+            "audio_id",
+            "patient_id", 
+            "visit_id",
+            "adhoc_id",
+            "audio_type",
+            "created_at"
+        ]
 
 
 class DoctorPreferencesMongo(Document):
