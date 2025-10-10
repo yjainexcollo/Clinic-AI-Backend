@@ -124,47 +124,20 @@ class TranscribeAudioUseCase:
             # Create intelligent fallback structured dialogue if LLM processing failed
             if not structured_dialogue and raw_transcript and raw_transcript.strip():
                 try:
-                    import re
-                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_transcript) if s.strip()]
-                    fallback_dialogue = []
-                    current_speaker = "Doctor"  # Medical consultations typically start with doctor
+                    # Use the same working logic as adhoc transcribe
+                    from ...application.utils.structure_dialogue import structure_dialogue_from_text
                     
-                    for sentence in sentences:
-                        # Simple heuristic for better speaker attribution
-                        sentence_lower = sentence.lower()
-                        
-                        # Doctor indicators
-                        if any(indicator in sentence_lower for indicator in [
-                            'what brings you', 'how can i help', 'tell me about', 'how long have you',
-                            'can you describe', 'do you have', 'are you taking', 'any allergies',
-                            'let me examine', 'i recommend', 'you should', 'we need to',
-                            'on a scale', 'when did this', 'where does it', 'how often'
-                        ]):
-                            current_speaker = "Doctor"
-                        
-                        # Patient indicators
-                        elif any(indicator in sentence_lower for indicator in [
-                            'i have', 'i feel', 'i think', 'i took', 'i went', 'my pain',
-                            'it started', 'it hurts', 'i don\'t', 'i can\'t', 'i\'m worried',
-                            'yes', 'no', 'maybe', 'i think so', 'i\'m not sure'
-                        ]):
-                            current_speaker = "Patient"
-                        
-                        fallback_dialogue.append({current_speaker: sentence})
-                        # Alternate speaker for next turn if no clear indicator
-                        if not any(indicator in sentence_lower for indicator in [
-                            'what brings you', 'how can i help', 'tell me about', 'how long have you',
-                            'can you describe', 'do you have', 'are you taking', 'any allergies',
-                            'let me examine', 'i recommend', 'you should', 'we need to',
-                            'on a scale', 'when did this', 'where does it', 'how often',
-                            'i have', 'i feel', 'i think', 'i took', 'i went', 'my pain',
-                            'it started', 'it hurts', 'i don\'t', 'i can\'t', 'i\'m worried',
-                            'yes', 'no', 'maybe', 'i think so', 'i\'m not sure'
-                        ]):
-                            current_speaker = "Patient" if current_speaker == "Doctor" else "Doctor"
+                    settings = get_settings()
+                    model = settings.openai.model
+                    api_key = settings.openai.api_key
                     
-                    structured_dialogue = fallback_dialogue
-                    LOGGER.info(f"Created intelligent fallback structured dialogue with {len(fallback_dialogue)} turns")
+                    LOGGER.info("Using structure_dialogue_from_text for fallback processing")
+                    structured_dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key)
+                    
+                    if structured_dialogue:
+                        LOGGER.info(f"Created structured dialogue with {len(structured_dialogue)} turns using working logic")
+                    else:
+                        LOGGER.warning("structure_dialogue_from_text returned None")
                 except Exception as e:
                     LOGGER.warning(f"Failed to create fallback structured dialogue: {e}")
 

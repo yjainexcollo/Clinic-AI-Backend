@@ -737,16 +737,52 @@ async def get_pre_visit_summary(
         if not visit:
             raise VisitNotFoundError(visit_id)
 
-        # Check if summary exists
+        # Check if summary exists, if not try to generate it
         if not visit.has_pre_visit_summary():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "SUMMARY_NOT_FOUND",
-                    "message": f"No pre-visit summary found for visit {visit_id}",
-                    "details": {"visit_id": visit_id},
-                },
-            )
+            logger.warning(f"No pre-visit summary found for visit {visit_id}, attempting to generate...")
+            
+            # Check if intake is completed
+            if not visit.is_intake_complete():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "INTAKE_NOT_COMPLETED",
+                        "message": f"Intake not completed for visit {visit_id}",
+                        "details": {"visit_id": visit_id},
+                    },
+                )
+            
+            # Try to generate summary on-demand
+            try:
+                from ...application.use_cases.generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
+                from ...application.dto.patient_dto import PreVisitSummaryRequest
+                from ...application.ports.services.question_service import QuestionService
+                from ...core.container import get_container
+                
+                container = get_container()
+                question_service = container.get(QuestionService)
+                
+                summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, question_service)
+                summary_request = PreVisitSummaryRequest(
+                    patient_id=internal_patient_id,
+                    visit_id=visit_id,
+                )
+                
+                result = await summary_use_case.execute(summary_request)
+                logger.info(f"Successfully generated pre-visit summary for visit {visit_id}")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Failed to generate pre-visit summary for visit {visit_id}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "SUMMARY_GENERATION_FAILED",
+                        "message": f"Failed to generate pre-visit summary for visit {visit_id}",
+                        "details": {"visit_id": visit_id, "error": str(e)},
+                    },
+                )
 
         # Get stored summary
         summary_data = visit.get_pre_visit_summary()
@@ -772,6 +808,7 @@ async def get_pre_visit_summary(
             summary=summary_data["summary"],
             generated_at=summary_data["generated_at"],
             medication_images=images_meta,
+            red_flags=summary_data.get("red_flags", []),
         )
 
     except PatientNotFoundError as e:

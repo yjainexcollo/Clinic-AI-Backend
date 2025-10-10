@@ -12,7 +12,6 @@ from clinicai.core.config import get_settings
 # Pure LLM Approach - No Templates Needed
 # ----------------------
 
-
 # ----------------------
 # OpenAI QuestionService
 # ----------------------
@@ -155,6 +154,7 @@ Return ONLY the category name (e.g., "duration", "pain", "medications", etc.). N
         prior_summary: Optional[Any] = None,
         prior_qas: Optional[List[str]] = None,
         patient_gender: Optional[str] = None,
+        patient_age: Optional[int] = None,
         language: str = "en",
     ) -> str:
         # Force closing question at the end
@@ -189,6 +189,7 @@ Cuando el número de preguntas sea limitado, prioriza siempre la información m�
 
 Motivo(s) principal(es) de consulta: {disease or "N/A"}
 Género del paciente: {patient_gender or "No especificado"}
+Edad del paciente: {patient_age or "No especificada"}
 
 ANÁLISIS OBLIGATORIO DE CONDICIONES:
 
@@ -203,8 +204,9 @@ CONDICIONES AGUDAS (NO requieren historia familiar ni monitoreo):
 CONDICIONES DE DOLOR (NO requieren historia familiar ni monitoreo):
 - cefaleas, dolor corporal, dolor torácico, dolor lumbar, dolor articular, dolor muscular, dolor abdominal, dolor pélvico, dolor menstrual
 
-CONDICIONES DE SALUD DE LA MUJER (requieren historia familiar si es mujer):
+CONDICIONES DE SALUD DE LA MUJER (requieren historia familiar si es mujer y apropiado para la edad):
 - problemas menstruales, embarazo, menopausia, SOP, endometriosis, condiciones ginecológicas, problemas mamarios, dolor pélvico/abdominal en mujeres
+- CONSIDERACIONES DE EDAD: Solo preguntar sobre temas menstruales para mujeres de 12-60 años
 
 CONDICIONES ALÉRGICAS (requieren preguntas sobre alergias):
 - reacciones alérgicas, problemas cutáneos, alergias alimentarias, ambientales, asma inducida por alergia
@@ -216,12 +218,15 @@ PASO 2: Si hay MÚLTIPLES condiciones, aplica reglas para CADA una:
 - Si hay condición CRÓNICA → preguntar historia familiar y monitoreo
 - Si hay condición AGUDA → NO preguntar historia familiar ni monitoreo
 - Si hay condición de DOLOR → NO preguntar historia familiar ni monitoreo
-- Si hay condición de SALUD DE LA MUJER Y el paciente es MUJER → preguntar historia familiar
+- Si hay condición de SALUD DE LA MUJER Y el paciente es MUJER Y edad 12-60 → preguntar historia familiar y preguntas menstruales
+- Si hay condición de SALUD DE LA MUJER Y el paciente es MUJER Y edad <12 o >60 → preguntar historia familiar pero NO preguntas menstruales
 - Si hay condición de SALUD DE LA MUJER Y el paciente es HOMBRE → NO preguntar historia familiar
 - Si hay condición ALÉRGICA → preguntar sobre alergias y exposiciones
 - Si hay condición RELACIONADA CON VIAJES → preguntar sobre viajes recientes
 
-PASO 3: Para dolor abdominal/pélvico en MUJERES, considerar si puede ser relacionado con salud de la mujer.
+PASO 3: Para dolor abdominal/pélvico en MUJERES, considerar si puede ser relacionado con salud de la mujer:
+- Si edad 12-60: Preguntar sobre ciclo menstrual, embarazo, historia ginecológica
+- Si edad <12 o >60: Enfocarse en causas abdominales generales, evitar preguntas menstruales
 
 PASO 4: Determina qué preguntas hacer basado en TODAS las condiciones identificadas.
 
@@ -468,6 +473,20 @@ PASO 1: Analiza el motivo de consulta "{disease}" y clasifica CADA condición:
 
 PASO 2: Verifica que la pregunta no haya sido hecha antes.
 
+Enfoque Específico por Edad
+
+<12 años: NO preguntas menstruales - enfocarse en causas generales de síntomas
+
+10–18: Irregularidades menstruales, pubertad, SOP, dolor abdominal con períodos
+
+19–40: Problemas menstruales, embarazo, fertilidad, endometriosis
+
+41–60: Perimenopausia, menopausia, cambios hormonales, salud ósea
+
+>60 años: NO preguntas menstruales - enfocarse en causas generales, problemas relacionados con menopausia
+
+Todas las edades: Historia familiar de cáncer de mama/ovario, trastornos hormonales
+
 **REGLA ABSOLUTA**: Si el motivo es fiebre, tos, resfriado, infección, dolor agudo → NUNCA preguntar sobre historia familiar o monitoreo crónico.
 """
         else:
@@ -486,6 +505,7 @@ When questions are limited, always prioritize medically essential information fi
 
 Chief complaint(s): {disease or "N/A"}
 Patient gender: {patient_gender or "Not specified"}
+Patient age: {patient_age or "Not specified"}
 
 MANDATORY CONDITION ANALYSIS:
 
@@ -500,8 +520,9 @@ ACUTE CONDITIONS (DO NOT require family history or monitoring):
 PAIN CONDITIONS (DO NOT require family history or monitoring):
 - headaches, body pain, chest pain, back pain, joint pain, muscle pain, abdominal pain, pelvic pain, menstrual pain
 
-WOMEN'S HEALTH CONDITIONS (require family history if female):
+WOMEN'S HEALTH CONDITIONS (require family history if female and age-appropriate):
 - menstrual issues, pregnancy-related, menopause, PCOS, endometriosis, gynecological conditions, breast issues, pelvic/abdominal pain in women
+- AGE CONSIDERATIONS: Only ask menstrual-related questions for females aged 12-60 years
 
 ALLERGY-RELATED CONDITIONS (require allergy questions):
 - allergic reactions, skin conditions, food allergies, environmental allergies, asthma (when allergy-triggered)
@@ -513,12 +534,15 @@ STEP 2: If there are MULTIPLE conditions, apply rules for EACH one:
 - If there's a CHRONIC condition → ask family history and monitoring
 - If there's an ACUTE condition → DO NOT ask family history or monitoring
 - If there's a PAIN condition → DO NOT ask family history or monitoring
-- If there's a WOMEN'S HEALTH condition AND patient is FEMALE → ask family history
+- If there's a WOMEN'S HEALTH condition AND patient is FEMALE AND age 12-60 → ask family history and menstrual questions
+- If there's a WOMEN'S HEALTH condition AND patient is FEMALE AND age <12 or >60 → ask family history but NOT menstrual questions
 - If there's a WOMEN'S HEALTH condition AND patient is MALE → DO NOT ask family history
 - If there's an ALLERGY-RELATED condition → ask about allergies and exposures
 - If there's a TRAVEL-RELATED condition → ask about recent travel
 
-STEP 3: For abdominal/pelvic pain in FEMALES, consider if it could be women's health related.
+STEP 3: For abdominal/pelvic pain in FEMALES, consider if it could be women's health related:
+- If age 12-60: Ask about menstrual cycle, pregnancy, gynecological history
+- If age <12 or >60: Focus on general abdominal causes, avoid menstrual questions
 
 STEP 4: Determine what questions to ask based on ALL identified conditions.
 
@@ -670,11 +694,15 @@ Low: Travel history, allergies (unless relevant)
 
 Age-Specific Focus
 
+<12 years: NO menstrual questions - focus on general causes of symptoms
+
 10–18: Menstrual irregularities, puberty, PCOS, stomach pain with periods
 
 19–40: Menstrual issues, pregnancy, fertility, endometriosis
 
 41–60: Perimenopause, menopause, hormonal changes, bone health
+
+>60 years: NO menstrual questions - focus on general causes, menopause-related issues
 
 All ages: Family history of breast/ovarian cancer, hormonal disorders
 
@@ -707,7 +735,7 @@ Medications → "Are you taking any medications for [condition 1] or [condition 
 
 Associated Symptoms → "Have you noticed any other symptoms along with [condition 1] and [condition 2]?" (ALWAYS mention ALL conditions)
 
-Travel History → "Have you traveled recently, and could this be related to [condition 1] or [condition 2]?"
+Travel History → "What countries or regions did you visit, and were you exposed to any unusual environments or outbreaks that could be related to [condition 1] or [condition 2]?"
 
 **CRITICAL**: For medications, ask ONE question that covers ALL types of medications (prescribed, home remedies, over-the-counter). Do NOT ask separate medication questions.
 
@@ -776,7 +804,8 @@ STEP 1: Analyze the chief complaint "{disease}" and classify EACH condition:
 - Is there a CHRONIC condition (diabetes, asthma, hypertension, etc.)? → YES, ask family history and monitoring
 - Is there an ACUTE condition (fever, cough, cold, infection)? → DO NOT ask family history or monitoring
 - Is there a PAIN condition (headache, abdominal pain, etc.)? → DO NOT ask family history or monitoring
-- Is there a WOMEN'S HEALTH condition AND patient is FEMALE? → YES, ask family history
+- Is there a WOMEN'S HEALTH condition AND patient is FEMALE AND age 12-60? → YES, ask family history and menstrual questions
+- Is there a WOMEN'S HEALTH condition AND patient is FEMALE AND age <12 or >60? → YES, ask family history but NOT menstrual questions
 - Is there a WOMEN'S HEALTH condition AND patient is MALE? → DO NOT ask family history
 - Is there an ALLERGY-RELATED condition (allergic reactions, allergic asthma, etc.)? → YES, ask about allergies
 - Is there a TRAVEL-RELATED condition (infections, exposure)? → YES, ask about travel
@@ -873,7 +902,7 @@ STEP 2: Verify the question hasn't been asked before.
         intake_answers: Dict[str, Any],
         language: str = "en",
     ) -> Dict[str, Any]:
-        """Generate pre-visit clinical summary from intake data (concise bullets)."""
+        """Generate pre-visit clinical summary from intake data with red flag detection."""
         
         if language == "sp":
             prompt = (
@@ -886,15 +915,17 @@ STEP 2: Verify the question hasn't been asked before.
                 "- Usa solo los encabezados exactos listados a continuación. No agregues, renombres o reordenes encabezados.\n"
                 "- Sin viñetas, numeración o formato markdown.\n"
                 "- Escribe en un tono de entrega clínica: corto, factual, sin duplicados y neutral.\n"
-                "- Incluye una sección solo si contiene contenido; omite secciones sin datos.\n"
-                "- No uses marcadores de posición como \"N/A\" o \"No proporcionado\".\n"
+                "- Incluye una sección SOLO si contiene contenido real de las respuestas del paciente.\n"
+                "- No uses marcadores de posición como \"N/A\", \"No proporcionado\", \"no reportado\", o \"niega\".\n"
+                "- No incluyas secciones para temas que no fueron preguntados o discutidos.\n"
                 "- Usa frases orientadas al paciente: \"El paciente reporta...\", \"Niega...\", \"En medicamentos:...\".\n"
                 "- No incluyas observaciones clínicas, diagnósticos, planes, signos vitales o hallazgos del examen (la pre-consulta es solo lo reportado por el paciente).\n"
                 "- Normaliza pronunciaciones médicas obvias a términos correctos sin agregar nueva información.\n\n"
-                "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos)\n"
+                "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos reales de las respuestas del paciente)\n"
                 "Motivo de Consulta:\n"
                 "HPI:\n"
                 "Historia:\n"
+                "Revisión de Sistemas:\n"
                 "Medicación Actual:\n\n"
                 "Pautas de Contenido por Sección\n"
                 "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible.\n"
@@ -904,14 +935,14 @@ STEP 2: Verify the question hasn't been asked before.
                 "  Manténlo natural y coherente (ej., \"El paciente reporta...\"). Si algunos elementos OLDCARTS son desconocidos, simplemente omítelos.\n"
                 "- Historia: Una línea combinando cualquier elemento reportado por el paciente usando punto y coma en este orden si está presente:\n"
                 "  Médica: ...; Quirúrgica: ...; Familiar: ...; Estilo de vida: ...\n"
-                "  (Incluye solo las partes proporcionadas por el paciente; omite las partes ausentes completamente).\n"
-                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados explícitamente por el paciente. Mantén como prosa, no como lista.\n"
-                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente (nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las reportó explícitamente.\n\n"
+                "  (Incluye SOLO las partes que fueron realmente preguntadas y respondidas por el paciente. Si un tema no fue discutido, no lo incluyas en absoluto).\n"
+                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados explícitamente por el paciente. Mantén como prosa, no como lista. Solo incluye si los sistemas fueron realmente revisados.\n"
+                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente (nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las reportó explícitamente. Solo incluye si los medicamentos fueron realmente discutidos.\n\n"
                 "Ejemplo de Formato\n"
                 "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
                 "Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.\n"
                 "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana y empeoran durante el día, llegando hasta 8/10 en los últimos 3 días. El dolor es sobre ambas sienes y se siente diferente de migrañas previas; la fatiga es prominente y se niega náusea. Los episodios se agravan por estrés y más tarde en el día, con alivio mínimo de analgésicos de venta libre y algo de alivio usando compresas frías.\n"
-                "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Familiar: no reportada; Estilo de vida: no fumador, alcohol ocasional, trabajo de alto estrés.\n"
+                "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador, alcohol ocasional, trabajo de alto estrés.\n"
                 "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad; alergias incluidas solo si el paciente las declaró explícitamente.\n\n"
                 f"Respuestas de Admisión:\n{self._format_intake_answers(intake_answers)}"
             )
@@ -926,15 +957,17 @@ STEP 2: Verify the question hasn't been asked before.
                 "- Use only the exact headings listed below. Do not add, rename, or reorder headings.\n"
                 "- No bullets, numbering, or markdown formatting.\n"
                 "- Write in a clinical handover tone: short, factual, deduplicated, and neutral.\n"
-                "- Include a section only if it contains content; omit sections with no data.\n"
-                "- Do not use placeholders like \"N/A\" or \"Not provided\".\n"
+                "- Include a section ONLY if it contains actual content from the patient's responses.\n"
+                "- Do not use placeholders like \"N/A\", \"Not provided\", \"not reported\", or \"denies\".\n"
+                "- Do not include sections for topics that were not asked about or discussed.\n"
                 "- Use patient-facing phrasing: \"Patient reports …\", \"Denies …\", \"On meds: …\".\n"
                 "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings (previsit is patient-reported only).\n"
                 '- Normalize obvious medical mispronunciations to correct terms (e.g., "diabetes mellitus" -> "diabetes mellitus") without adding new information.\n\n'
-                "Headings (use EXACT casing; include only if you have data)\n"
+                "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
                 "Chief Complaint:\n"
                 "HPI:\n"
                 "History:\n"
+                "Review of Systems:\n"
                 "Current Medication:\n\n"
                 "Content Guidelines per Section\n"
                 "- Chief Complaint: One line in the patient's own words if available.\n"
@@ -944,19 +977,28 @@ STEP 2: Verify the question hasn't been asked before.
                 "  Keep it natural and coherent (e.g., \"The patient reports …\"). If some OLDCARTS elements are unknown, simply omit them (do not write placeholders).\n"
                 "- History: One line combining any patient-reported items using semicolons in this order if present:\n"
                 "  Medical: …; Surgical: …; Family: …; Lifestyle: …\n"
-                "  (Include only parts provided by the patient; omit absent parts entirely.)\n"
-                "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list.\n"
-                "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them.\n\n"
+                "  (Include ONLY parts that were actually asked about and answered by the patient. If a topic was not discussed, do not include it at all.)\n"
+                "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list. Only include if systems were actually reviewed.\n"
+                "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. Only include if medications were actually discussed.\n\n"
                 "Example Format\n"
                 "(Structure and tone only—content will differ; each section on a single line.)\n"
                 "Chief Complaint: Patient reports severe headache for 3 days.\n"
                 "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through the day, reaching up to 8/10 over the last 3 days. Pain is over both temples and feels different from prior migraines; fatigue is prominent and nausea is denied. Episodes are aggravated by stress and later in the day, with minimal relief from over-the-counter analgesics and some relief using cold compresses. No radiation is reported, evenings are typically worse, and there have been no recent changes in medications or lifestyle.\n"
-                "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Family: not reported; Lifestyle: non-smoker, occasional alcohol, high-stress job.\n"
+                "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker, occasional alcohol, high-stress job.\n"
                 "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if the patient explicitly stated them.\n\n"
                 f"Intake Responses:\n{self._format_intake_answers(intake_answers)}"
             )
 
         try:
+            # Detect abusive language red flags
+            try:
+                red_flags = await self._detect_red_flags(intake_answers, language)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Red flag detection failed, continuing without flags: {e}")
+                red_flags = []
+            
             response = await self._chat_completion(
                 messages=[
                     {
@@ -972,15 +1014,273 @@ STEP 2: Verify the question hasn't been asked before.
                 temperature=0.3,
             )
             cleaned = self._clean_summary_markdown(response)
+            
+            # Red flags are handled separately in the frontend, not included in summary text
+            
             return {
                 "summary": cleaned,
                 "structured_data": {
                     "chief_complaint": "See summary",
                     "key_findings": ["See summary"],
                 },
+                "red_flags": red_flags,
             }
         except Exception:
-            return self._generate_fallback_summary(patient_data, intake_answers)
+            return await self._generate_fallback_summary(patient_data, intake_answers)
+
+    # ----------------------
+    # Red Flag Detection
+    # ----------------------
+    async def _detect_red_flags(self, intake_answers: Dict[str, Any], language: str = "en") -> List[Dict[str, str]]:
+        """Hybrid abusive language detection: hardcoded rules + LLM analysis."""
+        red_flags = []
+        
+        if not isinstance(intake_answers, dict) or "questions_asked" not in intake_answers:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("Invalid intake_answers format for red flag detection")
+            return red_flags
+            
+        questions_asked = intake_answers.get("questions_asked", [])
+        if not questions_asked:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("No questions found in intake_answers")
+            return red_flags
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting hybrid abusive language detection for {len(questions_asked)} questions")
+        
+        # Step 1: Fast hardcoded detection for obvious cases
+        obvious_flags = self._detect_obvious_abusive_language(questions_asked, language)
+        red_flags.extend(obvious_flags)
+        logger.info(f"Obvious abusive language flags detected: {len(obvious_flags)}")
+        
+        # Step 2: LLM analysis for subtle/contextual abusive language
+        complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, language)
+        red_flags.extend(complex_flags)
+        logger.info(f"Subtle abusive language flags detected: {len(complex_flags)}")
+        
+        logger.info(f"Total abusive language red flags detected: {len(red_flags)}")
+        return red_flags
+    
+    def _detect_obvious_abusive_language(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+        """Fast hardcoded detection for obvious abusive language."""
+        red_flags = []
+        
+        for qa in questions_asked:
+            answer = qa.get("answer", "").strip()
+            question = qa.get("question", "").strip()
+            
+            if not answer or answer.lower() in ["", "n/a", "not provided", "unknown", "don't know", "no se", "no proporcionado"]:
+                continue
+            
+            # Check for obvious abusive language
+            if self._contains_abusive_language(answer, language):
+                red_flags.append({
+                    "type": "abusive_language",
+                    "question": question,
+                    "answer": answer,
+                    "message": self._get_abusive_language_message(language),
+                    "detection_method": "hardcoded"
+                })
+        
+        return red_flags
+    
+    async def _detect_subtle_abusive_language_with_llm(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+        """Use LLM to detect subtle, contextual, or creative abusive language."""
+        try:
+            # Filter out obvious cases already detected
+            subtle_cases = []
+            for qa in questions_asked:
+                answer = qa.get("answer", "").strip()
+                question = qa.get("question", "").strip()
+                
+                if (answer and answer.lower() not in ["", "n/a", "not provided", "unknown", "don't know", "no se", "no proporcionado"] 
+                    and not self._contains_abusive_language(answer, language)):
+                    subtle_cases.append(qa)
+            
+            if not subtle_cases:
+                return []
+            
+            # Use LLM to analyze subtle cases
+            return await self._analyze_abusive_language_with_llm(subtle_cases, language)
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"LLM abusive language analysis failed: {e}")
+            return []
+    
+    async def _analyze_abusive_language_with_llm(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+        """Use LLM to analyze question-answer pairs for subtle abusive language."""
+        
+        if language == "sp":
+            prompt = f"""
+Analiza estas respuestas de admisión del paciente para detectar LENGUAJE ABUSIVO O INAPROPIADO:
+
+IMPORTANTE: Busca lenguaje abusivo, ofensivo, o inapropiado, incluyendo:
+- Profanidad directa o disfrazada
+- Insultos, desprecios, o lenguaje degradante
+- Lenguaje sexual inapropiado
+- Comentarios racistas, sexistas, o discriminatorios
+- Amenazas o lenguaje agresivo
+- Sarcasmo ofensivo o pasivo-agresivo
+- Lenguaje que sea inapropiado en un contexto médico
+
+NO marques como abusivo:
+- Lenguaje médico técnico
+- Descripciones de síntomas
+- Respuestas apropiadas a preguntas médicas
+- Expresiones de dolor o frustración legítima
+
+Para cada respuesta, determina si contiene lenguaje abusivo o inapropiado.
+
+Responde SOLO en formato JSON con este esquema:
+{{
+    "abusive_language": [
+        {{
+            "question": "pregunta completa",
+            "answer": "respuesta completa",
+            "reason": "explicación específica de por qué es lenguaje abusivo"
+        }}
+    ]
+}}
+
+Si no hay lenguaje abusivo, devuelve: {{"abusive_language": []}}
+
+Respuestas a analizar:
+{self._format_qa_pairs(questions_asked)}
+"""
+        else:
+            prompt = f"""
+Analyze these patient intake responses for ABUSIVE OR INAPPROPRIATE LANGUAGE:
+
+IMPORTANT: Look for abusive, offensive, or inappropriate language, including:
+- Direct or disguised profanity
+- Insults, slurs, or degrading language
+- Inappropriate sexual language
+- Racist, sexist, or discriminatory comments
+- Threats or aggressive language
+- Offensive sarcasm or passive-aggressive language
+- Language inappropriate in a medical context
+
+DO NOT flag as abusive:
+- Medical terminology
+- Symptom descriptions
+- Appropriate responses to medical questions
+- Legitimate expressions of pain or frustration
+
+For each response, determine if it contains abusive or inappropriate language.
+
+Respond ONLY in JSON format with this schema:
+{{
+    "abusive_language": [
+        {{
+            "question": "full question",
+            "answer": "full answer",
+            "reason": "specific explanation of why this is abusive language"
+        }}
+    ]
+}}
+
+If no abusive language found, return: {{"abusive_language": []}}
+
+Responses to analyze:
+{self._format_qa_pairs(questions_asked)}
+"""
+
+        try:
+            response = await self._chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a clinical assistant analyzing patient responses for abusive language. Be precise and only flag truly inappropriate or abusive language."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.1,  # Low temperature for consistent analysis
+            )
+            
+            # Parse LLM response
+            import json
+            import re
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                abusive_cases = result.get("abusive_language", [])
+                
+                # Convert to our format
+                formatted_flags = []
+                for case in abusive_cases:
+                    formatted_flags.append({
+                        "type": "abusive_language",
+                        "question": case.get("question", ""),
+                        "answer": case.get("answer", ""),
+                        "message": self._get_llm_abusive_language_message(case.get("reason", ""), language),
+                        "detection_method": "llm"
+                    })
+                
+                return formatted_flags
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to parse LLM abusive language response: {e}")
+        
+        return []
+    
+    def _format_qa_pairs(self, questions_asked: List[Dict[str, Any]]) -> str:
+        """Format question-answer pairs for LLM analysis."""
+        formatted = []
+        for i, qa in enumerate(questions_asked, 1):
+            question = qa.get("question", "N/A")
+            answer = qa.get("answer", "N/A")
+            formatted.append(f"{i}. Q: {question}\n   A: {answer}")
+        return "\n\n".join(formatted)
+    
+    def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
+        """Get message for LLM-detected abusive language."""
+        if language == "sp":
+            return f"⚠️ BANDERA ROJA: Lenguaje abusivo detectado. Razón: {reason}"
+        else:
+            return f"⚠️ RED FLAG: Abusive language detected. Reason: {reason}"
+    
+    def _contains_abusive_language(self, text: str, language: str = "en") -> bool:
+        """Check if text contains abusive or inappropriate language."""
+        text_lower = text.lower()
+        
+        # Common abusive words/phrases in English
+        english_abusive = [
+            "fuck", "shit", "damn", "hell", "bitch", "asshole", "bastard", "crap",
+            "stupid", "idiot", "moron", "retard", "gay", "fag", "nigger", "whore",
+            "slut", "cunt", "piss", "pissed", "fucking", "bullshit", "goddamn"
+        ]
+        
+        # Common abusive words/phrases in Spanish
+        spanish_abusive = [
+            "puta", "puto", "mierda", "joder", "coño", "cabrón", "hijo de puta",
+            "estúpido", "idiota", "imbécil", "retrasado", "maricón", "joto",
+            "pinche", "chingado", "verga", "pendejo", "culero", "mamón"
+        ]
+        
+        abusive_words = spanish_abusive if language == "sp" else english_abusive
+        
+        return any(word in text_lower for word in abusive_words)
+    
+    
+    def _get_abusive_language_message(self, language: str = "en") -> str:
+        """Get message for abusive language red flag."""
+        if language == "sp":
+            return "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
+        else:
+            return "⚠️ RED FLAG: Patient used inappropriate or abusive language in their responses."
+    
+    
 
     # ----------------------
     # Helpers
@@ -1046,20 +1346,28 @@ STEP 2: Verify the question hasn't been asked before.
                 },
             }
 
-    def _generate_fallback_summary(self, patient_data: Dict[str, Any], intake_answers: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate basic fallback summary."""
+    async def _generate_fallback_summary(self, patient_data: Dict[str, Any], intake_answers: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate basic fallback summary with red flag detection."""
+        # Still detect red flags even in fallback mode
+        red_flags = await self._detect_red_flags(intake_answers, "en")  # Default to English for fallback
+        
+        summary = f"Pre-visit summary for {patient_data.get('name', 'Patient')}"
+        
+        # Red flags are handled separately in the frontend, not included in summary text
+        
         return {
-            "summary": f"Pre-visit summary for {patient_data.get('name', 'Patient')}",
+            "summary": summary,
             "structured_data": {
                 "chief_complaint": patient_data.get("symptom") or patient_data.get("complaint") or "N/A",
                 "key_findings": ["See intake responses"],
             },
+            "red_flags": red_flags,
         }
 
-    def _normalize_summary_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+    async def _normalize_summary_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Ensure result contains 'summary' and 'structured_data' keys with sane defaults."""
         if not isinstance(result, dict):
-            return self._generate_fallback_summary({}, {})
+            return await self._generate_fallback_summary({}, {})
 
         summary = result.get("summary") or result.get("markdown") or result.get("content") or ""
         structured = result.get("structured_data") or result.get("structuredData") or result.get("data") or {}
@@ -1110,7 +1418,11 @@ STEP 2: Verify the question hasn't been asked before.
             if extracted.get("chief_complaint") and structured.get("chief_complaint") in (None, "See summary", "N/A"):
                 structured["chief_complaint"] = extracted["chief_complaint"]
 
-        return {"summary": summary, "structured_data": structured}
+        return {
+            "summary": summary, 
+            "structured_data": structured,
+            "red_flags": result.get("red_flags", [])
+        }
 
     def _clean_summary_markdown(self, summary_md: str) -> str:
         """Remove placeholder lines like [Insert ...] and drop now-empty sections."""

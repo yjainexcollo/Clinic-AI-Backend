@@ -222,6 +222,9 @@ class PreVisitSummaryResponse(BaseModel):
     medication_images: Optional[List[Dict[str, Any]]] = Field(
         None, description="Uploaded medication images metadata for the visit, if any"
     )
+    red_flags: Optional[List[Dict[str, str]]] = Field(
+        None, description="Red flags detected in patient responses (abusive language, incomplete information)"
+    )
 
 
 # Post-Visit Summary Schemas

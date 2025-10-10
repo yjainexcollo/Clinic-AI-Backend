@@ -26,6 +26,7 @@ class QuestionService(ABC):
         prior_summary: Optional[str] = None,
         prior_qas: Optional[List[str]] = None,
         patient_gender: Optional[str] = None,
+        patient_age: Optional[int] = None,
     ) -> str:
         """Generate the next question based on context."""
         pass

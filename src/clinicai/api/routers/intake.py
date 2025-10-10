@@ -151,6 +151,8 @@ async def next_question(req: NextQuestionRequest, question_service: QuestionServ
         recently_travelled=False,
         prior_summary=None,
         prior_qas=None,
+        patient_gender=None,
+        patient_age=None,
     )
 
     # Update session state

@@ -95,6 +95,7 @@ class AnswerIntakeUseCase:
                             prior_summary=prior_summary,
                             prior_qas=prior_qas,
                             patient_gender=patient.gender,
+                            patient_age=patient.age,
                         )
                         if candidate and candidate.strip() and candidate not in asked_questions:
                             current_question = candidate
@@ -173,6 +174,7 @@ class AnswerIntakeUseCase:
                         prior_summary=prior_summary,
                         prior_qas=prior_qas,
                         patient_gender=patient.gender,
+                        patient_age=patient.age,
                     )
                     if candidate and candidate.strip() and candidate not in asked_questions:
                         next_question = candidate
@@ -286,6 +288,7 @@ class AnswerIntakeUseCase:
             language=patient.language,
             recently_travelled=patient.recently_travelled,
             patient_gender=patient.gender,
+            patient_age=patient.age,
         )
         visit.set_pending_question(next_question)
 

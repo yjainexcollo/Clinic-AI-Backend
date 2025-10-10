@@ -284,11 +284,12 @@ class Visit:
             ),
         }
 
-    def store_pre_visit_summary(self, summary: str) -> None:
+    def store_pre_visit_summary(self, summary: str, red_flags: Optional[List[Dict[str, str]]] = None) -> None:
         """Store pre-visit summary in EHR (minimal schema)."""
         self.pre_visit_summary = {
             "summary": summary,
             "generated_at": datetime.utcnow().isoformat(),
+            "red_flags": red_flags or [],
         }
         self.updated_at = datetime.utcnow()
 

@@ -1,11 +1,14 @@
 """Generate Pre-Visit Summary use case for Step-02 functionality."""
 
+import logging
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ..dto.patient_dto import PreVisitSummaryRequest
 from ...api.schemas.patient import PreVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.services.question_service import QuestionService
+
+logger = logging.getLogger(__name__)
 
 
 class GeneratePreVisitSummaryUseCase:
@@ -74,7 +77,10 @@ class GeneratePreVisitSummaryUseCase:
             pass
 
         # Store minimal summary in visit for EHR
-        visit.store_pre_visit_summary(summary_result["summary"])
+        visit.store_pre_visit_summary(
+            summary_result["summary"], 
+            red_flags=summary_result.get("red_flags", [])
+        )
 
         # Save the updated visit to repository
         await self._patient_repository.save(patient)
@@ -85,4 +91,5 @@ class GeneratePreVisitSummaryUseCase:
             summary=summary_result["summary"],
             generated_at=visit.updated_at.isoformat(),
             medication_images=summary_result.get("medication_images") if isinstance(summary_result, dict) else None,
+            red_flags=summary_result.get("red_flags") if isinstance(summary_result, dict) else None,
         )

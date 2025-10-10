@@ -245,12 +245,12 @@ async def transcribe_audio(
                 logger.info(f"Transcription completed successfully for patient {internal_patient_id}: {result}")
                 
                 # Update audio file with duration if we have the result
-                if audio_file_record and result.get("duration"):
+                if audio_file_record and result.audio_duration:
                     await audio_repo.update_audio_metadata(
                         audio_file_record.audio_id,
-                        duration_seconds=result.get("duration")
+                        duration_seconds=result.audio_duration
                     )
-                    logger.info(f"Updated audio file duration: {result.get('duration')} seconds")
+                    logger.info(f"Updated audio file duration: {result.audio_duration} seconds")
                 
             except Exception as e:
                 logger.error(f"Background transcription failed for patient {internal_patient_id}, visit {visit_id}: {e}", exc_info=True)
@@ -561,71 +561,10 @@ async def get_transcript(
             headers = {"Retry-After": "5"}
             return FastAPIResponse(content=b"", status_code=status.HTTP_202_ACCEPTED, headers=headers)
 
-        # If no structured dialogue cached yet, auto-structure and persist (server-side) for fast future loads
+        # Get the transcription session
         session = visit.transcription_session
-        try:
-            if session and not getattr(session, "structured_dialogue", None) and session.transcript:
-                raw = session.transcript
-                # Chunk long transcripts
-                import re as _re, json as _json
-                sents = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", raw) if _s.strip()]
-                chunks: list[str] = []
-                buf = ""
-                for s in sents:
-                    if len(buf) + len(s) + 1 > 6000 and buf:
-                        chunks.append(buf)
-                        buf = s
-                    else:
-                        buf = f"{buf} {s}".strip()
-                if buf:
-                    chunks.append(buf)
 
-                settings = get_settings()
-                client = OpenAI(api_key=settings.openai.api_key)
-                sys_prompt = (
-                    "You are an AI assistant that structures a medical visit transcript.\n"
-                    "Return ONLY valid JSON. Do not include text outside JSON.\n"
-                    "Rules:\n- Remove PII; fix typos; output as an array of ordered turns with keys Doctor/Patient."
-                )
-                def _call(text: str) -> list[dict]:
-                    user_prompt = "Transcript:\n" + text + "\n\nReturn JSON ONLY, no markdown, no comments."
-                    try:
-                        resp = client.chat.completions.create(
-                            model=settings.openai.model,
-                            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
-                            max_tokens=min(1200, settings.openai.max_tokens or 1200),
-                            temperature=0.1,
-                        )
-                        content = (resp.choices[0].message.content or "").strip()
-                        parsed = _json.loads(content)
-                        return parsed if isinstance(parsed, list) else []
-                    except Exception:
-                        # Heuristic split
-                        turns: list[dict] = []
-                        next_role = "Doctor"
-                        for s in [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", text) if _s.strip()]:
-                            lower = s.lower()
-                            if lower.startswith("doctor:"):
-                                turns.append({"Doctor": s.split(":",1)[1].strip()})
-                                next_role = "Patient"
-                            elif lower.startswith("patient:"):
-                                turns.append({"Patient": s.split(":",1)[1].strip()})
-                                next_role = "Doctor"
-                            else:
-                                turns.append({next_role: s})
-                                next_role = "Patient" if next_role == "Doctor" else "Doctor"
-                        return turns
-
-                parts: list[dict] = []
-                for ch in (chunks or [raw]):
-                    parts.extend(_call(ch))
-                if parts:
-                    session.structured_dialogue = parts
-                    await patient_repo.save(patient)
-        except Exception:
-            pass
-
-        # Return transcript data including structured dialogue if cached
+        # Return transcript data including any stored structured dialogue
         return TranscriptionSessionDTO(
             audio_file_path=session.audio_file_path,
             transcript=session.transcript,
@@ -635,7 +574,7 @@ async def get_transcript(
             error_message=session.error_message,
             audio_duration_seconds=session.audio_duration_seconds,
             word_count=session.word_count,
-            structured_dialogue=getattr(session, "structured_dialogue", None),
+            structured_dialogue=getattr(session, "structured_dialogue", None),  # Return stored structured dialogue from database
         )
 
     except PatientNotFoundError as e:
@@ -820,223 +759,32 @@ async def structure_dialogue(
 
         raw_transcript = visit.transcription_session.transcript
 
-        # Fast path: if structured dialogue was already cached during a prior request, return it
-        if getattr(visit.transcription_session, "structured_dialogue", None):
-            return {"dialogue": visit.transcription_session.structured_dialogue}
-
-        # Use improved chunking strategy for long transcripts
-        safe_transcript = raw_transcript or ""
-        
-        # Improved system prompt matching the transcribe_audio.py implementation
-        system_prompt = (
-            "You are a medical transcript processing AI. Your task is to create a structured dialogue between a Doctor and Patient.\n\n"
-            "CRITICAL RULES:\n"
-            "1. Remove all personal identifiers (names, addresses, phone numbers, specific dates)\n"
-            "2. Fix obvious transcription errors while preserving medical meaning\n"
-            "3. Output ONLY a JSON array where each element is an object with one key: either \"Doctor\" or \"Patient\"\n"
-            "4. Use these speaker identification rules in priority order:\n"
-            "   DOCTOR indicators:\n"
-            "   - Questions about symptoms, history, medications\n"
-            "   - Medical instructions, prescriptions, recommendations\n"
-            "   - Examination procedures, test orders\n"
-            "   - Professional language, medical terminology\n"
-            "   - Phrases: \"Let me examine\", \"I'll prescribe\", \"We'll schedule\", \"Any allergies?\"\n"
-            "   PATIENT indicators:\n"
-            "   - Personal symptoms, feelings, experiences\n"
-            "   - Answers to doctor's questions\n"
-            "   - Personal history, family history\n"
-            "   - Questions about treatment, concerns\n"
-            "   - Phrases: \"I feel\", \"I have\", \"My pain\", \"It started\", \"I took\"\n"
-            "5. Maintain conversation flow - if uncertain, consider context from previous turns\n"
-            "6. DO NOT use markdown, explanations, or anything outside the JSON array\n"
-            "OUTPUT FORMAT (JSON array only):\n"
-            "[{\"Doctor\": \"...\"}, {\"Patient\": \"...\"}, {\"Doctor\": \"...\"}]"
-        )
+        # Use the same logic as adhoc transcribe (no caching to ensure fresh processing)
+        from ...application.utils.structure_dialogue import structure_dialogue_from_text
 
         settings = get_settings()
-        client = OpenAI(api_key=settings.openai.api_key)
+        model = settings.openai.model
+        api_key = settings.openai.api_key
 
-        # Use improved chunking strategy for long transcripts
-        max_chars_per_chunk = 8000 if settings.openai.model.startswith('gpt-4') else 6000
-        overlap_chars = 500
-        
-        # Split into sentences for better chunking
-        import re as _re
-        sentences = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", safe_transcript) if _s.strip()]
-        
-        if len(safe_transcript) <= max_chars_per_chunk:
-            # Single chunk processing
-            user_prompt = f"Process this medical consultation transcript into structured dialogue:\n\n{safe_transcript}\n\nReturn JSON array only."
-            
-            def _call_openai() -> str:
-                try:
-                    max_tokens = 4000 if settings.openai.model.startswith('gpt-4') else 2000
-                    logger.info(f"Structure dialogue: Calling OpenAI API with model: {settings.openai.model}, max_tokens: {max_tokens}")
-                    resp = client.chat.completions.create(
-                        model=settings.openai.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        max_tokens=max_tokens,
-                        temperature=0.0,
-                    )
-                    content = (resp.choices[0].message.content or "").strip()
-                    logger.info(f"Structure dialogue: OpenAI API succeeded. Response length: {len(content)} characters")
-                    return content
-                except Exception as e:
-                    logger.error(f"Structure dialogue: OpenAI API failed: {str(e)}", exc_info=True)
-                    logger.error(f"Structure dialogue: Raw transcript length: {len(raw_transcript)} characters")
-                    raise
-            
-            content = await asyncio.to_thread(_call_openai)
-        else:
-            # Multi-chunk processing with overlap
-            chunks = []
-            current_chunk = ""
-            
-            for sentence in sentences:
-                if len(current_chunk) + len(sentence) + 1 > max_chars_per_chunk and current_chunk:
-                    chunks.append(current_chunk.strip())
-                    # Start new chunk with overlap from previous
-                    overlap_start = max(0, len(current_chunk) - overlap_chars)
-                    current_chunk = current_chunk[overlap_start:] + " " + sentence
-                else:
-                    current_chunk += (" " + sentence) if current_chunk else sentence
-            
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            
-            logger.info(f"Processing transcript in {len(chunks)} chunks with {overlap_chars} char overlap")
-            
-            def _call_openai_chunk(text: str) -> str:
-                try:
-                    max_tokens = 4000 if settings.openai.model.startswith('gpt-4') else 2000
-                    user_prompt = f"Process this part of a medical consultation transcript:\n\n{text}\n\nReturn JSON array only."
-                    resp = client.chat.completions.create(
-                        model=settings.openai.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        max_tokens=max_tokens,
-                        temperature=0.0,
-                    )
-                    content = (resp.choices[0].message.content or "").strip()
-                    return content
-                except Exception as e:
-                    logger.error(f"Chunk processing failed: {str(e)}", exc_info=True)
-                    return ""
-            
-            # Process each chunk
-            chunk_results = []
-            for i, chunk in enumerate(chunks):
-                chunk_result = await asyncio.to_thread(_call_openai_chunk, chunk)
-                
-                if chunk_result:
-                    try:
-                        import json as _json
-                        parsed = _json.loads(chunk_result)
-                        if isinstance(parsed, list):
-                            chunk_results.extend(parsed)
-                        else:
-                            logger.warning(f"Chunk {i+1} returned invalid format")
-                            chunk_results.append({"Doctor": f"[Chunk {i+1} processing failed]"})
-                    except:
-                        logger.warning(f"Chunk {i+1} JSON parsing failed")
-                        chunk_results.append({"Doctor": f"[Chunk {i+1} processing failed]"})
-                else:
-                    logger.warning(f"Chunk {i+1} processing failed")
-                    chunk_results.append({"Doctor": f"[Chunk {i+1} processing failed]"})
-            
-            # Merge and clean up overlapping content
-            merged = [chunk_results[0]] if chunk_results else []
-            for i in range(1, len(chunk_results)):
-                current_chunk = chunk_results[i]
-                if (merged and current_chunk and 
-                    len(merged[-1]) == 1 and len(current_chunk[0]) == 1 and
-                    list(merged[-1].keys())[0] == list(current_chunk[0].keys())[0] and
-                    list(merged[-1].values())[0] == list(current_chunk[0].values())[0]):
-                    merged.extend(current_chunk[1:])
-                else:
-                    merged.extend(current_chunk)
-            
-            # Convert back to JSON string
-            import json as _json
-            content = _json.dumps(merged)
-        
-        try:
-            # Cache parsed structured dialogue to DB for fast retrieval
-            import json as _json
+        logger.info(f"Calling structure_dialogue_from_text with model: {model}")
+        dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key)
+        logger.info(f"Structure dialogue result: {type(dialogue)}, length: {len(dialogue) if isinstance(dialogue, list) else 'N/A'}")
+
+        # Normalize dialogue to a list (empty list if None)
+        normalized_dialogue: List[Dict[str, str]] = dialogue if isinstance(dialogue, list) else []
+
+        # Save the structured dialogue back to the database for future use
+        if normalized_dialogue and visit.transcription_session:
             try:
-                parsed = _json.loads(content)
-                if isinstance(parsed, list):
-                    if not visit.transcription_session:
-                        raise RuntimeError("No transcription session to cache dialogue")
-                    visit.transcription_session.structured_dialogue = parsed
-                    await patient_repo.save(patient)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Failed to structure dialogue: {str(e)}")
-            # Heuristic fallback: split into sentences and alternate speakers
-            import re
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", safe_transcript) if s.strip()]
-            turns: list[dict[str, str]] = []
-            next_role = "Doctor"
-            for s in sentences:
-                # Detect explicit speaker labels if present
-                lower = s.lower()
-                if lower.startswith("doctor:"):
-                    turns.append({"Doctor": s.split(":", 1)[1].strip()})
-                    next_role = "Patient"
-                elif lower.startswith("patient:"):
-                    turns.append({"Patient": s.split(":", 1)[1].strip()})
-                    next_role = "Doctor"
-                else:
-                    turns.append({next_role: s})
-                    next_role = "Patient" if next_role == "Doctor" else "Doctor"
-            try:
-                if not visit.transcription_session:
-                    raise RuntimeError("No transcription session to cache dialogue")
-                visit.transcription_session.structured_dialogue = turns
+                visit.transcription_session.structured_dialogue = normalized_dialogue
                 await patient_repo.save(patient)
-            except Exception:
-                pass
-            return {"dialogue": turns if turns else {"text": safe_transcript}}
+                logger.info(f"Saved structured dialogue to database with {len(normalized_dialogue)} turns")
+            except Exception as e:
+                logger.warning(f"Failed to save structured dialogue to database: {e}")
 
-        # Try to parse JSON; if not valid JSON object, return as text under 'dialogue'
-        import json
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict):
-                # If dict, coerce to ordered list preserving keys order where possible
-                ordered: list[dict[str, str]] = []
-                for k, v in data.items():
-                    if k in ("Doctor", "Patient") and isinstance(v, str):
-                        ordered.append({k: v})
-                if ordered:
-                    return {"dialogue": ordered}
-                logger.warning("Structured content doesn't contain Doctor/Patient keys")
-                return {"dialogue": {"text": content}}
-            # If it's a list of pairs, convert to dict-like sequence
-            if isinstance(data, list):
-                merged: Dict[str, Any] = {}
-                for item in data:
-                    if isinstance(item, dict):
-                        merged.update(item)
-                if any(key in merged for key in ["Doctor", "Patient"]):
-                    # Prefer returning the original list to preserve order
-                    return {"dialogue": data}
-                return {"dialogue": {"text": content}}
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse structured content as JSON: {e}")
-            return {"dialogue": {"text": content}}
-        except Exception as e:
-            logger.warning(f"Error processing structured content: {e}")
-            return {"dialogue": {"text": content}}
+        logger.info(f"Returning dialogue with {len(normalized_dialogue)} turns")
+        return {"dialogue": normalized_dialogue}
 
-        return {"dialogue": {"text": content}}
 
     except PatientNotFoundError as e:
         raise HTTPException(
