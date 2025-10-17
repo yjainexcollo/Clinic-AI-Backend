@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 import logging
 import os
+import yaml
 
 from .api.routers import health, patients, notes, workflow
 from .api.routers import doctor as doctor_router
@@ -191,6 +192,34 @@ def create_app() -> FastAPI:
 
 # Create the app instance
 app = create_app()
+
+
+def custom_openapi():
+    """Load custom OpenAPI schema from swagger.yaml file."""
+    try:
+        # Get the path to swagger.yaml relative to this file
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        swagger_path = os.path.join(current_dir, "..", "..", "..", "swagger.yaml")
+        
+        # Alternative path if the above doesn't work
+        if not os.path.exists(swagger_path):
+            swagger_path = os.path.join(current_dir, "..", "..", "swagger.yaml")
+        
+        if os.path.exists(swagger_path):
+            with open(swagger_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        else:
+            # Fallback to auto-generated schema if swagger.yaml not found
+            logging.getLogger("clinicai").warning(f"Swagger file not found at {swagger_path}")
+            return app.openapi()
+    except Exception as e:
+        logging.getLogger("clinicai").warning(f"Failed to load custom OpenAPI schema: {e}")
+        # Fallback to auto-generated schema
+        return app.openapi()
+
+
+# Override the default OpenAPI function
+app.openapi = custom_openapi
 
 
 # Root endpoint
