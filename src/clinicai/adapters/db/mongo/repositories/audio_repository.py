@@ -2,7 +2,7 @@
 Audio repository for MongoDB operations.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
 import logging
@@ -186,6 +186,30 @@ class AudioRepository:
             logger.error(f"Failed to get audio count: {e}")
             return 0
 
+    async def get_audio_stats(self) -> dict:
+        """Get audio statistics using individual count queries."""
+        try:
+            # Use individual count queries for reliability
+            adhoc_count = await self.get_audio_count(audio_type="adhoc")
+            visit_count = await self.get_audio_count(audio_type="visit")
+            total_count = await self.get_audio_count()
+            
+            return {
+                "total_files": total_count,
+                "adhoc_files": adhoc_count,
+                "visit_files": visit_count,
+                "other_files": total_count - adhoc_count - visit_count,
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get audio stats: {e}")
+            return {
+                "total_files": 0,
+                "adhoc_files": 0,
+                "visit_files": 0,
+                "other_files": 0,
+            }
+
     async def link_audio_to_adhoc(self, audio_id: str, adhoc_id: str) -> bool:
         """Link audio file to adhoc transcript."""
         try:
@@ -224,3 +248,86 @@ class AudioRepository:
         except Exception as e:
             logger.error(f"Failed to link audio to visit: {e}")
             return False
+
+    async def get_audio_dialogue_list(
+        self,
+        patient_id: Optional[str] = None,
+        visit_id: Optional[str] = None,
+        audio_type: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get structured dialogue for audio files instead of full metadata."""
+        try:
+            from ..models.patient_m import AdhocTranscriptMongo, VisitMongo
+            
+            dialogue_list = []
+            
+            # Get audio files (without audio_data to save memory)
+            query = {}
+            if patient_id:
+                query["patient_id"] = patient_id
+            if visit_id:
+                query["visit_id"] = visit_id
+            if audio_type:
+                query["audio_type"] = audio_type
+            
+            # Add timestamp filtering
+            if start_date or end_date:
+                date_query = {}
+                if start_date:
+                    date_query["$gte"] = start_date
+                if end_date:
+                    date_query["$lte"] = end_date
+                query["created_at"] = date_query
+                
+            audio_files = await AudioFileMongo.find(
+                query,
+                skip=offset,
+                limit=limit,
+                sort=[("created_at", -1)]
+            ).to_list()
+            
+            for audio_file in audio_files:
+                dialogue_data = {
+                    "audio_id": audio_file.audio_id,
+                    "filename": audio_file.filename,
+                    "duration_seconds": audio_file.duration_seconds,
+                    "patient_id": audio_file.patient_id,
+                    "visit_id": audio_file.visit_id,
+                    "adhoc_id": audio_file.adhoc_id,
+                    "audio_type": audio_file.audio_type,
+                    "created_at": audio_file.created_at.isoformat(),
+                    "structured_dialogue": None
+                }
+                
+                # Get structured dialogue based on audio type
+                if audio_file.audio_type == "adhoc" and audio_file.adhoc_id:
+                    try:
+                        adhoc_doc = await AdhocTranscriptMongo.get(PydanticObjectId(audio_file.adhoc_id))
+                        if adhoc_doc and adhoc_doc.structured_dialogue:
+                            dialogue_data["structured_dialogue"] = adhoc_doc.structured_dialogue
+                    except Exception as e:
+                        logger.warning(f"Failed to get adhoc dialogue for {audio_file.audio_id}: {e}")
+                        
+                elif audio_file.audio_type == "visit" and audio_file.patient_id and audio_file.visit_id:
+                    try:
+                        visit = await VisitMongo.find_one(
+                            VisitMongo.patient_id == audio_file.patient_id,
+                            VisitMongo.visit_id == audio_file.visit_id
+                        )
+                        if (visit and visit.transcription_session and 
+                            visit.transcription_session.structured_dialogue):
+                            dialogue_data["structured_dialogue"] = visit.transcription_session.structured_dialogue
+                    except Exception as e:
+                        logger.warning(f"Failed to get visit dialogue for {audio_file.audio_id}: {e}")
+                
+                dialogue_list.append(dialogue_data)
+            
+            return dialogue_list
+            
+        except Exception as e:
+            logger.error(f"Failed to get audio dialogue list: {e}")
+            return []

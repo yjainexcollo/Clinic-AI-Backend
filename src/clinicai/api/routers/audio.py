@@ -5,7 +5,8 @@ Audio management API endpoints.
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 import logging
 import io
 
@@ -52,6 +53,27 @@ class AudioFileResponse(BaseModel):
 class AudioListResponse(BaseModel):
     """Response model for audio file list."""
     files: List[AudioFileResponse]
+    total_count: int
+    limit: int
+    offset: int
+
+
+class AudioDialogueResponse(BaseModel):
+    """Response model for audio dialogue data."""
+    audio_id: str
+    filename: str
+    duration_seconds: Optional[float]
+    patient_id: Optional[str]
+    visit_id: Optional[str]
+    adhoc_id: Optional[str]
+    audio_type: str
+    created_at: str
+    structured_dialogue: Optional[List[Dict[str, str]]]
+
+
+class AudioDialogueListResponse(BaseModel):
+    """Response model for audio dialogue list."""
+    dialogues: List[AudioDialogueResponse]
     total_count: int
     limit: int
     offset: int
@@ -104,6 +126,62 @@ async def list_audio_files(
         raise HTTPException(
             status_code=500,
             detail={"error": "LIST_AUDIO_FAILED", "message": "Failed to list audio files", "details": str(e)},
+        )
+
+
+@router.get(
+    "/dialogue",
+    response_model=AudioDialogueListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_audio_dialogues(
+    audio_repo: AudioRepositoryDep,
+    patient_id: Optional[str] = Query(None, description="Filter by patient ID"),
+    visit_id: Optional[str] = Query(None, description="Filter by visit ID"),
+    audio_type: Optional[str] = Query(None, description="Filter by audio type (adhoc, visit)"),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date (ISO format)"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date (ISO format)"),
+    limit: int = Query(50, ge=1, le=100, description="Number of dialogues to return"),
+    offset: int = Query(0, ge=0, description="Number of dialogues to skip"),
+):
+    """List structured dialogues for audio files instead of full metadata."""
+    try:
+        logger.info(f"Listing audio dialogues: patient_id={patient_id}, visit_id={visit_id}, audio_type={audio_type}, start_date={start_date}, end_date={end_date}, limit={limit}, offset={offset}")
+        
+        # Get dialogue data
+        dialogue_data = await audio_repo.get_audio_dialogue_list(
+            patient_id=patient_id,
+            visit_id=visit_id,
+            audio_type=audio_type,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset,
+        )
+        
+        # Get total count
+        total_count = await audio_repo.get_audio_count(
+            patient_id=patient_id,
+            audio_type=audio_type,
+        )
+        
+        # Convert to response models
+        dialogue_responses = [
+            AudioDialogueResponse(**data) for data in dialogue_data
+        ]
+        
+        return AudioDialogueListResponse(
+            dialogues=dialogue_responses,
+            total_count=total_count,
+            limit=limit,
+            offset=offset,
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to list audio dialogues: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "LIST_DIALOGUE_FAILED", "message": "Failed to list audio dialogues", "details": str(e)},
         )
 
 

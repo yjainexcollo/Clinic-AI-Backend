@@ -215,20 +215,8 @@ class AnswerIntakeUseCase:
         # Save the updated patient
         await self._patient_repository.save(patient)
 
-        # Generate pre-visit summary if intake was completed
-        if is_complete:
-            try:
-                from .generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
-                summary_use_case = GeneratePreVisitSummaryUseCase(self._patient_repository, self._question_service)
-                summary_request = PreVisitSummaryRequest(
-                    patient_id=request.patient_id,
-                    visit_id=request.visit_id,
-                )
-                await summary_use_case.execute(summary_request)
-                logger.info(f"Pre-visit summary generated successfully for visit {request.visit_id}")
-            except Exception as e:
-                # Log error but don't fail the intake completion
-                logger.warning(f"Failed to generate pre-visit summary: {e}")
+        # Note: Pre-visit summary generation is now manual via /patients/summary/previsit endpoint
+        # This allows for better control over when summaries are generated
 
         # Raise domain events
         # Note: In a real implementation, you'd have an event bus

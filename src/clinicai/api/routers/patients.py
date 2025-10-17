@@ -15,6 +15,9 @@ from clinicai.application.dto.patient_dto import (
     RegisterPatientRequest,
 )
 from clinicai.application.dto.patient_dto import EditAnswerRequest
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional
+from datetime import datetime
 from clinicai.application.use_cases.answer_intake import AnswerIntakeUseCase
 from clinicai.application.use_cases.generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
 from clinicai.application.use_cases.generate_post_visit_summary import GeneratePostVisitSummaryUseCase
@@ -392,70 +395,9 @@ async def edit_intake_answer(
         )
 
 
-# Lightweight webhook to receive medication images during intake (per requirements)
-@router.post("/webhook/image")
-async def upload_medication_image(
-    image: UploadFile = File(...),
-    patient_id: str = Form(...),
-    visit_id: str = Form(...),
-):
-    try:
-        # Normalize/resolve patient id (opaque token from client → internal id)
-        try:
-            internal_patient_id = decode_patient_id(patient_id)
-        except Exception:
-            internal_patient_id = patient_id
-        # Validate content type
-        raw_ct = (image.content_type or "").lower()
-        content_type = raw_ct.split(";")[0].strip().strip(",")
-        valid_types = {"image/jpeg", "image/jpg", "image/png"}
-        if content_type not in valid_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "INVALID_FILE_TYPE",
-                    "message": f"Only jpg, jpeg, png allowed (got {content_type or 'unknown'})",
-                    "details": {},
-                },
-            )
-
-        # Read image data
-        content = await image.read()
-        
-        # Store DB record with image data
-        from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
-        doc = MedicationImageMongo(
-            patient_id=str(internal_patient_id),
-            visit_id=str(visit_id),
-            image_data=content,
-            content_type=content_type,
-            filename=image.filename or "unknown",
-        )
-        inserted = await doc.insert()
-
-        return {
-            "status": "success",
-            "patient_id": internal_patient_id,
-            "visit_id": visit_id,
-            "id": str(getattr(inserted, "id", "")),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Unhandled error in upload_medication_image", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "Failed to upload image",
-                "details": {"exception": str(e), "type": e.__class__.__name__},
-            },
-        )
-
-
-# Endpoint for multiple image uploads
+# Endpoint for medication image uploads (supports both single and multiple images)
 @router.post("/webhook/images")
-async def upload_multiple_medication_images(
+async def upload_medication_images(
     request: Request,
     patient_id: str = Form(...),
     visit_id: str = Form(...),
@@ -554,20 +496,49 @@ async def upload_multiple_medication_images(
         )
 
 
-# Stream image bytes by id
-@router.get("/images/{image_id}/content")
-async def get_medication_image_content(image_id: str):
+# Get intake medication image content (with security validation)
+@router.get("/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content")
+async def get_intake_medication_image_content(
+    patient_id: str, 
+    visit_id: str, 
+    image_id: str
+):
+    """Get medication image content uploaded during intake with proper access control."""
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
+        # Normalize patient ID
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        # Find the image with security validation
         doc = await MedicationImageMongo.get(PydanticObjectId(image_id))
         if not doc:
-            raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": "Image not found"})
-        return Response(content=doc.image_data, media_type=getattr(doc, "content_type", "application/octet-stream"))
+            raise HTTPException(
+                status_code=404, 
+                detail={"error": "NOT_FOUND", "message": "Image not found"}
+            )
+        
+        # Security check: verify the image belongs to the specified patient and visit
+        if doc.patient_id != str(internal_patient_id) or doc.visit_id != str(visit_id):
+            raise HTTPException(
+                status_code=403, 
+                detail={"error": "FORBIDDEN", "message": "Access denied to this image"}
+            )
+        
+        return Response(
+            content=doc.image_data, 
+            media_type=getattr(doc, "content_type", "application/octet-stream")
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error reading medication image", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        logger.error("Error reading intake medication image", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail={"error": "INTERNAL_ERROR", "message": str(e)}
+        )
 
 
 # List uploaded images for a visit
@@ -756,11 +727,10 @@ async def get_pre_visit_summary(
             try:
                 from ...application.use_cases.generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
                 from ...application.dto.patient_dto import PreVisitSummaryRequest
-                from ...application.ports.services.question_service import QuestionService
-                from ...core.container import get_container
+                from ...adapters.external.question_service_openai import OpenAIQuestionService
                 
-                container = get_container()
-                question_service = container.get(QuestionService)
+                # Create question service directly instead of using container
+                question_service = OpenAIQuestionService()
                 
                 summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, question_service)
                 summary_request = PreVisitSummaryRequest(
@@ -977,6 +947,150 @@ async def get_post_visit_summary(
         raise
     except Exception as e:
         logger.error("Unhandled error in get_post_visit_summary", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+# ------------------------
+# Vitals endpoints
+# ------------------------
+
+class VitalsPayload(BaseModel):
+    """Payload for storing vitals data."""
+    bloodPressure: Optional[str] = Field(None, description="Blood pressure")
+    heartRate: Optional[str] = Field(None, description="Heart rate")
+    temperature: Optional[str] = Field(None, description="Temperature")
+    respiratoryRate: Optional[str] = Field(None, description="Respiratory rate")
+    oxygenSaturation: Optional[str] = Field(None, description="Oxygen saturation")
+    weight: Optional[str] = Field(None, description="Weight")
+    height: Optional[str] = Field(None, description="Height")
+    bmi: Optional[str] = Field(None, description="BMI")
+    notes: Optional[str] = Field(None, description="Additional notes")
+
+
+@router.post(
+    "/{patient_id}/visits/{visit_id}/vitals",
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ErrorResponse, "description": "Validation error"},
+        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def store_vitals(
+    patient_id: str,
+    visit_id: str,
+    vitals: VitalsPayload,
+    patient_repo: PatientRepositoryDep,
+):
+    """Store vitals data for a visit."""
+    try:
+        from ...domain.value_objects.patient_id import PatientId
+        from ...domain.value_objects.visit_id import VisitId
+        
+        # Decode patient ID if needed
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        # Get patient and visit
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        if not patient:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {patient_id} not found", "details": {}}
+            )
+        
+        visit = patient.get_visit_by_id(visit_id)
+        if not visit:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "VISIT_NOT_FOUND", "message": f"Visit {visit_id} not found", "details": {}}
+            )
+        
+        # Convert vitals to dict format
+        vitals_dict = {
+            "blood_pressure": vitals.bloodPressure,
+            "heart_rate": vitals.heartRate,
+            "temperature": vitals.temperature,
+            "respiratory_rate": vitals.respiratoryRate,
+            "oxygen_saturation": vitals.oxygenSaturation,
+            "weight": vitals.weight,
+            "height": vitals.height,
+            "bmi": vitals.bmi,
+            "notes": vitals.notes,
+            "recorded_at": datetime.utcnow().isoformat()
+        }
+        
+        # Store vitals in visit
+        visit.store_vitals(vitals_dict)
+        
+        # Update visit status for walk-in workflow
+        if visit.is_walk_in_workflow():
+            visit.complete_vitals()
+        
+        # Save patient
+        await patient_repo.save(patient)
+        
+        return {"success": True, "message": "Vitals stored successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Unhandled error in store_vitals", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+@router.get(
+    "/{patient_id}/visits/{visit_id}/vitals",
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorResponse, "description": "Patient, visit, or vitals not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_vitals(
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+):
+    """Get vitals data for a visit."""
+    try:
+        from ...domain.value_objects.patient_id import PatientId
+        
+        # Decode patient ID if needed
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        # Get patient and visit
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        if not patient:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {patient_id} not found", "details": {}}
+            )
+        
+        visit = patient.get_visit_by_id(visit_id)
+        if not visit:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "VISIT_NOT_FOUND", "message": f"Visit {visit_id} not found", "details": {}}
+            )
+        
+        if not visit.vitals:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "VITALS_NOT_FOUND", "message": "No vitals found for this visit", "details": {}}
+            )
+        
+        return visit.vitals
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Unhandled error in get_vitals", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
 
  

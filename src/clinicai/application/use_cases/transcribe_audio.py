@@ -2,6 +2,7 @@
 
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
+from ...domain.enums.workflow import VisitWorkflowType
 from ..dto.patient_dto import AudioTranscriptionRequest, AudioTranscriptionResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.services.transcription_service import TranscriptionService
@@ -44,9 +45,14 @@ class TranscribeAudioUseCase:
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
-        # Check if visit is ready for transcription
-        if not visit.can_start_transcription():
-            raise ValueError(f"Visit not ready for transcription. Current status: {visit.status}")
+        # Check if visit is ready for transcription based on workflow type
+        if not visit.can_proceed_to_transcription():
+            if visit.is_scheduled_workflow():
+                raise ValueError(f"Scheduled visit not ready for transcription. Current status: {visit.status}. Complete intake first.")
+            elif visit.is_walk_in_workflow():
+                raise ValueError(f"Walk-in visit not ready for transcription. Current status: {visit.status}.")
+            else:
+                raise ValueError(f"Visit not ready for transcription. Current status: {visit.status}.")
 
         try:
             # Validate audio file
@@ -103,7 +109,29 @@ class TranscribeAudioUseCase:
             
             if structured_content and structured_content != raw_transcript:
                 try:
-                    parsed = json.loads(structured_content)
+                    # Try to fix common JSON issues before parsing
+                    cleaned_content = structured_content.strip()
+                    
+                    # If content doesn't start with [ or {, try to find the JSON part
+                    if not cleaned_content.startswith(('{', '[')):
+                        # Look for JSON-like content
+                        start_idx = cleaned_content.find('[')
+                        if start_idx == -1:
+                            start_idx = cleaned_content.find('{')
+                        if start_idx != -1:
+                            cleaned_content = cleaned_content[start_idx:]
+                    
+                    # Try to fix unterminated strings by finding the last complete item
+                    if cleaned_content.startswith('[') and not cleaned_content.endswith(']'):
+                        # Find the last complete object in the array
+                        last_complete_idx = cleaned_content.rfind('},')
+                        if last_complete_idx != -1:
+                            cleaned_content = cleaned_content[:last_complete_idx + 1] + ']'
+                        else:
+                            # If no complete objects found, try to close the array
+                            cleaned_content = cleaned_content + ']'
+                    
+                    parsed = json.loads(cleaned_content)
                     LOGGER.info(f"Parsed JSON structure: {type(parsed)} with {len(parsed) if isinstance(parsed, list) else 'N/A'} items")
                     
                     if isinstance(parsed, list) and all(
@@ -115,9 +143,9 @@ class TranscribeAudioUseCase:
                         structured_dialogue = parsed
                         LOGGER.info(f"Successfully validated structured dialogue with {len(parsed)} turns")
                     else:
-                        LOGGER.warning(f"Structured content is not valid dialogue format. Type: {type(parsed)}, Content: {structured_content[:200]}...")
+                        LOGGER.warning(f"Structured content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
                 except json.JSONDecodeError as e:
-                    LOGGER.warning(f"Structured content is not valid JSON: {e}. Content: {structured_content[:200]}...")
+                    LOGGER.warning(f"Structured content is not valid JSON after cleaning: {e}. Original: {structured_content[:200]}...")
                 except Exception as e:
                     LOGGER.warning(f"Error validating structured content: {e}. Content: {structured_content[:200] if structured_content else 'None'}...")
             
@@ -145,11 +173,17 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
             # Complete transcription with both raw transcript and structured dialogue
-            visit.complete_transcription(
+            visit.complete_transcription_with_data(
                 transcript=raw_transcript,  # Store raw transcript
                 audio_duration=transcription_result.get("duration"),
                 structured_dialogue=structured_dialogue  # Store structured dialogue separately
             )
+
+            LOGGER.info(f"About to save patient {request.patient_id} with visit {request.visit_id}")
+            LOGGER.info(f"Visit status: {visit.status}")
+            LOGGER.info(f"Transcription session status: {visit.transcription_session.transcription_status if visit.transcription_session else 'None'}")
+            LOGGER.info(f"Transcript length: {len(raw_transcript) if raw_transcript else 0}")
+            LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
             # Save updated visit
             await self._patient_repository.save(patient)

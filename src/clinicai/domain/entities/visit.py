@@ -14,6 +14,7 @@ from ..errors import (
 )
 from ..value_objects.question_id import QuestionId
 from ..value_objects.visit_id import VisitId
+from ..enums.workflow import VisitWorkflowType
 
 
 @dataclass
@@ -178,8 +179,9 @@ class Visit:
     visit_id: VisitId
     patient_id: str  # Reference to patient
     symptom: str
+    workflow_type: VisitWorkflowType = VisitWorkflowType.SCHEDULED
     status: str = (
-        "intake"  # intake, transcription, soap_generation, prescription_analysis, completed
+        "intake"  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
     )
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -316,11 +318,86 @@ class Visit:
     def has_post_visit_summary(self) -> bool:
         return self.post_visit_summary is not None
 
+    # Workflow validation methods
+    def is_scheduled_workflow(self) -> bool:
+        """Check if this is a scheduled workflow (with intake)."""
+        return self.workflow_type == VisitWorkflowType.SCHEDULED
+
+    def is_walk_in_workflow(self) -> bool:
+        """Check if this is a walk-in workflow (without intake)."""
+        return self.workflow_type == VisitWorkflowType.WALK_IN
+
+    def can_proceed_to_transcription(self) -> bool:
+        """Check if visit can proceed to transcription based on workflow type."""
+        if self.is_scheduled_workflow():
+            return self.status in ["intake", "pre_visit_summary_generated", "transcription"]
+        elif self.is_walk_in_workflow():
+            return self.status in ["walk_in_patient", "transcription_pending", "transcription"]
+        return False
+
+    def can_proceed_to_vitals(self) -> bool:
+        """Check if visit can proceed to vitals input."""
+        if self.is_walk_in_workflow():
+            return self.status in ["transcription_completed", "vitals_pending", "vitals"]
+        return False
+
+    def can_proceed_to_soap(self) -> bool:
+        """Check if visit can proceed to SOAP generation."""
+        if self.is_walk_in_workflow():
+            return self.status in ["vitals_completed", "soap_pending", "soap_generation"]
+        return False
+
+    def can_proceed_to_post_visit(self) -> bool:
+        """Check if visit can proceed to post-visit summary."""
+        if self.is_walk_in_workflow():
+            return self.status in ["soap_completed", "post_visit_pending", "post_visit_summary"]
+        return False
+
+    def get_available_steps(self) -> List[str]:
+        """Get list of available workflow steps based on type and status."""
+        if self.is_scheduled_workflow():
+            return self._get_scheduled_workflow_steps()
+        else:
+            return self._get_walk_in_workflow_steps()
+
+    def _get_scheduled_workflow_steps(self) -> List[str]:
+        """Get available steps for scheduled workflow."""
+        steps = []
+        if self.status == "intake":
+            steps.extend(["intake", "pre_visit_summary"])
+        if self.status in ["intake", "pre_visit_summary_generated", "transcription"]:
+            steps.extend(["transcription", "soap_generation", "post_visit_summary"])
+        return steps
+
+    def _get_walk_in_workflow_steps(self) -> List[str]:
+        """Get available steps for walk-in workflow (sequential)."""
+        steps = []
+        
+        # Sequential workflow based on current status
+        if self.status == "walk_in_patient":
+            steps.append("transcription")
+        elif self.status in ["transcription_pending", "transcription"]:
+            steps.append("transcription")
+        elif self.status == "transcription_completed":
+            steps.append("vitals")
+        elif self.status in ["vitals_pending", "vitals"]:
+            steps.append("vitals")
+        elif self.status == "vitals_completed":
+            steps.append("soap_generation")
+        elif self.status in ["soap_pending", "soap_generation"]:
+            steps.append("soap_generation")
+        elif self.status == "soap_completed":
+            steps.append("post_visit_summary")
+        elif self.status in ["post_visit_pending", "post_visit_summary"]:
+            steps.append("post_visit_summary")
+        
+        return steps
+
     # Step-03: Audio Transcription & SOAP Generation Methods
 
     def start_transcription(self, audio_file_path: str) -> None:
         """Start the transcription process."""
-        if self.status != "transcription":
+        if not self.can_proceed_to_transcription():
             raise ValueError(f"Cannot start transcription. Current status: {self.status}")
         
         self.transcription_session = TranscriptionSession(
@@ -328,11 +405,79 @@ class Visit:
             transcription_status="processing",
             started_at=datetime.utcnow()
         )
-        self.status = "transcription"
+        if self.is_walk_in_workflow():
+            self.status = "transcription"
+        else:
+            self.status = "transcription"
         self.updated_at = datetime.utcnow()
 
-    def complete_transcription(self, transcript: str, audio_duration: Optional[float] = None, structured_dialogue: Optional[List[Dict[str, Any]]] = None) -> None:
+    def complete_transcription(self) -> None:
         """Complete the transcription process."""
+        if self.transcription_session:
+            self.transcription_session.transcription_status = "completed"
+            self.transcription_session.completed_at = datetime.utcnow()
+        
+        if self.is_walk_in_workflow():
+            self.status = "transcription_completed"
+        else:
+            self.status = "transcription"
+        self.updated_at = datetime.utcnow()
+
+    def start_vitals(self) -> None:
+        """Start the vitals input process."""
+        if not self.can_proceed_to_vitals():
+            raise ValueError(f"Cannot start vitals. Current status: {self.status}")
+        
+        if self.is_walk_in_workflow():
+            self.status = "vitals_pending"
+        self.updated_at = datetime.utcnow()
+
+    def complete_vitals(self) -> None:
+        """Complete the vitals input process."""
+        if self.is_walk_in_workflow():
+            self.status = "vitals_completed"
+        self.updated_at = datetime.utcnow()
+
+    def start_soap_generation(self) -> None:
+        """Start the SOAP generation process."""
+        if not self.can_proceed_to_soap():
+            raise ValueError(f"Cannot start SOAP generation. Current status: {self.status}")
+        
+        if self.is_walk_in_workflow():
+            self.status = "soap_pending"
+        else:
+            self.status = "soap_generation"
+        self.updated_at = datetime.utcnow()
+
+    def complete_soap_generation(self) -> None:
+        """Complete the SOAP generation process."""
+        if self.is_walk_in_workflow():
+            self.status = "soap_completed"
+        else:
+            self.status = "soap_generation"
+        self.updated_at = datetime.utcnow()
+
+    def start_post_visit_summary(self) -> None:
+        """Start the post-visit summary generation process."""
+        if not self.can_proceed_to_post_visit():
+            raise ValueError(f"Cannot start post-visit summary. Current status: {self.status}")
+        
+        if self.is_walk_in_workflow():
+            self.status = "post_visit_pending"
+        else:
+            self.status = "post_visit_summary"
+        self.updated_at = datetime.utcnow()
+
+    def complete_post_visit_summary(self) -> None:
+        """Complete the post-visit summary generation process."""
+        if self.is_walk_in_workflow():
+            self.status = "post_visit_completed"
+        else:
+            self.status = "completed"
+        self.updated_at = datetime.utcnow()
+
+    def complete_transcription_with_data(self, transcript: str, audio_duration: Optional[float] = None, structured_dialogue: Optional[List[Dict[str, Any]]] = None) -> None:
+        """Complete the transcription process with data."""
         if not self.transcription_session:
             raise ValueError("No active transcription session")
         
@@ -346,18 +491,29 @@ class Visit:
         if structured_dialogue:
             self.transcription_session.structured_dialogue = structured_dialogue
         
-        # Move to SOAP generation status
-        self.status = "soap_generation"
+        # Update status based on workflow type
+        if self.is_walk_in_workflow():
+            self.status = "transcription_completed"  # Next step is vitals
+        else:
+            self.status = "soap_generation"  # Scheduled workflow goes directly to SOAP
         self.updated_at = datetime.utcnow()
 
     def fail_transcription(self, error_message: str) -> None:
         """Mark transcription as failed."""
         if not self.transcription_session:
-            raise ValueError("No active transcription session")
+            # Create a failed transcription session if none exists
+            self.transcription_session = TranscriptionSession(
+                audio_file_path="",
+                transcription_status="failed",
+                error_message=error_message,
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow()
+            )
+        else:
+            self.transcription_session.transcription_status = "failed"
+            self.transcription_session.error_message = error_message
+            self.transcription_session.completed_at = datetime.utcnow()
         
-        self.transcription_session.transcription_status = "failed"
-        self.transcription_session.error_message = error_message
-        self.transcription_session.completed_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
 
     def store_soap_note(self, soap_data: Dict[str, Any]) -> None:
@@ -415,3 +571,8 @@ class Visit:
     def can_generate_soap(self) -> bool:
         """Check if SOAP can be generated."""
         return self.status == "soap_generation" and self.is_transcription_complete()
+
+    def store_vitals(self, vitals_data: Dict[str, Any]) -> None:
+        """Store vitals data for the visit."""
+        self.vitals = vitals_data
+        self.updated_at = datetime.utcnow()

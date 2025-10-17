@@ -9,6 +9,8 @@ from typing import List, Optional
 
 from beanie import Document
 from pydantic import BaseModel, Field, validator
+
+from clinicai.domain.enums.workflow import VisitWorkflowType
 import json
 
 
@@ -96,11 +98,12 @@ class SoapNoteMongo(BaseModel):
 
 class VisitMongo(Document):
     """MongoDB model for visit."""
-    visit_id: str = Field(..., description="Visit ID")
+    visit_id: str = Field(..., description="Visit ID", unique=True)
     patient_id: str = Field(..., description="Patient ID reference")
+    workflow_type: str = Field(default=VisitWorkflowType.SCHEDULED, description="Workflow type: scheduled or walk_in")
     status: str = Field(
         default="intake"
-    )  # intake, transcription, soap_generation, prescription_analysis, completed
+    )  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -122,6 +125,19 @@ class VisitMongo(Document):
         # Exclude revision_id and other MongoDB-specific fields when serializing
         exclude = {"revision_id"}
 
+    class Settings:
+        name = "visits"
+        indexes = [
+            "visit_id",
+            "patient_id", 
+            "status",
+            "workflow_type",
+            "created_at",
+            [("patient_id", 1), ("created_at", -1)],  # Compound index for patient visits ordered by date
+            [("status", 1), ("created_at", -1)],  # Compound index for visits by status
+            [("workflow_type", 1), ("status", 1)]  # Compound index for workflow type and status
+        ]
+
 
 
 class PatientMongo(Document):
@@ -134,7 +150,6 @@ class PatientMongo(Document):
     gender: Optional[str] = Field(None, description="Patient gender")
     recently_travelled: bool = Field(default=False, description="Has the patient travelled recently")
     language: str = Field(default="en", description="Patient preferred language (en for English, sp for Spanish)")
-    visits: List[VisitMongo] = Field(default_factory=list, description="List of visits")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -146,10 +161,10 @@ class PatientMongo(Document):
     class Settings:
         name = "patients"
         indexes = [
-            "patient_id",
-            "name",
-            "mobile",
-            "created_at"
+            "patient_id",                           # Keep for direct ID lookups
+            [("mobile", 1), ("name", 1)],          # Compound index: mobile first, then name (optimized for find_by_name_and_mobile)
+            "created_at",                           # Keep for date-based queries
+            [("mobile", 1), ("created_at", -1)]    # Optional: for mobile + date queries (family members by date)
         ]
 
 

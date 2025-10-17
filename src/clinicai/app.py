@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import logging
+import os
 
-from .api.routers import health, patients, notes, prescriptions
+from .api.routers import health, patients, notes, workflow
 from .api.routers import doctor as doctor_router
 from .api.routers import transcription as transcription_router
 from .api.routers import audio as audio_router
@@ -89,8 +90,8 @@ def create_app() -> FastAPI:
         title="Clinic-AI Intake Assistant",
         description="AI-powered clinical intake system for small and mid-sized clinics",
         version=settings.app_version,
-        docs_url="/docs" if settings.debug else None,
-        redoc_url="/redoc" if settings.debug else None,
+        docs_url="/docs",  # Always enable docs
+        redoc_url="/redoc",  # Always enable redoc
         lifespan=lifespan,
     )
 
@@ -160,7 +161,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(patients.router)
     app.include_router(notes.router)
-    app.include_router(prescriptions.router)
+    app.include_router(workflow.router)
     app.include_router(transcription_router.router)
     app.include_router(doctor_router.router)
     app.include_router(audio_router.router)
@@ -202,7 +203,8 @@ async def root():
         "version": settings.app_version,
         "environment": settings.app_env,
         "status": "running",
-        "docs": "/docs" if settings.debug else "disabled",
+        "docs": "/docs",
+        "swagger_yaml": "/swagger.yaml",
         "endpoints": {
             "health": "/health",
             "register_patient": "POST /patients/",
@@ -211,8 +213,7 @@ async def root():
             "get_summary": "GET /patients/{patient_id}/visits/{visit_id}/summary",
             # Image upload endpoints
             "upload_images": "POST /patients/webhook/images",
-            "upload_single_image": "POST /patients/webhook/image",
-            "get_image_content": "GET /patients/images/{image_id}/content",
+            "get_intake_image_content": "GET /patients/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content",
             "list_images": "GET /patients/{patient_id}/visits/{visit_id}/images",
             "delete_image": "DELETE /patients/images/{image_id}",
             # Step-03 endpoints
@@ -223,8 +224,6 @@ async def root():
             # Vitals endpoints
             "store_vitals": "POST /notes/vitals",
             "get_vitals": "GET /notes/{patient_id}/visits/{visit_id}/vitals",
-            # Prescription endpoints
-            "upload_prescriptions": "POST /prescriptions/upload",
             # Doctor preferences
             "get_doctor_preferences": "GET /doctor/preferences",
             "save_doctor_preferences": "POST /doctor/preferences",
@@ -240,3 +239,20 @@ async def root():
             "audio_stats": "GET /audio/stats/summary",
         },
     }
+
+
+@app.get("/swagger.yaml")
+async def get_swagger_yaml():
+    """Serve the custom Swagger YAML file."""
+    swagger_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "swagger.yaml")
+    if os.path.exists(swagger_path):
+        return FileResponse(
+            path=swagger_path,
+            media_type="application/x-yaml",
+            filename="swagger.yaml"
+        )
+    else:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Swagger file not found"}
+        )

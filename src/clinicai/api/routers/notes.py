@@ -130,16 +130,27 @@ async def transcribe_audio(
         )
 
     # Decode opaque patient id from client
-    try:
-        internal_patient_id = decode_patient_id(patient_id)
-    except Exception:
-        if '_' in patient_id and patient_id.count('_') >= 1:
+    # Check if this looks like an internal patient ID (format: name_mobile)
+    if '_' in patient_id:
+        parts = patient_id.split('_', 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            # This looks like an internal patient ID, skip decryption
             internal_patient_id = patient_id
+            logger.debug(f"Using internal patient ID for transcription: {internal_patient_id}")
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "INVALID_PATIENT_ID", "message": "Invalid patient ID format", "details": {}},
-            )
+            # Try to decrypt as opaque token
+            try:
+                internal_patient_id = decode_patient_id(patient_id)
+            except Exception as e:
+                logger.warning(f"Failed to decode patient_id '{patient_id}': {e}")
+                internal_patient_id = patient_id
+    else:
+        # Try to decrypt as opaque token
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception as e:
+            logger.warning(f"Failed to decode patient_id '{patient_id}': {e}")
+            internal_patient_id = patient_id
 
     # Stream to temp file to avoid loading entire file in memory
     temp_file_path = None
@@ -163,7 +174,8 @@ async def transcribe_audio(
         # Mark visit as queued if possible (best-effort via use case during processing)
         try:
             # Check if patient and visit exist and are in correct status
-            patient = await patient_repo.find_by_id(internal_patient_id)
+            from clinicai.domain.value_objects.patient_id import PatientId
+            patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
             if not patient:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -256,7 +268,8 @@ async def transcribe_audio(
                 logger.error(f"Background transcription failed for patient {internal_patient_id}, visit {visit_id}: {e}", exc_info=True)
                 # Mark transcription as failed in the database
                 try:
-                    patient = await patient_repo.find_by_id(internal_patient_id)
+                    from clinicai.domain.value_objects.patient_id import PatientId
+                    patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
                     if patient:
                         visit = patient.get_visit_by_id(visit_id)
                         if visit and visit.transcription_session:
@@ -523,13 +536,29 @@ async def get_transcript(
         # Find patient (decode opaque id from client)
         # URL-decode first to restore any encoded '=' characters in Fernet tokens
         decoded_path_param = urllib.parse.unquote(patient_id)
-        # Attempt to decrypt opaque token. If decryption fails, only accept the raw value
-        # if it already conforms to our internal PatientId format; otherwise return 422.
-        try:
-            internal_patient_id = decode_patient_id(decoded_path_param)
-        except Exception as e:
-            logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
-            internal_patient_id = decoded_path_param
+        
+        # Check if this looks like an internal patient ID (format: name_mobile)
+        # If it contains underscore and the part after underscore is all digits, treat as internal ID
+        if '_' in decoded_path_param:
+            parts = decoded_path_param.split('_', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                # This looks like an internal patient ID, skip decryption
+                internal_patient_id = decoded_path_param
+                logger.debug(f"Using internal patient ID: {internal_patient_id}")
+            else:
+                # Try to decrypt as opaque token
+                try:
+                    internal_patient_id = decode_patient_id(decoded_path_param)
+                except Exception as e:
+                    logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                    internal_patient_id = decoded_path_param
+        else:
+            # Try to decrypt as opaque token
+            try:
+                internal_patient_id = decode_patient_id(decoded_path_param)
+            except Exception as e:
+                logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                internal_patient_id = decoded_path_param
         try:
             patient_id_obj = PatientId(internal_patient_id)
         except ValueError as ve:
