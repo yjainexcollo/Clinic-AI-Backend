@@ -6,12 +6,16 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python version
       uses: actions/setup-python@v4
@@ -22,19 +26,39 @@ jobs:
       run: |
         python -m venv antenv
         source antenv/bin/activate
-
-    - name: Install dependencies
-      run: |
         pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Zip artifact for deployment
-      run: |
-        zip -r release.zip . -x "*.git*" "*antenv*" "*.vscode*" "*__pycache__*" "*.pytest_cache*"
+    - name: Upload artifact for deployment
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-app
+        path: |
+          .
+          !antenv/
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    environment:
+      name: 'production'
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+
+    steps:
+    - name: Download artifact from build job
+      uses: actions/download-artifact@v3
+      with:
+        name: python-app
+        path: .
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
     - name: Deploy to Azure Web App
+      id: deploy-to-webapp
       uses: azure/webapps-deploy@v2
       with:
         app-name: 'clinic-ai-backend-b4anbydmd2gfa4fd'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: release.zip
+        slot-name: 'production'
