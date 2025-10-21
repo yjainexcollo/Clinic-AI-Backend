@@ -7,6 +7,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Force OpenAI Whisper API usage for Azure free tier
+# This prevents the "No module named 'whisper'" error
+os.environ["TRANSCRIPTION_SERVICE"] = "openai"
+
 # Add the src directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, 'src')
@@ -15,6 +19,7 @@ sys.path.insert(0, src_path)
 logger.info(f"Python path: {sys.path}")
 logger.info(f"Current directory: {current_dir}")
 logger.info(f"Source path: {src_path}")
+logger.info(f"TRANSCRIPTION_SERVICE forced to: {os.environ.get('TRANSCRIPTION_SERVICE')}")
 
 if __name__ == "__main__":
     try:
@@ -35,4 +40,6 @@ if __name__ == "__main__":
         )
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         sys.exit(1)
