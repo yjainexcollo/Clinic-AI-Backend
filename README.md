@@ -522,3 +522,4 @@ For support and questions:
 
 **Built with ❤️ for better healthcare through AI**# Azure deployment fix
 
+# Trigger deployment with Service Principal
