@@ -20,7 +20,8 @@ from clinicai.adapters.db.mongo.repositories.audio_repository import (
 )
 from clinicai.adapters.external.question_service_openai import OpenAIQuestionService
 from clinicai.adapters.external.transcription_service_openai import OpenAITranscriptionService
-from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
+# Conditional import for local Whisper - only import if needed
+# from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
 from clinicai.adapters.external.soap_service_openai import OpenAISoapService
 from clinicai.adapters.services.action_plan_service import OpenAIActionPlanService
 from clinicai.application.ports.repositories.patient_repo import PatientRepository
@@ -78,6 +79,8 @@ def get_transcription_service() -> TranscriptionService:
         
         if transcription_service_type == "local":
             print("Using local Whisper transcription service")
+            # Lazy import to avoid importing whisper if not needed
+            from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
             _TRANSCRIPTION_SERVICE_SINGLETON = WhisperTranscriptionService()
         else:
             print("Using OpenAI Whisper API transcription service")
