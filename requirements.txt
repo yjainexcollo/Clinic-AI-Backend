@@ -9,7 +9,7 @@ motor>=3.3.0
 beanie>=1.23.0
 dnspython>=2.6.1
 
-# AI Services (OpenAI only)
+# AI Services
 openai>=1.3.0
 
 # Security
@@ -26,9 +26,5 @@ python-dotenv>=1.0.0
 structlog>=23.2.0
 certifi>=2024.2.2
 
-# Note: Removed heavy dependencies for free tier:
-# - redis (use in-memory cache)
-# - openai-whisper (use OpenAI API instead)
-# - torch/torchaudio (too heavy for free tier)
-# - mistralai (not used in this codebase)
-# - Development tools (not needed in production)
+# Azure-specific optimizations
+gunicorn>=21.2.0
