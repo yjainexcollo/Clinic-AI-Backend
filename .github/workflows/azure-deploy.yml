@@ -1,0 +1,40 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python version
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Create and start virtual environment
+      run: |
+        python -m venv antenv
+        source antenv/bin/activate
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Zip artifact for deployment
+      run: |
+        zip -r release.zip . -x "*.git*" "*antenv*" "*.vscode*" "*__pycache__*" "*.pytest_cache*"
+
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: 'clinic-ai-backend-b4anbydmd2gfa4fd'
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        package: release.zip
