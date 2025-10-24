@@ -1,5 +1,6 @@
 """
-Azure Application Insights integration for custom telemetry and Live Metrics
+Azure Application Insights integration with OpenTelemetry and Live Metrics support
+Migrated from OpenCensus to OpenTelemetry for better performance and Live Metrics
 """
 import os
 import logging
@@ -12,28 +13,21 @@ _initialized = False
 
 
 class AzureMonitorService:
-    """Service for Azure Application Insights custom telemetry"""
+    """Service for Azure Application Insights with Live Metrics support"""
     
     def __init__(self):
         self.connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
         self.enabled = bool(self.connection_string)
-        self.instrumentation_key = None
         
         if self.enabled:
             try:
-                # Extract instrumentation key from connection string
-                for part in self.connection_string.split(';'):
-                    if part.startswith('InstrumentationKey='):
-                        self.instrumentation_key = part.split('=')[1]
-                        break
-                
                 # Only initialize once
                 global _initialized
-                if not _initialized and self.instrumentation_key:
+                if not _initialized:
                     self._setup_telemetry()
                     _initialized = True
-                    logger.info("✅ Azure Application Insights telemetry enabled")
-                    logger.info(f"📊 Instrumentation Key: {self.instrumentation_key[:8]}...")
+                    logger.info("✅ Azure Application Insights telemetry enabled with Live Metrics")
+                    logger.info("📊 Live Metrics: https://portal.azure.com → Application Insights → Live Metrics")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Azure Monitor: {e}")
                 self.enabled = False
@@ -41,48 +35,54 @@ class AzureMonitorService:
             logger.warning("⚠️  Azure Application Insights not configured (APPLICATIONINSIGHTS_CONNECTION_STRING missing)")
     
     def _setup_telemetry(self):
-        """Set up Azure Monitor exporters"""
+        """Set up Azure Monitor with OpenTelemetry and Live Metrics"""
         try:
-            from opencensus.ext.azure.log_exporter import AzureLogHandler
-            from opencensus.ext.azure.trace_exporter import AzureExporter
-            from opencensus.trace import config_integration
-            from opencensus.trace.samplers import ProbabilitySampler
-            from opencensus.trace.tracer import Tracer
+            from azure.monitor.opentelemetry import configure_azure_monitor
             
-            # Enable integrations for automatic instrumentation
-            config_integration.trace_integrations(['logging', 'requests', 'httplib'])
-            
-            # Add Azure Log Handler to root logger
-            azure_handler = AzureLogHandler(connection_string=self.connection_string)
-            logging.getLogger().addHandler(azure_handler)
-            
-            # Set up tracing for Live Metrics
-            tracer = Tracer(
-                exporter=AzureExporter(connection_string=self.connection_string),
-                sampler=ProbabilitySampler(1.0)  # Sample 100% of requests
+            # Configure Azure Monitor with Live Metrics enabled
+            # This automatically sets up traces, metrics, and logs
+            configure_azure_monitor(
+                connection_string=self.connection_string,
+                enable_live_metrics=True,  # ✅ Enables Live Metrics with 1-second latency
+                logger_name=__name__
             )
             
-            logger.info("✅ Azure Monitor exporters configured")
+            logger.info("✅ Azure Monitor configured with OpenTelemetry")
+            logger.info("✅ Live Metrics enabled - data will stream in real-time")
             
         except ImportError as e:
-            logger.warning(f"⚠️  Azure Monitor dependencies not fully installed: {e}")
-            logger.warning("💡 Install with: pip install opencensus-ext-azure opencensus-ext-requests")
+            logger.warning(f"⚠️  Azure Monitor OpenTelemetry dependencies not installed: {e}")
+            logger.warning("💡 Install with: pip install azure-monitor-opentelemetry")
+            self.enabled = False
         except Exception as e:
             logger.error(f"❌ Failed to set up Azure Monitor: {e}")
+            self.enabled = False
     
     def track_event(self, name: str, properties: Optional[Dict[str, Any]] = None):
-        """Track a custom event"""
+        """Track a custom event using OpenTelemetry"""
         if self.enabled:
-            logger.info(f"CUSTOM_EVENT: {name}", extra={
-                'custom_dimensions': properties or {}
-            })
+            try:
+                from opentelemetry import trace
+                tracer = trace.get_tracer(__name__)
+                with tracer.start_as_current_span(name) as span:
+                    if properties:
+                        for key, value in properties.items():
+                            span.set_attribute(str(key), str(value))
+                    logger.info(f"CUSTOM_EVENT: {name}", extra=properties or {})
+            except Exception as e:
+                logger.warning(f"Failed to track event: {e}")
     
     def track_metric(self, name: str, value: float, properties: Optional[Dict[str, Any]] = None):
-        """Track a custom metric"""
+        """Track a custom metric using OpenTelemetry"""
         if self.enabled:
-            logger.info(f"CUSTOM_METRIC: {name}={value}", extra={
-                'custom_dimensions': properties or {}
-            })
+            try:
+                from opentelemetry import metrics
+                meter = metrics.get_meter(__name__)
+                counter = meter.create_counter(name, description=f"Custom metric: {name}")
+                counter.add(value, attributes=properties or {})
+                logger.info(f"CUSTOM_METRIC: {name}={value}", extra=properties or {})
+            except Exception as e:
+                logger.warning(f"Failed to track metric: {e}")
 
 
 # Singleton instance
