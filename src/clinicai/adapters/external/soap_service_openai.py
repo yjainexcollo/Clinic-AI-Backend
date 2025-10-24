@@ -5,9 +5,9 @@ OpenAI-based SOAP generation service implementation.
 import asyncio
 import json
 from typing import Dict, Any, Optional, List
-from openai import OpenAI
 import os
 import logging
+from clinicai.core.helicone_client import create_helicone_client
 
 from clinicai.application.ports.services.soap_service import SoapService
 from clinicai.core.config import get_settings
@@ -30,7 +30,8 @@ class OpenAISoapService(SoapService):
         if not api_key:
             raise ValueError("OPENAI_API_KEY is not set. Please set the OPENAI_API_KEY environment variable or add it to your .env file.")
         
-        self._client = OpenAI(api_key=api_key)
+        # Use Helicone client for AI observability
+        self._client = create_helicone_client()
         # Optional: log model and presence of key (masked)
         try:
             logging.getLogger("clinicai").info(
@@ -282,21 +283,22 @@ Generate the SOAP note now:
 """
 
         try:
-            # Run OpenAI completion in thread pool
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self._generate_soap_sync,
-                prompt
-            )
+            # Extract patient_id from patient_context if available
+            patient_id = None
+            if patient_context:
+                patient_id = patient_context.get("id") or patient_context.get("patient_id")
+            
+            # Use async Helicone client with tracking
+            result = await self._generate_soap_async(prompt, patient_id=patient_id)
             # Normalize for structure/consistency
             return self._normalize_soap(result)
             
         except Exception as e:
             raise ValueError(f"SOAP generation failed: {str(e)}")
 
-    def _generate_soap_sync(self, prompt: str) -> Dict[str, Any]:
-        """Synchronous SOAP generation method."""
-        response = self._client.chat.completions.create(
+    async def _generate_soap_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
+        """Async SOAP generation method with Helicone tracking."""
+        response, metrics = await self._client.chat_completion(
             model=self._settings.soap.model,
             messages=[
                 {
@@ -306,8 +308,17 @@ Generate the SOAP note now:
                 {"role": "user", "content": prompt}
             ],
             temperature=self._settings.soap.temperature,
-            max_tokens=self._settings.soap.max_tokens
+            max_tokens=self._settings.soap.max_tokens,
+            patient_id=patient_id,
+            prompt_name="soap_generation",
+            custom_properties={
+                "service": "soap_note",
+                "note_type": "soap"
+            }
         )
+        
+        # Log metrics
+        logging.getLogger("clinicai").info(f"[SoapService] SOAP generation metrics: {metrics}")
         
         # Parse JSON response
         try:
@@ -675,12 +686,11 @@ Generate the post-visit summary now:
 """
 
         try:
-            # Run OpenAI completion in thread pool
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self._generate_post_visit_summary_sync,
-                prompt
-            )
+            # Extract patient_id from patient_data
+            patient_id = patient_data.get("id") or patient_data.get("patient_id")
+            
+            # Use async Helicone client with tracking
+            result = await self._generate_post_visit_summary_async(prompt, patient_id=patient_id)
             # Normalize and return the result
             normalized = self._normalize_post_visit_summary(result)
             return normalized
@@ -691,9 +701,9 @@ Generate the post-visit summary now:
             print(f"ERROR: Traceback: {traceback.format_exc()}")
             raise ValueError(f"Post-visit summary generation failed: {str(e)}")
 
-    def _generate_post_visit_summary_sync(self, prompt: str) -> Dict[str, Any]:
-        """Synchronous post-visit summary generation method."""
-        response = self._client.chat.completions.create(
+    async def _generate_post_visit_summary_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
+        """Async post-visit summary generation method with Helicone tracking."""
+        response, metrics = await self._client.chat_completion(
             model=self._settings.soap.model,
             messages=[
                 {
@@ -703,8 +713,17 @@ Generate the post-visit summary now:
                 {"role": "user", "content": prompt}
             ],
             temperature=self._settings.soap.temperature,
-            max_tokens=self._settings.soap.max_tokens
+            max_tokens=self._settings.soap.max_tokens,
+            patient_id=patient_id,
+            prompt_name="post_visit_summary",
+            custom_properties={
+                "service": "soap_note",
+                "note_type": "post_visit_summary"
+            }
         )
+        
+        # Log metrics
+        logging.getLogger("clinicai").info(f"[SoapService] Post-visit summary metrics: {metrics}")
         
         # Parse JSON response
         content = response.choices[0].message.content

@@ -4,10 +4,10 @@ OpenAI-based implementation of Action Plan Service.
 
 import logging
 from typing import Dict, Any, List
-from openai import AsyncOpenAI
 
 from ...core.config import get_settings
 from ...application.ports.services.action_plan_service import ActionPlanService
+from ...core.helicone_client import create_helicone_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,8 @@ class OpenAIActionPlanService(ActionPlanService):
 
     def __init__(self):
         self.settings = get_settings()
-        self.client = AsyncOpenAI(api_key=self.settings.openai.api_key)
+        # Use Helicone client for AI observability
+        self.client = create_helicone_client()
 
     async def generate_action_plan(
         self, 
@@ -39,8 +40,8 @@ class OpenAIActionPlanService(ActionPlanService):
                 system_prompt = self._get_english_system_prompt()
                 user_prompt = self._get_english_user_prompt(transcript, structured_dialogue)
 
-            # Call OpenAI API
-            response = await self.client.chat.completions.create(
+            # Call OpenAI API with Helicone tracking
+            response, metrics = await self.client.chat_completion(
                 model=self.settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -48,7 +49,16 @@ class OpenAIActionPlanService(ActionPlanService):
                 ],
                 temperature=0.3,  # Lower temperature for more consistent medical recommendations
                 max_tokens=2000,
+                patient_id=patient_id,
+                prompt_name="action_plan_generation",
+                custom_properties={
+                    "service": "action_plan",
+                    "language": language
+                }
             )
+            
+            # Log metrics
+            logger.info(f"[ActionPlanService] Action plan generation metrics: {metrics}")
 
             # Parse the response
             content = response.choices[0].message.content

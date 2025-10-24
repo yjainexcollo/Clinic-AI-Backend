@@ -7,10 +7,9 @@ import os
 from typing import Dict, Any
 from pathlib import Path
 
-from openai import OpenAI
-
 from clinicai.application.ports.services.transcription_service import TranscriptionService
 from clinicai.core.config import get_settings
+from clinicai.core.helicone_client import create_helicone_client
 
 
 class OpenAITranscriptionService(TranscriptionService):
@@ -19,7 +18,8 @@ class OpenAITranscriptionService(TranscriptionService):
         api_key = self._settings.openai.api_key or os.getenv("OPENAI_API_KEY", "")
         if not api_key:
             raise ValueError("OPENAI_API_KEY is not set")
-        self._client = OpenAI(api_key=api_key)
+        # Use Helicone client for AI observability
+        self._client = create_helicone_client()
 
     async def transcribe_audio(
         self,
@@ -45,12 +45,22 @@ class OpenAITranscriptionService(TranscriptionService):
         
         try:
             with open(audio_file_path, "rb") as f:
-                resp = self._client.audio.transcriptions.create(
+                # Use Helicone client with tracking
+                resp, metrics = await self._client.transcription(
                     model="whisper-1",
                     file=f,
                     language=whisper_language,
-                    # prompt could be set based on medical_context
+                    prompt_name="audio_transcription",
+                    custom_properties={
+                        "service": "transcription",
+                        "language": whisper_language,
+                        "medical_context": medical_context
+                    }
                 )
+            
+            # Log metrics
+            logger.info(f"[TranscriptionService] Transcription metrics: {metrics}")
+            
             text = (resp.text or "").strip()
             return {
                 "transcript": text,

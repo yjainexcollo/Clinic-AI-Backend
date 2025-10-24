@@ -3,9 +3,9 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
 from clinicai.application.ports.services.question_service import QuestionService
 from clinicai.core.config import get_settings
+from clinicai.core.helicone_client import create_helicone_client
 
 
 # ----------------------
@@ -46,34 +46,41 @@ class OpenAIQuestionService(QuestionService):
         if not api_key:
             raise ValueError("OPENAI_API_KEY is not set")
 
-        self._client = OpenAI(api_key=api_key)
+        # Use Helicone client for AI observability
+        self._client = create_helicone_client()
 
     async def _chat_completion(
-        self, messages: List[Dict[str, str]], max_tokens: int = 64, temperature: float = 0.3
+        self, messages: List[Dict[str, str]], max_tokens: int = 64, temperature: float = 0.3,
+        patient_id: str = None, prompt_name: str = None
     ) -> str:
-        def _run() -> str:
-            logger = logging.getLogger("clinicai")
-            try:
-                if self._debug_prompts:
-                    logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
+        logger = logging.getLogger("clinicai")
+        try:
+            if self._debug_prompts:
+                logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
 
-                resp = self._client.chat.completions.create(
-                    model=self._settings.openai.model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                output = resp.choices[0].message.content.strip()
+            # Use Helicone client with tracking
+            resp, metrics = await self._client.chat_completion(
+                model=self._settings.openai.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                patient_id=patient_id,
+                prompt_name=prompt_name or "question_service",
+                custom_properties={
+                    "service": "question_generation",
+                    "message_count": len(messages)
+                }
+            )
+            output = resp.choices[0].message.content.strip()
 
-                if self._debug_prompts:
-                    logger.debug("[QuestionService] Received response: %s", output)
+            if self._debug_prompts:
+                logger.debug("[QuestionService] Received response: %s", output)
+                logger.debug(f"[QuestionService] Metrics: {metrics}")
 
-                return output
-            except Exception:
-                logger.error("[QuestionService] OpenAI call failed", exc_info=True)
-                return ""
-
-        return await asyncio.to_thread(_run)
+            return output
+        except Exception:
+            logger.error("[QuestionService] OpenAI call failed", exc_info=True)
+            return ""
 
     # ----------------------
     # AI-powered classifier
