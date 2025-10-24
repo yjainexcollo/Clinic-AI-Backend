@@ -1,7 +1,7 @@
 """Note-related API endpoints for Step-03 functionality."""
 import logging
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -96,6 +96,7 @@ async def test_cors():
     },
 )
 async def transcribe_audio(
+    request: Request,
     patient_repo: PatientRepositoryDep,
     transcription_service: TranscriptionServiceDep,
     audio_repo: AudioRepositoryDep,
@@ -106,6 +107,10 @@ async def transcribe_audio(
     audio_file: UploadFile = File(...),
 ):
     """Queue audio transcription and return immediately (202)."""
+    # Set IDs in request state for HIPAA audit middleware
+    request.state.audit_patient_id = patient_id
+    request.state.audit_visit_id = visit_id
+    
     logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}, language: {language}")
 
     if not audio_file.filename:
@@ -319,6 +324,7 @@ async def transcribe_audio(
     },
 )
 async def generate_soap_note(
+    http_request: Request,
     request: SoapGenerationRequest,
     patient_repo: PatientRepositoryDep,
     soap_service: SoapServiceDep,
@@ -334,6 +340,10 @@ async def generate_soap_note(
     5. Returns structured SOAP note
     """
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = request.patient_id
+        http_request.state.audit_visit_id = request.visit_id
+        
         # Decode opaque patient_id if provided by client
         from ...core.utils.crypto import decode_patient_id
         try:
@@ -417,11 +427,16 @@ class VitalsPayload(BaseModel):
     },
 )
 async def store_vitals(
+    http_request: Request,
     payload: VitalsPayload,
     patient_repo: PatientRepositoryDep,
 ):
     """Store objective vitals for a visit."""
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = payload.patient_id
+        http_request.state.audit_visit_id = payload.visit_id
+        
         from ...domain.value_objects.patient_id import PatientId
         # decode opaque id if needed
         try:

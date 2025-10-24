@@ -1,6 +1,6 @@
 """Workflow-related API endpoints for conditional workflow support."""
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 import logging
 from typing import List
 from pydantic import BaseModel, Field
@@ -46,6 +46,7 @@ class CreateWalkInVisitResponseSchema(BaseModel):
     },
 )
 async def create_walk_in_visit(
+    http_request: Request,
     request: CreateWalkInVisitRequestSchema,
     patient_repo: PatientRepositoryDep,
     visit_repo: VisitRepositoryDep,
@@ -71,6 +72,10 @@ async def create_walk_in_visit(
         # Execute use case
         use_case = CreateWalkInVisitUseCase(patient_repo, visit_repo)
         response = await use_case.execute(use_case_request)
+        
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = response.patient_id
+        http_request.state.audit_visit_id = response.visit_id
         
         return CreateWalkInVisitResponseSchema(
             patient_id=response.patient_id,

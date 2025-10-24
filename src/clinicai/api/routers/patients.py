@@ -69,6 +69,7 @@ logger = logging.getLogger("clinicai")
     },
 )
 async def register_patient(
+    http_request: Request,
     request: RegisterPatientRequestSchema,
     patient_repo: PatientRepositoryDep,
     question_service: QuestionServiceDep,
@@ -99,6 +100,10 @@ async def register_patient(
         # Execute use case
         use_case = RegisterPatientUseCase(patient_repo, question_service)
         result = await use_case.execute(dto_request)
+
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = encode_patient_id(result.patient_id)
+        http_request.state.audit_visit_id = result.visit_id
 
         # Return opaque patient_id to callers
         return RegisterPatientResponse(
@@ -179,6 +184,12 @@ async def answer_intake_question(
         if content_type.startswith("application/json"):
             body = await request.json()
             raw_pid = (body.get("patient_id", "").strip())
+            visit_id_from_body = (body.get("visit_id", "").strip())
+            
+            # Set IDs in request state for HIPAA audit middleware
+            request.state.audit_patient_id = raw_pid
+            request.state.audit_visit_id = visit_id_from_body
+            
             try:
                 internal_pid = decode_patient_id(raw_pid)
             except Exception as e:
@@ -188,7 +199,7 @@ async def answer_intake_question(
             # The use case accepts raw string; repository lookup will handle both forms.
             dto_request = AnswerIntakeRequest(
                 patient_id=internal_pid,
-                visit_id=(body.get("visit_id", "").strip()),
+                visit_id=visit_id_from_body,
                 answer=(body.get("answer", "").strip()),
             )
         elif content_type.startswith("multipart/form-data"):
@@ -198,6 +209,11 @@ async def answer_intake_question(
                 form_patient_id = form_patient_id or (form.get("patient_id") or "").strip()
                 form_visit_id = form_visit_id or (form.get("visit_id") or "").strip()
                 form_answer = form_answer or (form.get("answer") or "").strip()
+            
+            # Set IDs in request state for HIPAA audit middleware
+            request.state.audit_patient_id = form_patient_id
+            request.state.audit_visit_id = form_visit_id
+            
             logger.info(
                 "[AnswerIntake][FORM] Received form fields: patient_id=%s visit_id=%s answer_len=%s",
                 (form_patient_id or "").strip(),
@@ -350,12 +366,17 @@ async def answer_intake_question(
     status_code=status.HTTP_200_OK,
 )
 async def edit_intake_answer(
+    http_request: Request,
     request: EditAnswerRequestSchema,
     patient_repo: PatientRepositoryDep,
     question_service: QuestionServiceDep,
 ):
     """Edit an existing answer by question number."""
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = request.patient_id
+        http_request.state.audit_visit_id = request.visit_id
+        
         use_case = AnswerIntakeUseCase(patient_repo, question_service)
         dto_request = EditAnswerRequest(
             patient_id=decode_patient_id(request.patient_id),
@@ -404,6 +425,10 @@ async def upload_medication_images(
     images: Optional[List[UploadFile]] = File(None),
 ):
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        request.state.audit_patient_id = patient_id
+        request.state.audit_visit_id = visit_id
+        
         logger.info("[WebhookImages] Incoming upload for patient_id=%s visit_id=%s", patient_id, visit_id)
         # Normalize/resolve patient id (opaque token from client → internal id)
         try:
@@ -601,6 +626,7 @@ async def delete_medication_image(image_id: str):
     },
 )
 async def generate_pre_visit_summary(
+    http_request: Request,
     request: PreVisitSummaryRequest,
     patient_repo: PatientRepositoryDep,
     question_service: QuestionServiceDep,
@@ -615,6 +641,10 @@ async def generate_pre_visit_summary(
     4. Returns structured summary for doctor review
     """
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = request.patient_id
+        http_request.state.audit_visit_id = request.visit_id
+        
         # Convert Pydantic model to DTO
         dto_request = PreVisitSummaryRequest(
             patient_id=decode_patient_id(request.patient_id),
@@ -823,6 +853,7 @@ async def get_pre_visit_summary(
     },
 )
 async def generate_post_visit_summary(
+    http_request: Request,
     request: PostVisitSummaryRequest,
     patient_repo: PatientRepositoryDep,
     soap_service: SoapServiceDep,
@@ -837,6 +868,10 @@ async def generate_post_visit_summary(
     4. Returns structured summary for WhatsApp sharing
     """
     try:
+        # Set IDs in request state for HIPAA audit middleware
+        http_request.state.audit_patient_id = request.patient_id
+        http_request.state.audit_visit_id = request.visit_id
+        
         # Decode the opaque patient_id to get the internal patient_id
         try:
             internal_patient_id = decode_patient_id(request.patient_id)
