@@ -29,5 +29,9 @@ certifi>=2024.2.2
 # Azure-specific optimizations
 gunicorn>=21.2.0
 
+# Azure Monitoring & Application Insights
+opencensus-ext-azure>=1.1.0
+opencensus-ext-requests>=0.8.0
+
 # Note: Using OpenAI Whisper API instead of local Whisper for free tier
 # This avoids the heavy whisper package and torch dependencies
