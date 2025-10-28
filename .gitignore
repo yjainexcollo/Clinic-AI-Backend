@@ -54,7 +54,8 @@ audit.log
 *.publishsettings
 
 # Storage
-storage/
+storage/audio/
+storage/temp/
 downloads/
 temp/
 
