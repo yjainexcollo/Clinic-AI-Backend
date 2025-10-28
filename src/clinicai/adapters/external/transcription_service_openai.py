@@ -50,12 +50,9 @@ class OpenAITranscriptionService(TranscriptionService):
                     model="whisper-1",
                     file=f,
                     language=whisper_language,
-                    prompt_name="audio_transcription",
-                    custom_properties={
-                        "service": "transcription",
-                        "language": whisper_language,
-                        "medical_context": medical_context
-                    }
+                    user_id=None,  # Optional: add user tracking if needed
+                    patient_id=None,  # Optional: add patient tracking if needed
+                    session_id=None  # Optional: add session tracking if needed
                 )
             
             # Log metrics
