@@ -5,15 +5,15 @@ import logging
 from typing import List
 from pydantic import BaseModel, Field
 
-from clinicai.application.use_cases.create_walk_in_visit import (
+from ...application.use_cases.create_walk_in_visit import (
     CreateWalkInVisitUseCase,
     CreateWalkInVisitRequest,
     CreateWalkInVisitResponse
 )
-from clinicai.domain.enums.workflow import VisitWorkflowType
-from clinicai.domain.errors import PatientNotFoundError, VisitNotFoundError
+from ...domain.enums.workflow import VisitWorkflowType
+from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ..deps import PatientRepositoryDep, VisitRepositoryDep
-from ..schemas.patient import ErrorResponse
+from ..schemas import ErrorResponse
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger("clinicai")

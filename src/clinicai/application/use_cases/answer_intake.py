@@ -13,7 +13,6 @@ from ..dto.patient_dto import (
     AnswerIntakeResponse,
     EditAnswerRequest,
     EditAnswerResponse,
-    OCRQualityInfo,
     PreVisitSummaryRequest,
 )
 from ..ports.repositories.patient_repo import PatientRepository

@@ -8,22 +8,22 @@ import logging
 import traceback
 from typing import Union, Optional, List
 
-from clinicai.application.dto.patient_dto import (
+from ...application.dto.patient_dto import (
     AnswerIntakeRequest,
     PreVisitSummaryRequest,
     PostVisitSummaryRequest,
     RegisterPatientRequest,
 )
-from clinicai.application.dto.patient_dto import EditAnswerRequest
+from ...application.dto.patient_dto import EditAnswerRequest
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from datetime import datetime
-from clinicai.application.use_cases.answer_intake import AnswerIntakeUseCase
-from clinicai.application.use_cases.generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
-from clinicai.application.use_cases.generate_post_visit_summary import GeneratePostVisitSummaryUseCase
-from clinicai.core.utils.crypto import decode_patient_id
-from clinicai.application.use_cases.register_patient import RegisterPatientUseCase
-from clinicai.domain.errors import (
+from ...application.use_cases.answer_intake import AnswerIntakeUseCase
+from ...application.use_cases.generate_pre_visit_summary import GeneratePreVisitSummaryUseCase
+from ...application.use_cases.generate_post_visit_summary import GeneratePostVisitSummaryUseCase
+from ...core.utils.crypto import decode_patient_id
+from ...application.use_cases.register_patient import RegisterPatientUseCase
+from ...domain.errors import (
     DuplicatePatientError,
     DuplicateQuestionError,
     IntakeAlreadyCompletedError,
@@ -33,19 +33,20 @@ from clinicai.domain.errors import (
     VisitNotFoundError,
 )
 
-from ..deps import PatientRepositoryDep, QuestionServiceDep, SoapServiceDep
+from ..deps import PatientRepositoryDep, VisitRepositoryDep, QuestionServiceDep, SoapServiceDep
 from ...core.utils.crypto import encode_patient_id, decode_patient_id
-from ..schemas.patient import AnswerIntakeResponse, ErrorResponse
-from ..schemas.patient import AnswerIntakeRequest as AnswerIntakeRequestSchema
-from ..schemas.patient import (
+from ..schemas import (
+    AnswerIntakeResponse,
+    ErrorResponse,
+    AnswerIntakeRequest as AnswerIntakeRequestSchema,
     PatientSummarySchema,
     PreVisitSummaryResponse,
     PostVisitSummaryResponse,
     RegisterPatientResponse,
     EditAnswerRequest as EditAnswerRequestSchema,
     EditAnswerResponse as EditAnswerResponseSchema,
+    RegisterPatientRequest as RegisterPatientRequestSchema
 )
-from ..schemas.patient import RegisterPatientRequest as RegisterPatientRequestSchema
 from fastapi import UploadFile, File, Form
 from fastapi.responses import Response
 from pathlib import Path
@@ -72,6 +73,7 @@ async def register_patient(
     http_request: Request,
     request: RegisterPatientRequestSchema,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
     question_service: QuestionServiceDep,
 ):
     """
@@ -86,19 +88,20 @@ async def register_patient(
     """
     try:
         # Convert Pydantic model to DTO
-        full_name = f"{request.first_name.strip()} {request.last_name.strip()}".strip()
         dto_request = RegisterPatientRequest(
-            name=full_name,
+            first_name=request.first_name,
+            last_name=request.last_name,
             mobile=request.mobile,
             age=request.age,
             gender=request.gender,
             recently_travelled=request.recently_travelled,
             consent=request.consent,
+            country=request.country,
             language=request.language,
         )
 
         # Execute use case
-        use_case = RegisterPatientUseCase(patient_repo, question_service)
+        use_case = RegisterPatientUseCase(patient_repo, visit_repo, question_service)
         result = await use_case.execute(dto_request)
 
         # Set IDs in request state for HIPAA audit middleware
@@ -314,7 +317,6 @@ async def answer_intake_question(
             completion_percent=result.completion_percent,
             message=result.message,
             allows_image_upload=result.allows_image_upload,
-            ocr_quality=result.ocr_quality,
         )
     except PatientNotFoundError as e:
         raise HTTPException(

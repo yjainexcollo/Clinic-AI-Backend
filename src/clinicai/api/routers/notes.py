@@ -12,7 +12,7 @@ from datetime import datetime
 
 from openai import OpenAI  # type: ignore
 
-from clinicai.application.dto.patient_dto import (
+from ...application.dto.patient_dto import (
     AudioTranscriptionRequest,
     AudioTranscriptionResponse,
     SoapGenerationRequest,
@@ -21,16 +21,15 @@ from clinicai.application.dto.patient_dto import (
     TranscriptionSessionDTO
 )
 from pydantic import BaseModel
-from clinicai.application.use_cases.transcribe_audio import TranscribeAudioUseCase
-from ...application.utils.structure_dialogue import structure_dialogue_from_text
-from clinicai.application.use_cases.generate_soap_note import GenerateSoapNoteUseCase
-from clinicai.domain.errors import (
+from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
+from ...application.use_cases.generate_soap_note import GenerateSoapNoteUseCase
+from ...domain.errors import (
     PatientNotFoundError,
     VisitNotFoundError,
 )
 from ..deps import PatientRepositoryDep, TranscriptionServiceDep, AudioRepositoryDep, SoapServiceDep
 from ...core.utils.crypto import decode_patient_id
-from ..schemas.patient import ErrorResponse
+from ..schemas import ErrorResponse
 from ...core.config import get_settings
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
 

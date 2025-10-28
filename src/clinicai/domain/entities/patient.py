@@ -25,7 +25,6 @@ class Patient:
     gender: Optional[str] = None
     recently_travelled: bool = False
     language: str = "en"
-    visits: List["Visit"] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -58,33 +57,8 @@ class Patient:
             raise InvalidPatientDataError("age", self.age)
         
         # Validate language
-        if self.language not in ["en", "sp"]:
+        if self.language not in ["en", "es"]:
             raise InvalidPatientDataError("language", f"Invalid language: {self.language}")
-
-    def add_visit(self, visit: "Visit") -> None:
-        """Add a new visit to the patient's history."""
-        self.visits.append(visit)
-        self.updated_at = datetime.utcnow()
-
-    def get_latest_visit(self) -> Optional["Visit"]:
-        """Get the most recent visit."""
-        if not self.visits:
-            return None
-        return max(self.visits, key=lambda v: v.created_at)
-
-    def get_visit_by_id(self, visit_id: str) -> Optional["Visit"]:
-        """Get visit by visit ID."""
-        for visit in self.visits:
-            if visit.visit_id.value == visit_id:
-                return visit
-        return None
-
-    def has_active_intake(self) -> bool:
-        """Check if patient has an active intake session."""
-        latest_visit = self.get_latest_visit()
-        if not latest_visit:
-            return False
-        return latest_visit.intake_session.status == "in_progress"
 
     def update_contact_info(self, name: str, mobile: str) -> None:
         """Update patient contact information."""

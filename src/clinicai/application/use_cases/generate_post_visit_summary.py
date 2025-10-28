@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ..dto.patient_dto import PostVisitSummaryRequest
-from ...api.schemas.patient import PostVisitSummaryResponse
+from ...api.schemas import PostVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.services.soap_service import SoapService
 

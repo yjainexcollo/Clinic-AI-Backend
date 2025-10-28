@@ -13,12 +13,14 @@ from ...domain.entities.patient import Patient
 class RegisterPatientRequest:
     """Request DTO for patient registration."""
 
-    name: str
+    first_name: str
+    last_name: str
     mobile: str
     age: int
     gender: str
     recently_travelled: bool = False
     consent: bool = True
+    country: str = "US"
     language: str = "en"
 
 
@@ -65,18 +67,6 @@ class EditAnswerResponse:
 
 
 @dataclass
-class OCRQualityInfo:
-    """OCR quality assessment information."""
-    quality: str = "failed"
-    confidence: float = 0.0
-    extracted_text: str = ""
-    extracted_medications: List[str] = field(default_factory=list)
-    suggestions: List[str] = field(default_factory=list)
-    word_count: int = 0
-    has_medication_keywords: bool = False
-
-
-@dataclass
 class AnswerIntakeResponse:
     """Response DTO for answering intake questions."""
 
@@ -87,7 +77,6 @@ class AnswerIntakeResponse:
     completion_percent: int
     message: str
     allows_image_upload: bool = False
-    ocr_quality: Optional[OCRQualityInfo] = None
 
 
 @dataclass

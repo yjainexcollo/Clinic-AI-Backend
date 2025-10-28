@@ -205,9 +205,9 @@ def create_app() -> FastAPI:
     app.include_router(patients.router)
     app.include_router(notes.router)
     app.include_router(workflow.router)
+    app.include_router(health.router)
     
     # Comment out unwanted routers to hide them from Swagger UI
-    # app.include_router(health.router)
     # app.include_router(transcription_router.router)
     # app.include_router(doctor_router.router)
     # app.include_router(audio_router.router)

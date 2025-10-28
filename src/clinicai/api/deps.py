@@ -9,27 +9,27 @@ from typing import Annotated, Optional
 
 from fastapi import Depends
 
-from clinicai.adapters.db.mongo.repositories.patient_repository import (
+from ..adapters.db.mongo.repositories.patient_repository import (
     MongoPatientRepository,
 )
-from clinicai.adapters.db.mongo.repositories.visit_repository import (
+from ..adapters.db.mongo.repositories.visit_repository import (
     MongoVisitRepository,
 )
-from clinicai.adapters.db.mongo.repositories.audio_repository import (
+from ..adapters.db.mongo.repositories.audio_repository import (
     AudioRepository,
 )
-from clinicai.adapters.external.question_service_openai import OpenAIQuestionService
-from clinicai.adapters.external.transcription_service_openai import OpenAITranscriptionService
+from ..adapters.external.question_service_openai import OpenAIQuestionService
+from ..adapters.external.transcription_service_openai import OpenAITranscriptionService
 # Conditional import for local Whisper - only import if needed
-# from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
-from clinicai.adapters.external.soap_service_openai import OpenAISoapService
-from clinicai.adapters.services.action_plan_service import OpenAIActionPlanService
-from clinicai.application.ports.repositories.patient_repo import PatientRepository
-from clinicai.application.ports.repositories.visit_repo import VisitRepository
-from clinicai.application.ports.services.question_service import QuestionService
-from clinicai.application.ports.services.transcription_service import TranscriptionService
-from clinicai.application.ports.services.soap_service import SoapService
-from clinicai.application.ports.services.action_plan_service import ActionPlanService
+# from ..adapters.external.transcription_service_whisper import WhisperTranscriptionService
+from ..adapters.external.soap_service_openai import OpenAISoapService
+from ..adapters.services.action_plan_service import OpenAIActionPlanService
+from ..application.ports.repositories.patient_repo import PatientRepository
+from ..application.ports.repositories.visit_repo import VisitRepository
+from ..application.ports.services.question_service import QuestionService
+from ..application.ports.services.transcription_service import TranscriptionService
+from ..application.ports.services.soap_service import SoapService
+from ..application.ports.services.action_plan_service import ActionPlanService
 
 
 @lru_cache()
@@ -41,10 +41,8 @@ def get_visit_repository() -> VisitRepository:
 @lru_cache()
 def get_patient_repository() -> PatientRepository:
     """Get patient repository instance."""
-    # In a real implementation, this would come from the DI container
-    # For now, we'll create it directly with visit repository dependency
-    visit_repo = get_visit_repository()
-    return MongoPatientRepository(visit_repo)
+    # Patient repository no longer needs visit repository dependency
+    return MongoPatientRepository()
 
 
 @lru_cache()
