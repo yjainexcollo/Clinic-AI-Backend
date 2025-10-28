@@ -1,5 +1,5 @@
 """
-Audio repository for MongoDB operations.
+Audio repository for MongoDB operations with Azure Blob Storage integration.
 """
 
 from typing import List, Optional, Dict, Any
@@ -9,12 +9,18 @@ import logging
 
 from beanie import PydanticObjectId
 from ..models.patient_m import AudioFileMongo
+from ....storage.azure_blob_service import get_azure_blob_service
+from .blob_file_repository import BlobFileRepository
 
 logger = logging.getLogger("clinicai")
 
 
 class AudioRepository:
-    """Repository for audio file operations."""
+    """Repository for audio file operations with Azure Blob Storage."""
+
+    def __init__(self):
+        self.blob_service = get_azure_blob_service()
+        self.blob_repo = BlobFileRepository()
 
     async def create_audio_file(
         self,
@@ -27,17 +33,50 @@ class AudioRepository:
         audio_type: str = "adhoc",
         duration_seconds: Optional[float] = None,
     ) -> AudioFileMongo:
-        """Create a new audio file record in the database."""
+        """Create a new audio file record with blob storage."""
         try:
             audio_id = str(uuid.uuid4())
             
+            # Upload to blob storage
+            blob_info = await self.blob_service.upload_file(
+                file_data=audio_data,
+                filename=filename,
+                content_type=content_type,
+                file_type="audio",
+                patient_id=patient_id,
+                visit_id=visit_id,
+                adhoc_id=adhoc_id,
+                audio_type=audio_type,
+                duration_seconds=duration_seconds
+            )
+            
+            # Create blob reference
+            blob_reference = await self.blob_repo.create_blob_reference(
+                blob_path=blob_info["blob_path"],
+                container_name=blob_info["container_name"],
+                original_filename=filename,
+                content_type=content_type,
+                file_size=len(audio_data),
+                blob_url=blob_info["blob_url"],
+                file_type="audio",
+                category=audio_type,
+                patient_id=patient_id,
+                visit_id=visit_id,
+                adhoc_id=adhoc_id,
+                metadata={
+                    "duration_seconds": duration_seconds,
+                    "audio_type": audio_type
+                }
+            )
+            
+            # Create audio file record
             audio_file = AudioFileMongo(
                 audio_id=audio_id,
                 filename=filename,
                 content_type=content_type,
-                audio_data=audio_data,
                 file_size=len(audio_data),
                 duration_seconds=duration_seconds,
+                blob_reference_id=blob_reference.file_id,
                 patient_id=patient_id,
                 visit_id=visit_id,
                 adhoc_id=adhoc_id,
@@ -45,7 +84,7 @@ class AudioRepository:
             )
             
             await audio_file.insert()
-            logger.info(f"Created audio file: {audio_id} ({filename})")
+            logger.info(f"Created audio file with blob storage: {audio_id} ({filename})")
             return audio_file
             
         except Exception as e:
@@ -106,13 +145,25 @@ class AudioRepository:
             return []
 
     async def get_audio_data(self, audio_id: str) -> Optional[bytes]:
-        """Get audio file binary data by audio_id."""
+        """Get audio file binary data by audio_id from blob storage."""
         try:
-            # Get the full audio file document
+            # Get the audio file document
             audio_file = await AudioFileMongo.find_one(
                 AudioFileMongo.audio_id == audio_id
             )
-            return audio_file.audio_data if audio_file else None
+            if not audio_file:
+                return None
+            
+            # Get blob reference
+            blob_reference = await self.blob_repo.get_blob_reference_by_id(audio_file.blob_reference_id)
+            if not blob_reference:
+                logger.error(f"Blob reference not found for audio file: {audio_id}")
+                return None
+            
+            # Download from blob storage
+            audio_data = await self.blob_service.download_file(blob_reference.blob_path)
+            return audio_data
+            
         except Exception as e:
             logger.error(f"Failed to get audio data for ID {audio_id}: {e}")
             return None

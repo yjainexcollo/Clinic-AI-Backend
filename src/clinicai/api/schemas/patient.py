@@ -236,17 +236,9 @@ class PostVisitSummaryRequest(BaseModel):
 
 
 class PostVisitSummaryResponse(BaseModel):
-    """Response schema for post-visit summary following recommended format."""
+    """Response schema for post-visit summary - MEDICAL CONTENT ONLY."""
 
-    # Header Section
-    patient_id: str = Field(..., description="Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
-    patient_name: str = Field(..., description="Patient full name")
-    visit_date: str = Field(..., description="Visit date in ISO format")
-    clinic_name: str = Field(default="AI Medical Clinic", description="Clinic name")
-    doctor_name: str = Field(default="Dr. AI Assistant", description="Attending doctor name")
-    
-    # Summary of Visit
+    # Medical Content (Generated during visit)
     chief_complaint: str = Field(..., description="Reason for visit in plain language")
     key_findings: List[str] = Field(..., description="Key findings from exam/consultation")
     diagnosis: str = Field(..., description="Diagnosis in layman-friendly terms")
@@ -267,7 +259,6 @@ class PostVisitSummaryResponse(BaseModel):
     
     # Closing Note
     reassurance_note: str = Field(..., description="Reassurance and encouragement message")
-    clinic_contact: str = Field(default="WhatsApp: +1 (555) 123-4567", description="Clinic contact information")
     
     # Metadata
     generated_at: str = Field(..., description="Summary generation timestamp")

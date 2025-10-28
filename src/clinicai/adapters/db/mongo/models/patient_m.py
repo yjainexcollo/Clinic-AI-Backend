@@ -169,12 +169,16 @@ class PatientMongo(Document):
 
 
 class MedicationImageMongo(Document):
-    """MongoDB model for uploaded medication images linked to a visit."""
+    """MongoDB model for uploaded medication images with blob storage reference."""
     patient_id: str = Field(..., description="Patient ID reference")
     visit_id: str = Field(..., description="Visit ID reference")
-    image_data: bytes = Field(..., description="Base64 encoded image data")
     content_type: str = Field(..., description="MIME type of the image")
     filename: str = Field(..., description="Original filename")
+    file_size: int = Field(..., description="File size in bytes")
+    
+    # Blob storage reference
+    blob_reference_id: str = Field(..., description="Reference to blob file storage")
+    
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
@@ -209,13 +213,15 @@ class AdhocTranscriptMongo(Document):
 
 
 class AudioFileMongo(Document):
-    """MongoDB model for storing audio files directly in database."""
+    """MongoDB model for audio files with blob storage reference."""
     audio_id: str = Field(..., description="Unique audio file ID", unique=True)
     filename: str = Field(..., description="Original filename")
     content_type: str = Field(..., description="MIME type of the audio file")
-    audio_data: bytes = Field(..., description="Binary audio file data")
     file_size: int = Field(..., description="File size in bytes")
     duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
+    
+    # Blob storage reference
+    blob_reference_id: str = Field(..., description="Reference to blob file storage")
     
     # Metadata
     patient_id: Optional[str] = Field(None, description="Patient ID if linked to a patient")

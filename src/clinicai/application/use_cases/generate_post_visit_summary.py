@@ -96,10 +96,6 @@ class GeneratePostVisitSummaryUseCase:
             chief_complaint = visit.intake_session.questions_asked[0].answer
         
         response = PostVisitSummaryResponse(
-            patient_id=patient.patient_id.value,
-            visit_id=visit.visit_id.value,
-            patient_name=patient.name,
-            visit_date=visit.created_at.isoformat(),
             chief_complaint=chief_complaint or "General consultation",
             key_findings=parsed_summary.get("key_findings", []),
             diagnosis=parsed_summary.get("diagnosis", "Please consult with your doctor for diagnosis"),

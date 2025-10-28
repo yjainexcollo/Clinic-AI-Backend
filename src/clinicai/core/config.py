@@ -240,6 +240,28 @@ class FileStorageSettings(BaseSettings):
         return v
 
 
+class AzureBlobSettings(BaseSettings):
+    """Azure Blob Storage configuration settings."""
+
+    model_config = SettingsConfigDict(env_prefix="AZURE_BLOB_")
+
+    account_name: str = Field(default="", description="Azure Storage Account Name")
+    account_key: str = Field(default="", description="Azure Storage Account Key")
+    connection_string: str = Field(default="", description="Azure Storage Connection String")
+    container_name: str = Field(default="clinicaiblobstorage", description="Blob container name")
+    enable_cdn: bool = Field(default=False, description="Enable CDN for faster access")
+    cdn_endpoint: Optional[str] = Field(None, description="CDN endpoint URL")
+    default_expiry_hours: int = Field(default=24, description="Default expiry for signed URLs in hours")
+    max_file_size_mb: int = Field(default=100, description="Maximum file size in MB")
+    
+    @validator("connection_string")
+    def validate_connection_string(cls, v: str) -> str:
+        """Validate Azure Storage connection string."""
+        if v and not v.startswith("DefaultEndpointsProtocol="):
+            raise ValueError("Invalid Azure Storage connection string format")
+        return v
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -266,6 +288,7 @@ class Settings(BaseSettings):
     soap: SoapSettings = Field(default_factory=SoapSettings)
     mistral: MistralSettings = Field(default_factory=MistralSettings)
     file_storage: FileStorageSettings = Field(default_factory=FileStorageSettings)
+    azure_blob: AzureBlobSettings = Field(default_factory=AzureBlobSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
