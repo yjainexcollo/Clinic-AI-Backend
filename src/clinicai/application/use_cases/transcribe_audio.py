@@ -2,9 +2,11 @@
 
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
+from ...domain.value_objects.visit_id import VisitId
 from ...domain.enums.workflow import VisitWorkflowType
 from ..dto.patient_dto import AudioTranscriptionRequest, AudioTranscriptionResponse
 from ..ports.repositories.patient_repo import PatientRepository
+from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.transcription_service import TranscriptionService
 from ...core.config import get_settings
 from typing import Dict, Any
@@ -23,11 +25,14 @@ class TranscribeAudioUseCase:
     """Use case for transcribing audio files."""
 
     def __init__(
-        self, 
-        patient_repository: PatientRepository, 
+        self,
+        patient_repository: PatientRepository,
+        visit_repository: VisitRepository, 
         transcription_service: TranscriptionService
+    
     ):
         self._patient_repository = patient_repository
+        self._visit_repository = visit_repository
         self._transcription_service = transcription_service
 
     async def execute(self, request: AudioTranscriptionRequest) -> AudioTranscriptionResponse:
@@ -41,7 +46,10 @@ class TranscribeAudioUseCase:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit
-        visit = patient.get_visit_by_id(request.visit_id)
+        visit_id = VisitId(request.visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 

@@ -164,6 +164,7 @@ async def register_patient(
 async def answer_intake_question(
     request: Request,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
     question_service: QuestionServiceDep,
     # Optional multipart fields (to enable Swagger file upload UI)
     form_patient_id: Optional[str] = Form(None),
@@ -306,7 +307,7 @@ async def answer_intake_question(
             )
 
         # Execute use case
-        use_case = AnswerIntakeUseCase(patient_repo, question_service)
+        use_case = AnswerIntakeUseCase(patient_repo, visit_repo, question_service)
         result = await use_case.execute(dto_request)
 
         return AnswerIntakeResponse(
@@ -371,6 +372,7 @@ async def edit_intake_answer(
     http_request: Request,
     request: EditAnswerRequestSchema,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
     question_service: QuestionServiceDep,
 ):
     """Edit an existing answer by question number."""
@@ -379,7 +381,7 @@ async def edit_intake_answer(
         http_request.state.audit_patient_id = request.patient_id
         http_request.state.audit_visit_id = request.visit_id
         
-        use_case = AnswerIntakeUseCase(patient_repo, question_service)
+        use_case = AnswerIntakeUseCase(patient_repo, visit_repo, question_service)
         dto_request = EditAnswerRequest(
             patient_id=decode_patient_id(request.patient_id),
             visit_id=request.visit_id,
@@ -662,6 +664,7 @@ async def generate_pre_visit_summary(
     http_request: Request,
     request: PreVisitSummaryRequest,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
     question_service: QuestionServiceDep,
 ):
     """
@@ -685,7 +688,7 @@ async def generate_pre_visit_summary(
         )
 
         # Execute use case
-        use_case = GeneratePreVisitSummaryUseCase(patient_repo, question_service)
+        use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
         result = await use_case.execute(dto_request)
 
         return PreVisitSummaryResponse(
@@ -747,6 +750,7 @@ async def get_pre_visit_summary(
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
 ):
     """
     Retrieve stored pre-visit summary from EHR.
@@ -766,8 +770,12 @@ async def get_pre_visit_summary(
         if not patient:
             raise PatientNotFoundError(patient_id)
 
-        # Find visit
-        visit = patient.get_visit_by_id(visit_id)
+        # Find visit using VisitRepository
+        from ...domain.value_objects.visit_id import VisitId
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(
+            internal_patient_id, visit_id_obj
+        )
         if not visit:
             raise VisitNotFoundError(visit_id)
 
@@ -795,7 +803,7 @@ async def get_pre_visit_summary(
                 # Create question service directly instead of using container
                 question_service = OpenAIQuestionService()
                 
-                summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, question_service)
+                summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
                 summary_request = PreVisitSummaryRequest(
                     patient_id=internal_patient_id,
                     visit_id=visit_id,
@@ -984,6 +992,7 @@ async def get_post_visit_summary(
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
 ):
     """Retrieve stored post-visit summary from visit (if available)."""
     try:
@@ -998,7 +1007,11 @@ async def get_post_visit_summary(
         if not patient:
             raise PatientNotFoundError(patient_id)
         
-        visit = patient.get_visit_by_id(visit_id)
+        from ...domain.value_objects.visit_id import VisitId
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(
+            internal_patient_id, visit_id_obj
+        )
         if not visit:
             raise VisitNotFoundError(visit_id)
         
@@ -1049,6 +1062,7 @@ async def store_vitals(
     visit_id: str,
     vitals: VitalsPayload,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
 ):
     """Store vitals data for a visit."""
     try:
@@ -1069,7 +1083,11 @@ async def store_vitals(
                 detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {patient_id} not found", "details": {}}
             )
         
-        visit = patient.get_visit_by_id(visit_id)
+        from ...domain.value_objects.visit_id import VisitId
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(
+            internal_patient_id, visit_id_obj
+        )
         if not visit:
             raise HTTPException(
                 status_code=404,
@@ -1121,6 +1139,7 @@ async def get_vitals(
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
 ):
     """Get vitals data for a visit."""
     try:
@@ -1140,7 +1159,11 @@ async def get_vitals(
                 detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {patient_id} not found", "details": {}}
             )
         
-        visit = patient.get_visit_by_id(visit_id)
+        from ...domain.value_objects.visit_id import VisitId
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(
+            internal_patient_id, visit_id_obj
+        )
         if not visit:
             raise HTTPException(
                 status_code=404,

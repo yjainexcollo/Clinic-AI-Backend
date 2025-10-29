@@ -8,6 +8,7 @@ from ...domain.errors import (
     DuplicateQuestionError,
 )
 from ...domain.value_objects.patient_id import PatientId
+from ...domain.value_objects.visit_id import VisitId
 from ..dto.patient_dto import (
     AnswerIntakeRequest,
     AnswerIntakeResponse,
@@ -16,6 +17,7 @@ from ..dto.patient_dto import (
     PreVisitSummaryRequest,
 )
 from ..ports.repositories.patient_repo import PatientRepository
+from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.question_service import QuestionService
 
 
@@ -23,9 +25,10 @@ class AnswerIntakeUseCase:
     """Use case for answering intake questions."""
 
     def __init__(
-        self, patient_repository: PatientRepository, question_service: QuestionService
+        self, patient_repository: PatientRepository, visit_repository: VisitRepository, question_service: QuestionService
     ):
         self._patient_repository = patient_repository
+        self._visit_repository = visit_repository
         self._question_service = question_service
 
     async def execute(self, request: AnswerIntakeRequest) -> AnswerIntakeResponse:
@@ -36,8 +39,11 @@ class AnswerIntakeUseCase:
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
-        # Find visit
-        visit = patient.get_visit_by_id(request.visit_id)
+        # Find visit using VisitRepository
+        visit_id = VisitId(request.visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
         
@@ -47,7 +53,7 @@ class AnswerIntakeUseCase:
         prior_summary: Optional[str] = None
         prior_qas: Optional[List[str]] = None
         try:
-            latest = patient.get_latest_visit()
+            latest = await self._visit_repository.find_latest_by_patient_id(request.patient_id)
             if latest and latest.visit_id.value != visit.visit_id.value:
                 if latest.pre_visit_summary and latest.pre_visit_summary.get("summary"):
                     prior_summary = latest.pre_visit_summary.get("summary")
@@ -211,8 +217,8 @@ class AnswerIntakeUseCase:
         if is_complete:
             completion_percent = 100
 
-        # Save the updated patient
-        await self._patient_repository.save(patient)
+        # Save the updated visit
+        await self._visit_repository.save(visit)
 
         # Note: Pre-visit summary generation is now manual via /patients/summary/previsit endpoint
         # This allows for better control over when summaries are generated
@@ -243,8 +249,11 @@ class AnswerIntakeUseCase:
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
-        # Find visit
-        visit = patient.get_visit_by_id(request.visit_id)
+        # Find visit using VisitRepository
+        visit_id = VisitId(request.visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -293,7 +302,7 @@ class AnswerIntakeUseCase:
             allows_image_upload = await self._question_service.is_medication_question(next_question)
 
         # Persist changes
-        await self._patient_repository.save(patient)
+        await self._visit_repository.save(visit)
 
         return EditAnswerResponse(
             success=True,

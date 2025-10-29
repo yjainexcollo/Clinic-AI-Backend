@@ -3,9 +3,11 @@
 import logging
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
+from ...domain.value_objects.visit_id import VisitId
 from ..dto.patient_dto import PreVisitSummaryRequest
 from ...api.schemas import PreVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
+from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.question_service import QuestionService
 
 logger = logging.getLogger(__name__)
@@ -17,9 +19,11 @@ class GeneratePreVisitSummaryUseCase:
     def __init__(
         self, 
         patient_repository: PatientRepository, 
+        visit_repository: VisitRepository,
         question_service: QuestionService
     ):
         self._patient_repository = patient_repository
+        self._visit_repository = visit_repository
         self._question_service = question_service
 
     async def execute(self, request: PreVisitSummaryRequest) -> PreVisitSummaryResponse:
@@ -30,8 +34,11 @@ class GeneratePreVisitSummaryUseCase:
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
-        # Find visit
-        visit = patient.get_visit_by_id(request.visit_id)
+        # Find visit using VisitRepository
+        visit_id = VisitId(request.visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 

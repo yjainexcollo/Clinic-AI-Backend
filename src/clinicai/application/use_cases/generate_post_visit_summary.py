@@ -5,9 +5,11 @@ from typing import Dict, Any, Optional
 
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
+from ...domain.value_objects.visit_id import VisitId
 from ..dto.patient_dto import PostVisitSummaryRequest
 from ...api.schemas import PostVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
+from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.soap_service import SoapService
 
 
@@ -15,11 +17,14 @@ class GeneratePostVisitSummaryUseCase:
     """Use case for generating post-visit patient summaries."""
 
     def __init__(
-        self, 
-        patient_repository: PatientRepository, 
+        self,
+        patient_repository: PatientRepository,
+        visit_repository: VisitRepository, 
         soap_service: SoapService
+    
     ):
         self._patient_repository = patient_repository
+        self._visit_repository = visit_repository
         self._soap_service = soap_service
 
     async def execute(self, request: PostVisitSummaryRequest) -> PostVisitSummaryResponse:
@@ -32,7 +37,10 @@ class GeneratePostVisitSummaryUseCase:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit
-        visit = patient.get_visit_by_id(request.visit_id)
+        visit_id = VisitId(request.visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
