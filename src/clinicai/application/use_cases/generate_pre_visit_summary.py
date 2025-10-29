@@ -65,7 +65,7 @@ class GeneratePreVisitSummaryUseCase:
 
         # Attach references to any uploaded medication images for this visit
         try:
-            from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+            from clinicai.adapters.db.mongo.models.patient_m import MedicationImageMongo
             docs = await MedicationImageMongo.find(
                 MedicationImageMongo.patient_id == visit.patient_id,
                 MedicationImageMongo.visit_id == visit.visit_id.value,

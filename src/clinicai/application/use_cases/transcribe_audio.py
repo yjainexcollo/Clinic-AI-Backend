@@ -9,11 +9,13 @@ from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.transcription_service import TranscriptionService
 from ...core.config import get_settings
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
 import asyncio
 import logging
 import json
 import re
+import time
+from datetime import datetime
 
 from openai import OpenAI  # type: ignore
 
@@ -34,6 +36,74 @@ class TranscribeAudioUseCase:
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
         self._transcription_service = transcription_service
+        
+        # Medical terms that should NOT be removed as PII (medications, medical conditions, etc.)
+        self._medical_term_whitelist = {
+            # Common medications
+            'metformin', 'jardiance', 'giordians', 'lisinopril', 'amlodipine', 'lidocaine', 'aspirin',
+            'ibuprofen', 'acetaminophen', 'tylenol', 'advil', 'motrin', 'naproxen',
+            'atorvastatin', 'simvastatin', 'pravastatin', 'rosuvastatin',
+            'hydrochlorothiazide', 'furosemide', 'spironolactone',
+            'omeprazole', 'esomeprazole', 'pantoprazole',
+            'amlodipine', 'losartan', 'valsartan', 'carvedilol',
+            'gabapentin', 'pregabalin', 'duloxetine',
+            'insulin', 'glipizide', 'glyburide', 'pioglitazone',
+            # Medical conditions/anatomy (should not be removed)
+            'diabetes', 'hypertension', 'osteoporosis', 'arthritis',
+            'pneumonia', 'bronchitis', 'asthma', 'copd',
+            'kidney', 'liver', 'heart', 'lung', 'shoulder', 'neck',
+            # Common medical terms
+            'a1c', 'hemoglobin', 'glucose', 'blood pressure',
+            'physical therapy', 'pt', 'mri', 'ct', 'xray',
+        }
+        
+        # PII detection patterns
+        self._pii_patterns = {
+            'phone': [
+                r'\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',  # US phone formats
+                r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}',  # Generic phone XXX-XXX-XXXX
+                r'\(\d{3}\)\s?\d{3}[-.\s]?\d{4}',  # (XXX) XXX-XXXX
+            ],
+            'email': [
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            ],
+            'ssn': [
+                r'\b\d{3}-?\d{2}-?\d{4}\b',  # Social Security Number
+            ],
+            'date': [
+                r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',  # Dates MM/DD/YYYY
+                r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b',
+            ],
+            'age': [
+                r'\bage\s+(\d{1,3})\b',  # Age X
+                r'\b(\d{1,3})\s+years?\s+old\b',
+                r'\b(\d{1,3})\s+y\.o\.?\b',
+            ],
+            'zipcode': [
+                r'\b\d{5}(?:-\d{4})?\b',  # ZIP codes
+            ],
+            'mrn': [
+                r'\bMRN[:\s]*\d+\b',  # Medical Record Number
+                r'\bPatient\s+ID[:\s]*\d+\b',
+            ],
+            'name': [
+                # Doctor titles with names (most specific - highest priority)
+                # Match: Dr. Prasad, Dr. John Smith, Doctor Kumar
+                # Ensure word boundary after name to avoid matching beyond
+                r'\b(?:Dr|Doctor|Dr\.|MD|MD\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?=\s|\.|,|$)',  # Dr. Prasad, Dr. John Smith
+                # Title prefixes with names
+                r'\b(Mr|Mrs|Ms|Miss|Mr\.|Mrs\.|Ms\.|Miss\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?=\s|\.|,|$)',  # Mr. Smith, Mrs. Johnson
+                # Names after greetings/addresses (exclude titles like Dr, Doctor)
+                # Match: Hello John, Hi Mary Smith (but not "Thank you, Dr")
+                r'\b(?:Hello|Hi|Hey|Dear),?\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)(?=\s|\.|,|$)',  # Hello John, Hi Mary Smith
+                # Full names in context
+                r"\b(?:I'?m|name is|called|named)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|\.|,|$)",  # I'm John Smith, name is Mary Johnson
+                # Patient/Doctor name mentions with context
+                r'\b(?:patient|doctor)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|\.|,|$)',  # patient John Smith, doctor Mary Johnson
+                # Standalone capitalized names after "Thank you" (excluding titles)
+                r'\b(?:Thank you|Thanks),?\s+([A-Z][a-z]{2,})(?=\s|\.|,|$)',  # Thank you, John (but not "Thank you, Dr")
+            ],
+        }
 
     async def execute(self, request: AudioTranscriptionRequest) -> AudioTranscriptionResponse:
         """Execute the audio transcription use case."""
@@ -97,19 +167,13 @@ class TranscribeAudioUseCase:
             client = OpenAI(api_key=settings.openai.api_key)
 
             # Process transcript with improved chunking strategy
+            # Always use chunking - it handles both single chunks and multi-chunk processing automatically
             LOGGER.info(f"Starting transcript processing for {len(raw_transcript)} characters")
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:200]}...")
             
-            # For very long transcripts, use simpler processing to avoid timeouts
-            if len(raw_transcript) > 5000:
-                LOGGER.info("Long transcript detected, using simplified processing to avoid timeout")
-                structured_content = await self._process_transcript_simple(
-                    client, raw_transcript, settings, LOGGER, request.language or "en"
-                )
-            else:
-                structured_content = await self._process_transcript_with_chunking(
-                    client, raw_transcript, settings, LOGGER, request.language or "en"
-                )
+            structured_content = await self._process_transcript_with_chunking(
+                client, raw_transcript, settings, LOGGER, request.language or "en"
+            )
 
             # Process structured dialogue separately from raw transcript
             structured_dialogue = None
@@ -117,7 +181,7 @@ class TranscribeAudioUseCase:
             
             if structured_content and structured_content != raw_transcript:
                 try:
-                    # Try to fix common JSON issues before parsing
+                    # Enhanced JSON parsing with multiple recovery strategies
                     cleaned_content = structured_content.strip()
                     
                     # If content doesn't start with [ or {, try to find the JSON part
@@ -129,33 +193,65 @@ class TranscribeAudioUseCase:
                         if start_idx != -1:
                             cleaned_content = cleaned_content[start_idx:]
                     
-                    # Try to fix unterminated strings by finding the last complete item
-                    if cleaned_content.startswith('[') and not cleaned_content.endswith(']'):
-                        # Find the last complete object in the array
-                        last_complete_idx = cleaned_content.rfind('},')
-                        if last_complete_idx != -1:
-                            cleaned_content = cleaned_content[:last_complete_idx + 1] + ']'
+                    # Try enhanced error recovery
+                    parsed = None
+                    recovery_method = None
+                    
+                    # Strategy 1: Try standard JSON parsing
+                    try:
+                        parsed = json.loads(cleaned_content)
+                        recovery_method = "standard_json"
+                    except json.JSONDecodeError:
+                        # Strategy 2: Try to recover partial JSON
+                        recovered = self._recover_partial_json(cleaned_content, LOGGER)
+                        if recovered:
+                            parsed = recovered
+                            recovery_method = "partial_recovery"
                         else:
-                            # If no complete objects found, try to close the array
-                            cleaned_content = cleaned_content + ']'
+                            # Strategy 3: Try to fix truncated JSON
+                            if cleaned_content.startswith('[') and not cleaned_content.endswith(']'):
+                                LOGGER.warning("JSON appears truncated, attempting to fix...")
+                                # Find last complete object
+                                last_complete_idx = cleaned_content.rfind('},')
+                                if last_complete_idx != -1:
+                                    cleaned_content = cleaned_content[:last_complete_idx + 1] + ']'
+                                else:
+                                    cleaned_content = cleaned_content + ']'
+                                
+                                try:
+                                    parsed = json.loads(cleaned_content)
+                                    recovery_method = "truncation_fix"
+                                except json.JSONDecodeError:
+                                    pass
+                            
+                            # Strategy 4: Extract valid objects using regex
+                            if not parsed:
+                                recovered = self._recover_partial_json(structured_content, LOGGER)
+                                if recovered:
+                                    parsed = recovered
+                                    recovery_method = "regex_extraction"
                     
-                    parsed = json.loads(cleaned_content)
-                    LOGGER.info(f"Parsed JSON structure: {type(parsed)} with {len(parsed) if isinstance(parsed, list) else 'N/A'} items")
-                    
-                    if isinstance(parsed, list) and all(
-                        isinstance(item, dict) and 
-                        len(item) == 1 and 
-                        list(item.keys())[0] in ["Doctor", "Patient"]
-                        for item in parsed
-                    ):
-                        structured_dialogue = parsed
-                        LOGGER.info(f"Successfully validated structured dialogue with {len(parsed)} turns")
+                    if parsed and isinstance(parsed, list):
+                        # Validate dialogue format
+                        if all(
+                            isinstance(item, dict) and 
+                            len(item) == 1 and 
+                            list(item.keys())[0] in ["Doctor", "Patient"]
+                            for item in parsed
+                        ):
+                            structured_dialogue = parsed
+                            LOGGER.info(f"Successfully parsed structured dialogue with {len(parsed)} turns (recovery method: {recovery_method})")
+                        else:
+                            LOGGER.warning(f"Parsed content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
                     else:
-                        LOGGER.warning(f"Structured content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
-                except json.JSONDecodeError as e:
-                    LOGGER.warning(f"Structured content is not valid JSON after cleaning: {e}. Original: {structured_content[:200]}...")
+                        LOGGER.warning(f"Failed to parse structured content. Recovery methods exhausted.")
+                        if parsed:
+                            LOGGER.warning(f"Parsed type: {type(parsed)}, Content: {str(parsed)[:200]}...")
+                            
                 except Exception as e:
                     LOGGER.warning(f"Error validating structured content: {e}. Content: {structured_content[:200] if structured_content else 'None'}...")
+                    import traceback
+                    LOGGER.debug(f"Traceback: {traceback.format_exc()}")
             
             # Create intelligent fallback structured dialogue if LLM processing failed
             if not structured_dialogue and raw_transcript and raw_transcript.strip():
@@ -179,6 +275,43 @@ class TranscribeAudioUseCase:
 
             LOGGER.info(f"Raw transcript length: {len(raw_transcript)} characters")
             LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
+
+            # Apply PII removal to raw transcript
+            raw_transcript_cleaned = self._remove_pii_from_text(raw_transcript)
+            if raw_transcript_cleaned != raw_transcript:
+                LOGGER.info(f"PII removed from raw transcript: {len(raw_transcript)} -> {len(raw_transcript_cleaned)} chars")
+            raw_transcript = raw_transcript_cleaned
+
+            # Apply PII removal to structured dialogue
+            if structured_dialogue:
+                structured_dialogue_before = len(str(structured_dialogue))
+                structured_dialogue = self._remove_pii_from_dialogue(structured_dialogue)
+                structured_dialogue_after = len(str(structured_dialogue))
+                if structured_dialogue_before != structured_dialogue_after:
+                    LOGGER.info(f"PII removed from structured dialogue")
+
+            # Validate PII removal
+            pii_validation = self._validate_pii_removal(raw_transcript, structured_dialogue)
+            if pii_validation['pii_detected']:
+                LOGGER.warning(f"PII validation: {pii_validation['pii_count']} PII items still detected after removal")
+                for pii_type, value, location in pii_validation['pii_items'][:5]:
+                    LOGGER.warning(f"  - {pii_type}: {value} (in {location})")
+            else:
+                LOGGER.info("PII validation: No PII detected in final output ✓")
+
+            # Validate completeness
+            if structured_dialogue:
+                completeness = self._validate_completeness(structured_dialogue, raw_transcript)
+                LOGGER.info(f"Completeness check:")
+                LOGGER.info(f"  - Dialogue turns: {completeness['dialogue_turns']}")
+                LOGGER.info(f"  - Transcript sentences: {completeness['transcript_sentences']}")
+                LOGGER.info(f"  - Completeness ratio: {completeness['completeness_ratio']:.2%}")
+                LOGGER.info(f"  - Character ratio: {completeness['char_ratio']:.2%}")
+                
+                if not completeness['is_complete']:
+                    LOGGER.warning(f"⚠️  Dialogue completeness is below threshold (0.70): {completeness['completeness_ratio']:.2%}")
+                else:
+                    LOGGER.info(f"✓ Dialogue completeness meets threshold: {completeness['completeness_ratio']:.2%}")
 
             # Complete transcription with both raw transcript and structured dialogue
             visit.complete_transcription_with_data(
@@ -225,6 +358,310 @@ class TranscribeAudioUseCase:
                 message=f"Transcription failed: {str(e)}"
             )
 
+    def _remove_pii_from_text(self, text: str) -> str:
+        """Remove PII from raw text transcript."""
+        if not text:
+            return text
+        
+        cleaned_text = text
+        pii_removed = []
+        
+        # Remove phone numbers
+        for pattern in self._pii_patterns['phone']:
+            matches = re.findall(pattern, cleaned_text)
+            if matches:
+                cleaned_text = re.sub(pattern, '[PHONE]', cleaned_text)
+                pii_removed.extend([('phone', m) for m in matches])
+        
+        # Remove email addresses
+        for pattern in self._pii_patterns['email']:
+            matches = re.findall(pattern, cleaned_text)
+            if matches:
+                cleaned_text = re.sub(pattern, '[EMAIL]', cleaned_text)
+                pii_removed.extend([('email', m) for m in matches])
+        
+        # Remove SSN
+        for pattern in self._pii_patterns['ssn']:
+            matches = re.findall(pattern, cleaned_text)
+            if matches:
+                cleaned_text = re.sub(pattern, '[SSN]', cleaned_text)
+                pii_removed.extend([('ssn', m) for m in matches])
+        
+        # Remove specific dates (keep relative dates like "yesterday")
+        relative_date_words = ['yesterday', 'today', 'tomorrow', 'last week', 'next week', 'last month', 'next month']
+        for pattern in self._pii_patterns['date']:
+            matches = re.findall(pattern, cleaned_text)
+            for match in matches:
+                # Check if it's a relative date by checking context
+                match_start = cleaned_text.find(match)
+                context_before = cleaned_text[max(0, match_start-30):match_start].lower()
+                if not any(rel_word in context_before for rel_word in relative_date_words):
+                    cleaned_text = cleaned_text.replace(match, '[DATE]', 1)
+                    pii_removed.append(('date', match))
+        
+        # Remove ages
+        for pattern in self._pii_patterns['age']:
+            matches = re.finditer(pattern, cleaned_text, re.IGNORECASE)
+            for match in matches:
+                age_value = match.group(1) if match.groups() else match.group(0)
+                cleaned_text = cleaned_text.replace(match.group(0), f'[AGE]', 1)
+                pii_removed.append(('age', age_value))
+        
+        # Remove ZIP codes
+        for pattern in self._pii_patterns['zipcode']:
+            matches = re.findall(pattern, cleaned_text)
+            if matches:
+                cleaned_text = re.sub(pattern, '[ZIPCODE]', cleaned_text)
+                pii_removed.extend([('zipcode', m) for m in matches])
+        
+        # Remove MRN/Patient IDs
+        for pattern in self._pii_patterns['mrn']:
+            matches = re.findall(pattern, cleaned_text, re.IGNORECASE)
+            if matches:
+                cleaned_text = re.sub(pattern, '[MRN]', cleaned_text, flags=re.IGNORECASE)
+                pii_removed.extend([('mrn', m) for m in matches])
+        
+        # Remove names using comprehensive patterns (process in reverse order to maintain positions)
+        # Process from most specific to least specific to avoid double-matching
+        name_matches = []
+        for pattern in self._pii_patterns['name']:
+            for match in re.finditer(pattern, cleaned_text, re.IGNORECASE):
+                matched_text = match.group(0)
+                # Extract the actual name part (remove greeting/prefix)
+                name_part = matched_text
+                # If pattern has capture groups, extract the name part
+                if match.groups():
+                    name_part = match.group(1) if match.groups() else matched_text
+                else:
+                    # For patterns without capture groups, extract name after prefix
+                    if 'Dr' in matched_text or 'Doctor' in matched_text or 'MD' in matched_text:
+                        name_part = re.sub(r'^(?:Dr|Doctor|Dr\.|MD|MD\.)\s+', '', matched_text, flags=re.IGNORECASE)
+                    elif any(prefix in matched_text for prefix in ['Mr', 'Mrs', 'Ms', 'Miss']):
+                        name_part = re.sub(r'^(?:Mr|Mrs|Ms|Miss|Mr\.|Mrs\.|Ms\.|Miss\.)\s+', '', matched_text, flags=re.IGNORECASE)
+                    elif any(greeting in matched_text for greeting in ['Hello', 'Hi', 'Hey', 'Dear', 'Thank you', 'Thanks']):
+                        name_part = re.sub(r'^(?:Hello|Hi|Hey|Dear|Thank you|Thanks),?\s+', '', matched_text, flags=re.IGNORECASE)
+                
+                # Check if this is a medical term (medication, condition, etc.) - should NOT be removed
+                name_lower = name_part.lower().strip()
+                # Check if the matched text contains any medical terms
+                is_medical_term = False
+                for med_term in self._medical_term_whitelist:
+                    if med_term.lower() in name_lower or name_lower in med_term.lower():
+                        is_medical_term = True
+                        break
+                
+                # Only add to matches if it's NOT a medical term
+                if not is_medical_term:
+                    name_matches.append((match.start(), match.end(), matched_text))
+        
+        # Sort by start position and remove overlaps
+        name_matches.sort(key=lambda x: x[0])
+        non_overlapping = []
+        for start, end, text in name_matches:
+            if not non_overlapping or start >= non_overlapping[-1][1]:
+                non_overlapping.append((start, end, text))
+        
+        # Replace in reverse order to maintain positions
+        for start, end, matched_text in reversed(non_overlapping):
+            cleaned_text = cleaned_text[:start] + '[NAME]' + cleaned_text[end:]
+            pii_removed.append(('name', matched_text))
+        
+        if pii_removed:
+            LOGGER.info(f"PII removed from text: {len(pii_removed)} items")
+            for pii_type, value in pii_removed[:5]:  # Log first 5
+                LOGGER.debug(f"  - {pii_type}: {value}")
+        
+        return cleaned_text
+
+    def _remove_pii_from_dialogue(self, dialogue: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Remove PII from structured dialogue."""
+        if not dialogue:
+            return dialogue
+        
+        cleaned_dialogue = []
+        for turn in dialogue:
+            if not isinstance(turn, dict) or len(turn) != 1:
+                cleaned_dialogue.append(turn)
+                continue
+            
+            speaker = list(turn.keys())[0]
+            text = list(turn.values())[0]
+            
+            # Remove PII from the dialogue text
+            cleaned_text = self._remove_pii_from_text(text)
+            cleaned_dialogue.append({speaker: cleaned_text})
+        
+        return cleaned_dialogue
+
+    def _validate_pii_removal(self, text: str, dialogue: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        """Validate that PII has been removed from output."""
+        pii_found = []
+        
+        # Check text
+        for pii_type, patterns in self._pii_patterns.items():
+            for pattern in patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    pii_found.extend([(pii_type, m, 'text') for m in matches])
+        
+        # Check dialogue if provided
+        if dialogue:
+            for turn in dialogue:
+                if isinstance(turn, dict):
+                    for speaker, text in turn.items():
+                        for pii_type, patterns in self._pii_patterns.items():
+                            for pattern in patterns:
+                                matches = re.findall(pattern, text, re.IGNORECASE)
+                                if matches:
+                                    pii_found.extend([(pii_type, m, f'dialogue-{speaker}') for m in matches])
+        
+        return {
+            'pii_detected': len(pii_found) > 0,
+            'pii_count': len(pii_found),
+            'pii_items': pii_found[:10],  # First 10 items
+        }
+
+    async def _retry_chunk_processing(
+        self,
+        client: OpenAI,
+        system_prompt: str,
+        user_prompt: str,
+        settings,
+        logger,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 5.0
+    ) -> Tuple[str, bool]:
+        """Retry chunk processing with exponential backoff."""
+        for attempt in range(max_retries):
+            try:
+                result = await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
+                if result and result.strip():
+                    return result, True
+                else:
+                    logger.warning(f"Chunk processing returned empty result (attempt {attempt + 1}/{max_retries})")
+            except Exception as e:
+                error_str = str(e).lower()
+                # Only retry on transient errors
+                if any(keyword in error_str for keyword in ['timeout', 'rate limit', 'connection', 'service unavailable']):
+                    logger.warning(f"Transient error on attempt {attempt + 1}/{max_retries}: {e}")
+                    if attempt < max_retries - 1:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        logger.info(f"Retrying in {delay} seconds...")
+                        await asyncio.sleep(delay)
+                        continue
+                else:
+                    # Non-transient error, don't retry
+                    logger.error(f"Non-transient error, not retrying: {e}")
+                    return "", False
+            
+            # If we get here, it's a retryable error on last attempt
+            if attempt < max_retries - 1:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.info(f"Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+        
+        logger.error(f"Failed to process chunk after {max_retries} attempts")
+        return "", False
+
+    def _validate_completeness(
+        self,
+        dialogue: List[Dict[str, str]],
+        transcript: str,
+        threshold: float = 0.7
+    ) -> Dict[str, Any]:
+        """Validate that dialogue captures sufficient content from transcript."""
+        if not dialogue or not transcript:
+            return {
+                'completeness_ratio': 0.0,
+                'is_complete': False,
+                'dialogue_turns': len(dialogue) if dialogue else 0,
+                'transcript_sentences': 0,
+            }
+        
+        # Count sentences in transcript
+        transcript_sentences = len([s for s in re.split(r'(?<=[.!?])\s+', transcript) if s.strip()])
+        
+        # Count dialogue turns
+        dialogue_turns = len(dialogue)
+        
+        # Calculate completeness ratio
+        # Note: One dialogue turn can contain multiple sentences, so we compare turns to sentences
+        # A reasonable ratio would be: dialogue_turns / transcript_sentences
+        # But we need to account for the fact that dialogue turns are often multiple sentences
+        # So we use a more lenient threshold
+        completeness_ratio = dialogue_turns / transcript_sentences if transcript_sentences > 0 else 0.0
+        
+        # Alternative: Estimate based on character count
+        dialogue_text = ' '.join([list(turn.values())[0] for turn in dialogue if isinstance(turn, dict)])
+        dialogue_chars = len(dialogue_text)
+        transcript_chars = len(transcript)
+        char_ratio = dialogue_chars / transcript_chars if transcript_chars > 0 else 0.0
+        
+        # Use the higher ratio (more lenient)
+        final_ratio = max(completeness_ratio, char_ratio * 0.8)  # Scale char ratio slightly
+        
+        is_complete = final_ratio >= threshold
+        
+        return {
+            'completeness_ratio': final_ratio,
+            'is_complete': is_complete,
+            'dialogue_turns': dialogue_turns,
+            'transcript_sentences': transcript_sentences,
+            'dialogue_chars': dialogue_chars,
+            'transcript_chars': transcript_chars,
+            'char_ratio': char_ratio,
+        }
+
+    def _recover_partial_json(self, partial_json: str, logger) -> Optional[List[Dict[str, str]]]:
+        """Try to recover dialogue from partial or malformed JSON."""
+        if not partial_json:
+            return None
+        
+        recovered = []
+        
+        # Strategy 1: Try to extract valid JSON objects using regex
+        json_object_pattern = r'\{"(Doctor|Patient)":\s*"[^"]*"\}'
+        matches = re.findall(json_object_pattern, partial_json)
+        
+        if matches:
+            # Try to reconstruct
+            dialogue_pattern = r'\{"(Doctor|Patient)":\s*"([^"]*)"\}'
+            for match in re.finditer(dialogue_pattern, partial_json):
+                speaker = match.group(1)
+                text = match.group(2)
+                recovered.append({speaker: text})
+            
+            if recovered:
+                logger.info(f"Recovered {len(recovered)} dialogue turns from partial JSON using regex")
+                return recovered
+        
+        # Strategy 2: Try to fix common JSON issues
+        cleaned = partial_json.strip()
+        
+        # Remove incomplete objects at the end
+        while cleaned.endswith(','):
+            cleaned = cleaned[:-1]
+        
+        # Try to close the array
+        if cleaned.startswith('[') and not cleaned.endswith(']'):
+            # Find last complete object
+            last_complete = cleaned.rfind('},')
+            if last_complete != -1:
+                cleaned = cleaned[:last_complete + 1] + ']'
+            else:
+                cleaned = cleaned + ']'
+        
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list):
+                logger.info(f"Recovered {len(parsed)} dialogue turns from fixed JSON")
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        
+        return None
+
     async def _process_transcript_with_chunking(
         self, 
         client: OpenAI, 
@@ -238,91 +675,139 @@ class TranscribeAudioUseCase:
         # Highly refined system prompt for superior speaker attribution (language-aware)
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
             system_prompt = (
-                "Eres un analista experto de conversaciones médicas. Tu tarea es convertir una transcripción cruda de una consulta médica en un diálogo perfectamente estructurado entre un Doctor y un Paciente.\n\n"
-                "🎯 OBJETIVO PRINCIPAL:\n"
-                "Transforma la transcripción en un arreglo JSON donde cada elemento es un turno de diálogo con exactamente una clave: \"Doctor\" o \"Paciente\"\n\n"
-                "📋 REGLAS DE PROCESAMIENTO:\n"
-                "1. ELIMINA identificadores personales (nombres, direcciones, teléfonos, fechas específicas, edades)\n"
-                "2. CORRIGE errores obvios de transcripción manteniendo el significado médico\n"
-                "3. LIMPIA muletillas (eh, em, este) y falsos comienzos\n"
-                "4. MANTIÉN el flujo natural de la conversación y el contexto clínico\n\n"
-                "👨‍⚕️ IDENTIFICACIÓN DEL DOCTOR (Alta prioridad):\n"
-                "• Preguntas sobre: síntomas, antecedentes, medicamentos, alergias, historia familiar\n"
-                "• Instrucciones médicas: recetas, tratamientos, seguimientos, derivaciones\n"
-                "• Lenguaje clínico: exploración, órdenes de pruebas, diagnósticos\n"
-                "• Frases profesionales: \"Voy a examinar\", \"Voy a prescribir\", \"Programaremos\", \"¿Alguna alergia?\", \"¿Desde cuándo...?\", \"¿Puede describir...?\", \"En una escala del 1 al 10\"\n"
-                "• Terminología médica: términos anatómicos, patologías, fármacos\n"
-                "• Frases de autoridad: \"Recomiendo\", \"Debe\", \"Es importante que\"\n\n"
-                "🤒 IDENTIFICACIÓN DEL PACIENTE (Alta prioridad):\n"
-                "• Experiencias personales: síntomas, sensaciones, descripciones del dolor\n"
-                "• Respuestas a preguntas: \"Sí\", \"No\", \"Creo\", \"Tal vez\", \"No estoy seguro\"\n"
-                "• Historia personal: \"Tengo\", \"Tuve\", \"Tomé\", \"Fui\", \"Siento\"\n"
-                "• Dudas y preocupaciones: \"¿Qué significa?\", \"¿Es grave?\", \"¿Cuánto tardará?\"\n"
-                "• Respuestas emocionales: \"Me preocupa\", \"Me da miedo\", \"Espero\", \"Me alivia\"\n"
-                "• Contexto personal: \"En el trabajo\", \"Anoche\", \"Al despertar\"\n\n"
-                "🔄 REGLAS DE FLUJO DE CONVERSACIÓN:\n"
-                "• Las consultas suelen empezar con el Doctor saludando y preguntando por el problema\n"
-                "• El Paciente responde con su motivo de consulta\n"
-                "• El Doctor hace preguntas de seguimiento\n"
-                "• El Paciente aporta respuestas y detalles adicionales\n"
-                "• El Doctor puede preguntar por antecedentes, medicación, etc.\n"
-                "• El Paciente comparte información relevante\n"
-                "• El Doctor ofrece evaluación, recomendaciones o plan terapéutico\n"
-                "• El Paciente puede pedir aclaraciones\n\n"
-                "⚠️ REQUISITOS CRÍTICOS:\n"
-                "• Devuelve SOLO un arreglo JSON: sin explicaciones, sin markdown, sin comentarios, sin bloques de código\n"
-                "• NO envuelvas el JSON en ```json``` ni en otro formato\n"
-                "• Cada turno debe ser una idea completa\n"
-                "• Combina oraciones relacionadas del mismo hablante en un solo turno\n"
-                "• Si dudas del hablante, usa el contexto y el flujo típico de consulta\n"
-                "• Asegura formato JSON correcto con comillas escapadas\n"
-                "• Empieza directamente con [ y termina con ]\n\n"
-                "📤 FORMATO DE SALIDA:\n"
-                "[{\"Doctor\": \"Hola, ¿qué le trae hoy?\"}, {\"Paciente\": \"Tengo dolor en el pecho desde hace tres días.\"}, {\"Doctor\": \"¿Puede describirme el dolor?\"}]"
+                "Eres un analista experto de diálogos médicos. Convierte transcripciones crudas de consultas médicas en diálogos estructurados Doctor-Paciente.\n\n"
+                "🎯 TAREA PRINCIPAL:\n"
+                "Devuelve un arreglo JSON donde cada elemento es {\"Doctor\": \"...\"} o {\"Paciente\": \"...\"} - UNA clave por turno.\n\n"
+                "📋 REGLAS DE IDENTIFICACIÓN DE HABLANTE (Aplicar en orden):\n\n"
+                "1. ANÁLISIS BASADO EN CONTEXTO (MÁS IMPORTANTE):\n"
+                "   • SIEMPRE analiza el turno PREVIO para determinar el hablante\n"
+                "   • Si el turno anterior fue Doctor haciendo pregunta → la siguiente respuesta es Paciente\n"
+                "   • Si el turno anterior fue Paciente respondiendo → la siguiente declaración es Doctor\n"
+                "   • El examen físico sigue patrón: Doctor da instrucción → Paciente responde → Doctor observa\n\n"
+                "2. SEÑALES DEL DOCTOR (99% precisión cuando están presentes):\n"
+                "   • PREGUNTAS (interrogativas): \"¿Cuándo...?\", \"¿Cuánto tiempo...?\", \"¿Puedes...?\", \"¿Qué...?\", \"¿Alguna...?\"\n"
+                "   • INSTRUCCIONES (imperativas): \"Déjame...\", \"Voy a...\", \"Vamos a...\", \"Puede mover...\", \"Levante...\", \"Resista...\"\n"
+                "   • EVALUACIONES CLÍNICAS: \"Veo...\", \"No veo...\", \"Parece...\", \"Es una buena señal\", \"Sospecho...\"\n"
+                "   • TERMINOLOGÍA MÉDICA: nombres de fármacos, términos anatómicos, diagnósticos, procedimientos\n"
+                "   • DECLARACIONES DE AUTORIDAD: \"Recomiendo\", \"Debe\", \"Es importante\", \"Necesitamos\"\n"
+                "   • PLAN/PRESCRIPCIÓN: \"Voy a ordenar\", \"Voy a prescribir\", \"Voy a referir\", \"Vamos a programar\"\n"
+                "   • COMANDOS DE EXAMEN: \"Mueva su...\", \"Levante...\", \"Resista...\", \"¿Puede sentir...?\", \"¿Siente algún dolor?\"\n"
+                "   • SALUDOS/APERTURAS: \"Hola soy el Dr.\", \"Mucho gusto\", \"¿En qué puedo ayudarle?\"\n\n"
+                "3. SEÑALES DEL PACIENTE (99% precisión cuando están presentes):\n"
+                "   • EXPERIENCIAS EN PRIMERA PERSONA: \"Tengo\", \"Siento\", \"He estado\", \"Tomé\", \"Fui\", \"Estoy aquí por\"\n"
+                "   • RESPUESTAS DIRECTAS: \"Sí\", \"No\", \"Alrededor de...\", \"Fue...\", \"No...\"\n"
+                "   • DESCRIPCIONES DE SÍNTOMAS: \"Me duele\", \"Es doloroso\", \"Comenzó...\", \"Empeora cuando...\"\n"
+                "   • HISTORIA PERSONAL: \"Usualmente...\", \"Trato de...\", \"No he...\", \"Mi última...\"\n"
+                "   • RESPUESTAS A INSTRUCCIONES: \"Bien\", \"Sí doctor\", \"No duele\", \"Está bien\", \"De acuerdo\" (DESPUÉS del comando del doctor)\n"
+                "   • CONFIRMACIÓN: \"Sí, está bien\", \"Entiendo\", \"Comprendo\", \"Suena bien\"\n"
+                "   • PREGUNTAS AL DOCTOR: \"¿Qué significa eso?\", \"¿Es grave?\", \"¿Cuánto tiempo...?\", \"¿Necesito...?\"\n\n"
+                "4. CASOS ESPECIALES:\n"
+                "   • Durante exámenes físicos: Doctor da comando → Paciente responde brevemente → Doctor hace observación\n"
+                "   • Ejemplo: Doctor: \"¿Puede mover su hombro?\" → Paciente: \"Bien\" → Doctor: \"Excelente. ¿Siente algún dolor?\" → Paciente: \"No duele\"\n"
+                "   • Cuando doctor pregunta \"¿Siente algún dolor?\" → la respuesta es SIEMPRE Paciente\n"
+                "   • Cuando doctor dice \"Déjame...\" o \"Voy a...\" → SIEMPRE Doctor\n"
+                "   • Cuando paciente dice \"Estoy aquí por...\" o \"Necesito...\" → SIEMPRE Paciente\n"
+                "   • Resúmenes al final: \"Solo para recapitular\" = Doctor, \"No tengo preguntas\" = Paciente\n\n"
+                "5. ÁRBOL DE DECISIÓN PARA CASOS AMBIGUOS:\n"
+                "   • Si contiene signo de interrogación (?) → probablemente Doctor preguntando\n"
+                "   • Si empieza con \"Yo\" + verbo + experiencia personal → Paciente\n"
+                "   • Si contiene términos médicos (diagnóstico, nombres de fármacos) → probablemente Doctor explicando\n"
+                "   • Si respuesta corta (\">Bien\", \">Excelente\", \">Sí\") DESPUÉS de instrucción del doctor → Paciente\n"
+                "   • Si describe lo que el doctor hará (\">Voy a...\", \">Vamos a...\") → Doctor\n"
+                "   • Si no está seguro, verifica CONTEXTO: ¿qué se dijo antes?\n\n"
+                "📝 INSTRUCCIONES DE PROCESAMIENTO:\n"
+                "• ELIMINA TODOS LOS NOMBRES: Nombres de doctores (\"Dr. Prasad\", \"Dr. García\"), nombres de pacientes (\"Juan\", \"María López\"), TODOS los nombres propios → Reemplazar con [NAME]\n"
+                "• ELIMINA: direcciones, teléfonos, fechas específicas, edades\n"
+                "• ⚠️ CRÍTICO: NO ELIMINES NOMBRES DE MEDICAMENTOS - Estos son términos médicos, NO PII:\n"
+                "  - Ejemplos: \"metformina\", \"jardiance\", \"lisinopril\", \"amlodipino\", \"lidocaína\" → MANTENER COMO ESTÁ\n"
+                "  - \"Sí, metformina y jardiance\" → MANTENER \"metformina\" y \"jardiance\" (NO cambiar a [NAME])\n"
+                "  - Los nombres de medicamentos son información médica esencial y deben preservarse\n"
+                "• NO ELIMINES: Condiciones médicas, síntomas, partes del cuerpo, dosificaciones, mediciones médicas\n"
+                "• CORRIGE: errores obvios de transcripción preservando el significado\n"
+                "• LIMPIA: muletillas (eh, em, este), falsos comienzos, repeticiones\n"
+                "• COMBINA: oraciones relacionadas del mismo hablante en UN solo turno\n"
+                "• PRESERVE: terminología médica, contexto clínico, flujo de conversación\n\n"
+                "🔄 PATRÓN DE CONVERSACIÓN:\n"
+                "Doctor saluda → Paciente indica razón → Doctor hace preguntas → Paciente responde → Doctor examina → Paciente responde → Doctor resume → Paciente confirma\n\n"
+                "⚠️ REQUISITOS CRÍTICOS DE SALIDA:\n"
+                "• Devuelve SOLO arreglo JSON válido: [{\"Doctor\": \"...\"}, {\"Paciente\": \"...\"}]\n"
+                "• SIN markdown, SIN bloques de código, SIN explicaciones, SIN comentarios\n"
+                "• SIN envolver en ```json``` - empieza directamente con [\n"
+                "• Cada turno = UNA idea o respuesta completa\n"
+                "• Procesa transcripción COMPLETA - incluye TODOS los turnos de diálogo\n"
+                "• NO trunques ni te detengas temprano\n"
+                "• Escapa comillas correctamente en JSON\n"
+                "• Termina con ]\n\n"
+                "📤 EJEMPLO DE SALIDA:\n"
+                "[{\"Doctor\": \"Hola, soy el [NAME]. ¿En qué puedo ayudarle?\"}, {\"Paciente\": \"Estoy aquí para mi examen físico y recargas de medicamentos.\"}, {\"Doctor\": \"¿Cuándo fue diagnosticado con diabetes?\"}, {\"Paciente\": \"Hace unos cinco años.\"}, {\"Doctor\": \"¿Puede mover su hombro arriba y abajo?\"}, {\"Paciente\": \"Sí.\"}, {\"Doctor\": \"¿Siente algún dolor?\"}, {\"Paciente\": \"No duele.\"}]"
             )
         else:
             system_prompt = (
-                "You are an expert medical conversation analyzer. Your task is to convert a raw medical consultation transcript into a perfectly structured dialogue between a Doctor and Patient.\n\n"
-                "🎯 PRIMARY OBJECTIVE:\n"
-                "Transform the transcript into a JSON array where each element is a dialogue turn with exactly one key: \"Doctor\" or \"Patient\"\n\n"
-                "📋 PROCESSING RULES:\n"
-                "1. REMOVE all personal identifiers (names, addresses, phone numbers, specific dates, ages)\n"
-                "2. FIX obvious transcription errors while preserving medical meaning\n"
-                "3. CLEAN up filler words (um, uh, like, you know) and false starts\n"
-                "4. MAINTAIN natural conversation flow and medical context\n\n"
-                "👨‍⚕️ DOCTOR IDENTIFICATION (High Priority):\n"
-                "• Questions about: symptoms, medical history, medications, allergies, family history\n"
-                "• Medical instructions: prescriptions, treatments, follow-ups, referrals\n"
-                "• Clinical language: examination procedures, test orders, diagnoses\n"
-                "• Professional phrases: \"Let me examine\", \"I'll prescribe\", \"We'll schedule\", \"Any allergies?\", \"How long have you had\", \"Can you describe\", \"On a scale of 1-10\"\n"
-                "• Medical terminology: anatomical terms, medical conditions, drug names\n"
-                "• Authority statements: \"I recommend\", \"You should\", \"It's important that\"\n\n"
-                "🤒 PATIENT IDENTIFICATION (High Priority):\n"
-                "• Personal experiences: symptoms, feelings, pain descriptions\n"
-                "• Answers to questions: \"Yes\", \"No\", \"I think\", \"Maybe\", \"I'm not sure\"\n"
-                "• Personal history: \"I have\", \"I had\", \"I took\", \"I went to\", \"I feel\"\n"
-                "• Concerns and questions: \"What does this mean?\", \"Is it serious?\", \"How long will it take?\"\n"
-                "• Emotional responses: \"I'm worried\", \"I'm scared\", \"I hope\", \"I'm relieved\"\n"
-                "• Personal context: \"At work\", \"Last night\", \"When I woke up\", \"My husband said\"\n\n"
-                "🔄 CONVERSATION FLOW RULES:\n"
-                "• Medical consultations typically start with the Doctor greeting and asking about the problem\n"
-                "• Patient responds with their main complaint\n"
-                "• Doctor asks follow-up questions\n"
-                "• Patient provides answers and additional details\n"
-                "• Doctor may ask about medical history, medications, etc.\n"
-                "• Patient shares relevant information\n"
-                "• Doctor provides assessment, recommendations, or treatment plan\n"
-                "• Patient may ask clarifying questions\n\n"
-                "⚠️ CRITICAL REQUIREMENTS:\n"
-                "• Output ONLY a JSON array - no explanations, no markdown, no comments, no code blocks\n"
-                "• DO NOT wrap the JSON in ```json``` or any other formatting\n"
-                "• Each dialogue turn must be a complete thought or response\n"
-                "• Combine related sentences from the same speaker into one turn\n"
-                "• If uncertain about speaker, consider the conversation context and typical medical consultation flow\n"
-                "• Ensure proper JSON formatting with proper escaping of quotes\n"
-                "• Start your response directly with [ and end with ]\n\n"
-                "📤 OUTPUT FORMAT:\n"
-                "[{\"Doctor\": \"Hello, what brings you in today?\"}, {\"Patient\": \"I've been having chest pain for three days.\"}, {\"Doctor\": \"Can you describe the pain for me?\"}]"
+                "You are an expert medical dialogue analyzer. Convert raw medical consultation transcripts into structured Doctor-Patient dialogue.\n\n"
+                "🎯 CORE TASK:\n"
+                "Output a JSON array where each element is {\"Doctor\": \"...\"} or {\"Patient\": \"...\"} - ONE key per turn.\n\n"
+                "📋 SPEAKER IDENTIFICATION RULES (Apply in order):\n\n"
+                "1. CONTEXT-BASED ANALYSIS (MOST IMPORTANT):\n"
+                "   • ALWAYS analyze the PREVIOUS turn to determine speaker\n"
+                "   • If previous turn was Doctor asking a question → next response is Patient\n"
+                "   • If previous turn was Patient answering → next statement is Doctor\n"
+                "   • Physical exam follows pattern: Doctor gives instruction → Patient responds → Doctor observes\n\n"
+                "2. DOCTOR SIGNALS (99% accuracy when present):\n"
+                "   • QUESTIONS (interrogative): \"When...?\", \"How long...?\", \"Can you...?\", \"What...?\", \"Any...?\"\n"
+                "   • INSTRUCTIONS (imperative): \"Let me...\", \"I'll...\", \"We'll...\", \"Can you move...\", \"Raise your...\", \"Resist against...\"\n"
+                "   • CLINICAL ASSESSMENTS: \"I see...\", \"I don't see...\", \"It appears...\", \"That's a good sign\", \"I suspect...\"\n"
+                "   • MEDICAL TERMINOLOGY: drug names, anatomical terms, diagnoses, procedures\n"
+                "   • AUTHORITY STATEMENTS: \"I recommend\", \"You should\", \"It's important\", \"We need to\"\n"
+                "   • PLAN/PRESCRIPTION: \"I'll order\", \"I'll prescribe\", \"I'll refer\", \"We'll schedule\"\n"
+                "   • EXAM COMMANDS: \"Move your...\", \"Raise...\", \"Resist...\", \"Can you feel...\", \"Do you feel any pain?\"\n"
+                "   • GREETINGS/OPENINGS: \"Hi I'm Dr.\", \"Nice to meet you\", \"How can I help?\"\n\n"
+                "3. PATIENT SIGNALS (99% accuracy when present):\n"
+                "   • FIRST-PERSON EXPERIENCES: \"I have\", \"I feel\", \"I've been\", \"I took\", \"I went\", \"I'm here for\"\n"
+                "   • DIRECT ANSWERS: \"Yes\", \"No\", \"About...\", \"It was...\", \"I don't...\"\n"
+                "   • SYMPTOM DESCRIPTIONS: \"It hurts\", \"It's painful\", \"It started...\", \"It gets worse when...\"\n"
+                "   • PERSONAL HISTORY: \"I usually...\", \"I try to...\", \"I haven't...\", \"My last...\"\n"
+                "   • RESPONSES TO INSTRUCTIONS: \"Okay\", \"Yes doctor\", \"No pain\", \"That's fine\", \"Alright\" (AFTER doctor's command)\n"
+                "   • CONFIRMATION: \"Yes, that's okay\", \"I understand\", \"Got it\", \"Sounds good\"\n"
+                "   • QUESTIONS TO DOCTOR: \"What does that mean?\", \"Is it serious?\", \"How long...?\", \"Do I need...?\"\n\n"
+                "4. SPECIAL CASES:\n"
+                "   • During physical exams: Doctor gives command → Patient responds briefly → Doctor makes observation\n"
+                "   • Example: Doctor: \"Can you move your shoulder?\" → Patient: \"Okay\" → Doctor: \"Great. Do you feel any pain?\" → Patient: \"No pain\"\n"
+                "   • When doctor asks \"Do you feel any pain?\" → response is ALWAYS Patient\n"
+                "   • When doctor says \"Let me...\" or \"I'm going to...\" → ALWAYS Doctor\n"
+                "   • When patient says \"I'm here for...\" or \"I need...\" → ALWAYS Patient\n"
+                "   • Recaps/summaries at end: \"Just to recap\" = Doctor, \"No questions\" = Patient\n\n"
+                "5. DECISION TREE FOR AMBIGUOUS CASES:\n"
+                "   • If contains question mark (?) → likely Doctor asking\n"
+                "   • If starts with \"I\" + verb + personal experience → Patient\n"
+                "   • If contains medical terms (diagnosis, drug names) → likely Doctor explaining\n"
+                "   • If short response (\">Okay\", \">Great\", \">Yes\") AFTER doctor's instruction → Patient\n"
+                "   • If describes what doctor will do (\">I'll...\", \">We'll...\") → Doctor\n"
+                "   • If unsure, check CONTEXT: what was said before?\n\n"
+                "📝 PROCESSING INSTRUCTIONS:\n"
+                "• REMOVE ALL NAMES: Doctor names (\"Dr. Prasad\", \"Dr. Smith\"), Patient names (\"John\", \"Mary Johnson\"), ALL proper names → Replace with [NAME]\n"
+                "• REMOVE: addresses, phone numbers, specific dates, ages\n"
+                "• ⚠️ CRITICAL: DO NOT REMOVE MEDICATION NAMES - These are medical terms, NOT PII:\n"
+                "  - Examples: \"metformin\", \"jardiance\", \"lisinopril\", \"amlodipine\", \"lidocaine\" → KEEP AS IS\n"
+                "  - \"Yes, metformin and jardiance\" → KEEP \"metformin\" and \"jardiance\" (do NOT change to [NAME])\n"
+                "  - Medication names are essential medical information and must be preserved\n"
+                "• DO NOT REMOVE: Medical conditions, symptoms, body parts, dosages, medical measurements\n"
+                "• FIX: obvious transcription errors while preserving meaning\n"
+                "• CLEAN: filler words (um, uh, like), false starts, repetitions\n"
+                "• COMBINE: related sentences from same speaker into ONE turn\n"
+                "• PRESERVE: medical terminology, clinical context, conversation flow\n\n"
+                "🔄 CONVERSATION PATTERN:\n"
+                "Doctor greets → Patient states reason → Doctor asks questions → Patient answers → Doctor examines → Patient responds → Doctor summarizes → Patient confirms\n\n"
+                "⚠️ CRITICAL OUTPUT REQUIREMENTS:\n"
+                "• Output ONLY valid JSON array: [{\"Doctor\": \"...\"}, {\"Patient\": \"...\"}]\n"
+                "• NO markdown, NO code blocks, NO explanations, NO comments\n"
+                "• NO ```json``` wrapper - start directly with [\n"
+                "• Each turn = ONE complete thought or response\n"
+                "• Process COMPLETE transcript - include ALL dialogue turns\n"
+                "• DO NOT truncate or stop early\n"
+                "• Escape quotes properly in JSON\n"
+                "• End with ]\n\n"
+                "📤 EXAMPLE OUTPUT:\n"
+                "[{\"Doctor\": \"Hi, I'm [NAME]. How can I help you today?\"}, {\"Patient\": \"I'm here for my physical exam and medication refills.\"}, {\"Doctor\": \"When were you diagnosed with diabetes?\"}, {\"Patient\": \"About five years ago.\"}, {\"Doctor\": \"Can you move your shoulder up and down?\"}, {\"Patient\": \"Yes.\"}, {\"Doctor\": \"Do you feel any pain?\"}, {\"Patient\": \"No pain.\"}]"
             )
         
         # Calculate optimal chunk size based on model context
@@ -371,64 +856,145 @@ class TranscribeAudioUseCase:
             chunks.append(current_chunk.strip())
         
         logger.info(f"Processing transcript in {len(chunks)} chunks with {overlap_chars} char overlap")
+        logger.info(f"Total chunks to process: {len(chunks)}")
         
         # Log chunk details for debugging
         for i, chunk in enumerate(chunks):
-            logger.info(f"Chunk {i+1}: {len(chunk)} chars, preview: {chunk[:100]}...")
+            logger.info(f"Chunk {i+1}/{len(chunks)}: {len(chunk)} chars, preview: {chunk[:100]}...")
         
-        # Process each chunk
+        # Process each chunk with progress tracking, retry logic, and context passing
         chunk_results = []
+        previous_chunk_turns = []  # Store last 2-3 turns for context
+        start_time = time.time()
+        
         for i, chunk in enumerate(chunks):
+            chunk_start_time = time.time()
+            progress_percent = ((i + 1) / len(chunks)) * 100
+            
+            logger.info(f"=" * 60)
+            logger.info(f"📦 Processing chunk {i+1}/{len(chunks)} ({progress_percent:.1f}% complete)")
+            if i > 0:
+                elapsed = time.time() - start_time
+                avg_time_per_chunk = elapsed / i
+                remaining_chunks = len(chunks) - (i + 1)
+                estimated_remaining = avg_time_per_chunk * remaining_chunks
+                logger.info(f"⏱️  Elapsed: {elapsed:.1f}s | Estimated remaining: {estimated_remaining:.1f}s")
+            
+            # Build context from previous chunk if available
+            context_text = ""
+            if previous_chunk_turns and i > 0:
+                context_turns = previous_chunk_turns[-3:]  # Last 3 turns
+                if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+                    context_text = "CONTEXTO DE CONVERSACIÓN PREVIA:\n" + "\n".join([
+                        f"{list(turn.keys())[0]}: {list(turn.values())[0]}" for turn in context_turns
+                    ]) + "\n\n"
+                else:
+                    context_text = "PREVIOUS CONVERSATION CONTEXT:\n" + "\n".join([
+                        f"{list(turn.keys())[0]}: {list(turn.values())[0]}" for turn in context_turns
+                    ]) + "\n\n"
+            
             if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
                 chunk_prompt = (
+                    f"{context_text}"
                     f"FRAGMENTO DE TRANSCRIPCIÓN DE CONSULTA MÉDICA {i+1}:\n"
                     f"{chunk}\n\n"
                     f"TAREA: Convierte este fragmento en diálogo estructurado Doctor-Paciente.\n"
-                    f"Nota: Es parte de una conversación más larga. Usa pistas de contexto y patrones típicos de consulta.\n\n"
+                    f"Nota: Es parte de una conversación más larga. Usa el contexto previo y las pistas de contexto para mantener continuidad.\n\n"
                     f"SALIDA: Devuelve SOLO un arreglo JSON que empiece con [ y termine con ]. No uses markdown ni bloques de código."
                 )
             else:
                 chunk_prompt = (
+                    f"{context_text}"
                     f"MEDICAL CONSULTATION TRANSCRIPT CHUNK {i+1}:\n"
                     f"{chunk}\n\n"
                     f"TASK: Convert this transcript chunk into structured Doctor-Patient dialogue.\n"
-                    f"Note: This is part of a larger conversation. Use context clues and medical consultation patterns.\n\n"
+                    f"Note: This is part of a larger conversation. Use the previous context and context clues to maintain continuity.\n\n"
                     f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
                 )
             
-            logger.info(f"Processing chunk {i+1}...")
-            chunk_result = await self._process_single_chunk(
+            # Use retry logic for chunk processing
+            chunk_result, success = await self._retry_chunk_processing(
                 client, system_prompt, chunk_prompt, settings, logger
             )
             
+            chunk_processing_time = time.time() - chunk_start_time
+            logger.info(f"Chunk {i+1}/{len(chunks)} processing time: {chunk_processing_time:.2f}s")
             
-            logger.info(f"Chunk {i+1} result: {chunk_result[:200] if chunk_result else 'None'}...")
-            logger.info(f"Chunk {i+1} input length: {len(chunk)}")
-            logger.info(f"Chunk {i+1} result length: {len(chunk_result) if chunk_result else 0}")
-            logger.info(f"Chunk {i+1} result != input: {chunk_result != chunk if chunk_result else False}")
+            if not success or not chunk_result:
+                logger.warning(f"Chunk {i+1} processing failed after retries, using fallback")
+                chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed after retries]"}])
+                continue
             
+            # Enhanced error recovery and parsing
+            parsed = None
+            recovery_method = None
             
             if chunk_result and chunk_result != chunk:
                 try:
-                    parsed = json.loads(chunk_result)
+                    # Check if JSON appears truncated (doesn't end with ])
+                    cleaned_result = chunk_result.strip()
+                    if not cleaned_result.endswith(']'):
+                        logger.warning(f"Chunk {i+1} JSON may be truncated - doesn't end with ]. Attempting recovery...")
+                        # Try recovery
+                        recovered = self._recover_partial_json(cleaned_result, logger)
+                        if recovered:
+                            parsed = recovered
+                            recovery_method = "partial_recovery"
+                        else:
+                            # Try to close the JSON array
+                            if cleaned_result.startswith('['):
+                                last_complete_idx = cleaned_result.rfind('},')
+                                if last_complete_idx != -1:
+                                    cleaned_result = cleaned_result[:last_complete_idx + 1] + ']'
+                                else:
+                                    cleaned_result = cleaned_result + ']'
                     
-                    if isinstance(parsed, list):
-                        chunk_results.append(parsed)  # Append the entire list, don't extend
-                        logger.info(f"Chunk {i+1} processed successfully: {len(parsed)} dialogue turns")
+                    # Try parsing
+                    if not parsed:
+                        try:
+                            parsed = json.loads(cleaned_result)
+                            recovery_method = "standard_json"
+                        except json.JSONDecodeError:
+                            # Try recovery methods
+                            recovered = self._recover_partial_json(chunk_result, logger)
+                            if recovered:
+                                parsed = recovered
+                                recovery_method = "regex_extraction"
+                    
+                    if parsed and isinstance(parsed, list):
+                        chunk_results.append(parsed)
+                        logger.info(f"✓ Chunk {i+1}/{len(chunks)} processed successfully: {len(parsed)} dialogue turns (recovery: {recovery_method})")
+                        
+                        # Store last turns for context in next chunk
+                        previous_chunk_turns = parsed[-3:] if len(parsed) >= 3 else parsed
+                        
+                        # Log last turn to verify completeness
+                        if parsed:
+                            logger.debug(f"Chunk {i+1} last turn: {parsed[-1]}")
                     else:
                         logger.warning(f"Chunk {i+1} returned invalid format: {type(parsed)}, using fallback")
                         chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed - invalid format]"}])
+                        
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Chunk {i+1} JSON parsing failed: {e}, using fallback")
-                    logger.warning(f"Chunk {i+1} content: {chunk_result[:200]}...")
+                    logger.warning(f"Chunk {i+1} JSON parsing failed: {e}, attempting recovery...")
+                    recovered = self._recover_partial_json(chunk_result, logger)
+                    if recovered:
+                        chunk_results.append(recovered)
+                        logger.info(f"✓ Chunk {i+1} recovered using partial JSON extraction: {len(recovered)} turns")
+                        previous_chunk_turns = recovered[-3:] if len(recovered) >= 3 else recovered
+                    else:
+                        logger.warning(f"Chunk {i+1} recovery failed, using fallback")
                     chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed - JSON error]"}])
                 except Exception as e:
                     logger.warning(f"Chunk {i+1} processing error: {e}, using fallback")
                     chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed - {str(e)}]"}])
             else:
                 logger.warning(f"Chunk {i+1} processing failed - no result or same as input, using fallback")
-                logger.warning(f"Chunk {i+1} input length: {len(chunk)}, result: {chunk_result[:100] if chunk_result else 'None'}...")
                 chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed - no result]"}])
+        
+        total_processing_time = time.time() - start_time
+        logger.info(f"=" * 60)
+        logger.info(f"📊 All chunks processed in {total_processing_time:.2f}s")
         
         # Merge and clean up overlapping content
         merged_dialogue = self._merge_chunk_results(chunk_results, logger)
@@ -455,8 +1021,8 @@ class TranscribeAudioUseCase:
         
         def _call_openai() -> str:
             try:
-                # Use appropriate max_tokens for chunk processing
-                max_tokens = 2000 if settings.openai.model.startswith('gpt-4') else 1500
+                # Use appropriate max_tokens for chunk processing - increased to prevent truncation
+                max_tokens = 4000 if settings.openai.model.startswith('gpt-4') else 3000
                 
                 
                 logger.info(f"=== STARTING LLM CALL ===")
@@ -510,7 +1076,7 @@ class TranscribeAudioUseCase:
         return await asyncio.to_thread(_call_openai)
     
     def _merge_chunk_results(self, chunk_results: list, logger) -> list:
-        """Merge chunk results and remove overlapping content."""
+        """Merge chunk results and remove overlapping content with enhanced detection."""
         
         if not chunk_results:
             return []
@@ -529,12 +1095,11 @@ class TranscribeAudioUseCase:
                 logger.info(f"Added first chunk with {len(chunk)} turns")
                 continue
             
-            # Check for overlap with the last few items in merged
+            # Enhanced overlap detection: exact match + semantic similarity
             last_merged = merged[-1] if merged else None
             first_chunk = chunk[0] if chunk else None
             
-            # More sophisticated deduplication: check if the last turn in merged
-            # is the same as the first turn in current chunk
+            # Strategy 1: Exact match (highest confidence)
             if (isinstance(last_merged, dict) and isinstance(first_chunk, dict) and
                 len(last_merged) == 1 and len(first_chunk) == 1 and
                 list(last_merged.keys())[0] == list(first_chunk.keys())[0] and
@@ -542,25 +1107,83 @@ class TranscribeAudioUseCase:
                 
                 # Skip first item in current chunk to avoid duplication
                 merged.extend(chunk[1:])
-                logger.info(f"Chunk {i}: Skipped duplicate first turn, added {len(chunk)-1} turns")
-            else:
-                # Check for partial overlap by comparing the last 2-3 turns
-                overlap_found = False
-                for overlap_size in range(1, min(4, len(chunk), len(merged))):
-                    if (len(merged) >= overlap_size and 
-                        merged[-overlap_size:] == chunk[:overlap_size]):
-                        # Found overlap, skip the overlapping turns
+                logger.info(f"Chunk {i}: Exact match detected - skipped duplicate first turn, added {len(chunk)-1} turns")
+                continue
+            
+            # Strategy 2: Check for partial overlap by comparing last 2-3 turns
+            overlap_found = False
+            max_overlap_size = min(4, len(chunk), len(merged))
+            
+            # Try exact match first (most reliable)
+            for overlap_size in range(1, max_overlap_size + 1):
+                if len(merged) >= overlap_size:
+                    merged_tail = merged[-overlap_size:]
+                    chunk_head = chunk[:overlap_size]
+                    
+                    # Exact match
+                    if merged_tail == chunk_head:
                         merged.extend(chunk[overlap_size:])
-                        logger.info(f"Chunk {i}: Found {overlap_size}-turn overlap, added {len(chunk)-overlap_size} turns")
+                        logger.info(f"Chunk {i}: Found {overlap_size}-turn exact overlap, added {len(chunk)-overlap_size} turns")
                         overlap_found = True
                         break
-                
-                if not overlap_found:
-                    merged.extend(chunk)
-                    logger.info(f"Chunk {i}: No overlap found, added {len(chunk)} turns")
+                    
+                    # Semantic similarity check (fuzzy match)
+                    # Compare similarity of text content (not exact dict match)
+                    similarity_score = self._calculate_similarity(merged_tail, chunk_head)
+                    if similarity_score > 0.85:  # 85% similarity threshold
+                        merged.extend(chunk[overlap_size:])
+                        logger.info(f"Chunk {i}: Found {overlap_size}-turn semantic overlap (similarity: {similarity_score:.2f}), added {len(chunk)-overlap_size} turns")
+                        overlap_found = True
+                        break
+            
+            if not overlap_found:
+                merged.extend(chunk)
+                logger.info(f"Chunk {i}: No overlap found, added {len(chunk)} turns")
         
         logger.info(f"Merged {len(chunk_results)} chunks into {len(merged)} dialogue turns")
         return merged
+
+    def _calculate_similarity(self, turns1: List[Dict[str, str]], turns2: List[Dict[str, str]]) -> float:
+        """Calculate semantic similarity between two turn sequences."""
+        if len(turns1) != len(turns2):
+            return 0.0
+        
+        if not turns1:
+            return 1.0
+        
+        matches = 0
+        total = len(turns1)
+        
+        for turn1, turn2 in zip(turns1, turns2):
+            if not (isinstance(turn1, dict) and isinstance(turn2, dict)):
+                continue
+            
+            speaker1 = list(turn1.keys())[0] if turn1 else None
+            speaker2 = list(turn2.keys())[0] if turn2 else None
+            
+            text1 = list(turn1.values())[0] if turn1 else ""
+            text2 = list(turn2.values())[0] if turn2 else ""
+            
+            # Speaker must match
+            if speaker1 != speaker2:
+                continue
+            
+            # Calculate text similarity (simple word overlap)
+            words1 = set(text1.lower().split())
+            words2 = set(text2.lower().split())
+            
+            if not words1 and not words2:
+                matches += 1
+            elif words1 and words2:
+                intersection = len(words1 & words2)
+                union = len(words1 | words2)
+                similarity = intersection / union if union > 0 else 0.0
+                
+                # Consider it a match if similarity > 0.8
+                if similarity > 0.8:
+                    matches += 1
+        
+        return matches / total if total > 0 else 0.0
     
     async def _process_transcript_simple(
         self, 
@@ -570,7 +1193,7 @@ class TranscribeAudioUseCase:
         logger,
         language: str = "en"
     ) -> str:
-        """Process transcript with simplified approach for long transcripts to avoid timeouts."""
+        """Process transcript with simplified approach for very short transcripts (<5000 chars)."""
         
         # Simplified system prompt for faster processing
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
@@ -586,11 +1209,9 @@ class TranscribeAudioUseCase:
                 "Format: [{\"Doctor\": \"text\"}, {\"Patient\": \"text\"}]"
             )
         
-        # For very long transcripts, use chunking instead of truncation
-        max_length = 12000  # Increased limit for better coverage
-        if len(raw_transcript) > max_length:
-            logger.info(f"Long transcript detected ({len(raw_transcript)} chars), using chunking strategy instead of truncation")
-            # Use the chunking method for long transcripts instead of truncating
+        # For transcripts >12000 chars, use chunking instead (should not happen as this is only for short transcripts)
+        if len(raw_transcript) > 12000:
+            logger.info(f"Long transcript detected ({len(raw_transcript)} chars), redirecting to chunking strategy")
             return await self._process_transcript_with_chunking(
                 client, raw_transcript, settings, logger, language
             )
