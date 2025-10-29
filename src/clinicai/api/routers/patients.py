@@ -1115,8 +1115,8 @@ async def store_vitals(
         if visit.is_walk_in_workflow():
             visit.complete_vitals()
         
-        # Save patient
-        await patient_repo.save(patient)
+        # Persist visit (not patient)
+        await visit_repo.save(visit)
         
         return {"success": True, "message": "Vitals stored successfully"}
         

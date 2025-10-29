@@ -204,7 +204,7 @@ async def transcribe_audio(
 
             # Start transcription session (no longer using file path)
             visit.start_transcription(None)  # No file path needed
-            await patient_repo.save(patient)
+            await visit_repo.save(visit)
             logger.info(f"Started transcription session for patient {internal_patient_id}, visit {visit_id}")
             
         except HTTPException:
@@ -259,7 +259,7 @@ async def transcribe_audio(
                         language=language,
                     )
                 
-                use_case = TranscribeAudioUseCase(patient_repo, transcription_service)
+                use_case = TranscribeAudioUseCase(patient_repo, visit_repo, transcription_service)
                 
                 logger.info("Executing transcription use case...")
                 result = await use_case.execute(req)

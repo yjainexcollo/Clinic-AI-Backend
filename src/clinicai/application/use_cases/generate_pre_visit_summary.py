@@ -89,8 +89,14 @@ class GeneratePreVisitSummaryUseCase:
             red_flags=summary_result.get("red_flags", [])
         )
 
-        # Save the updated visit to repository
-        await self._patient_repository.save(patient)
+        # Optionally reflect step completion in workflow
+        try:
+            visit.status = "pre_visit_summary_generated"
+        except Exception:
+            pass
+
+        # Save the updated visit to repository (critical)
+        await self._visit_repository.save(visit)
 
         return PreVisitSummaryResponse(
             patient_id=patient.patient_id.value,

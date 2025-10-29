@@ -120,7 +120,7 @@ class GeneratePostVisitSummaryUseCase:
         # Persist to visit for future retrieval
         try:
             visit.store_post_visit_summary(response.dict())
-            await self._patient_repository.save(patient)
+            await self._visit_repository.save(visit)
         except Exception as e:
             # Non-fatal: log and continue returning response
             print(f"ERROR: Failed to persist post-visit summary: {e}")

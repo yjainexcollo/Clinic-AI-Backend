@@ -73,7 +73,7 @@ class TranscribeAudioUseCase:
 
             # Start transcription process
             visit.start_transcription(request.audio_file_path)
-            await self._patient_repository.save(patient)
+            await self._visit_repository.save(visit)
 
             # Transcribe audio
             LOGGER.info(f"Starting Whisper transcription for file: {request.audio_file_path}")
@@ -194,7 +194,7 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
             # Save updated visit
-            await self._patient_repository.save(patient)
+            await self._visit_repository.save(visit)
             LOGGER.info(f"Transcription completed successfully for patient {patient.patient_id.value}, visit {visit.visit_id.value}")
 
             return AudioTranscriptionResponse(
@@ -213,7 +213,7 @@ class TranscribeAudioUseCase:
             
             # Mark transcription as failed
             visit.fail_transcription(str(e))
-            await self._patient_repository.save(patient)
+            await self._visit_repository.save(visit)
             
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
@@ -326,9 +326,9 @@ class TranscribeAudioUseCase:
             )
         
         # Calculate optimal chunk size based on model context
-        # Further reduce chunk size to ensure reliable processing
-        max_chars_per_chunk = 2000 if settings.openai.model.startswith('gpt-4') else 1500
-        overlap_chars = 200  # Overlap between chunks to preserve context
+        # Increased chunk size for better processing of long transcripts
+        max_chars_per_chunk = 3000 if settings.openai.model.startswith('gpt-4') else 2500
+        overlap_chars = 300  # Increased overlap to preserve context better
         
         # Split into sentences for better chunking
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_transcript) if s.strip()]
@@ -433,6 +433,12 @@ class TranscribeAudioUseCase:
         # Merge and clean up overlapping content
         merged_dialogue = self._merge_chunk_results(chunk_results, logger)
         
+        # Log final result for debugging
+        logger.info(f"Final merged dialogue: {len(merged_dialogue)} turns")
+        if merged_dialogue:
+            logger.info(f"First turn: {merged_dialogue[0]}")
+            logger.info(f"Last turn: {merged_dialogue[-1]}")
+        
         # Convert back to JSON string
         result_json = json.dumps(merged_dialogue)
         return result_json
@@ -520,25 +526,38 @@ class TranscribeAudioUseCase:
             # If merged is empty, just add the chunk
             if not merged:
                 merged.extend(chunk)
+                logger.info(f"Added first chunk with {len(chunk)} turns")
                 continue
             
-            # Check for overlap with the last item in merged
-            last_merged = merged[-1]
-            first_chunk = chunk[0]
+            # Check for overlap with the last few items in merged
+            last_merged = merged[-1] if merged else None
+            first_chunk = chunk[0] if chunk else None
             
-            
-            # Simple deduplication: if last turn in merged is same as first turn in current chunk,
-            # skip the first turn of current chunk
+            # More sophisticated deduplication: check if the last turn in merged
+            # is the same as the first turn in current chunk
             if (isinstance(last_merged, dict) and isinstance(first_chunk, dict) and
                 len(last_merged) == 1 and len(first_chunk) == 1 and
                 list(last_merged.keys())[0] == list(first_chunk.keys())[0] and
                 list(last_merged.values())[0] == list(first_chunk.values())[0]):
                 
-                # Skip first item in current chunk
+                # Skip first item in current chunk to avoid duplication
                 merged.extend(chunk[1:])
+                logger.info(f"Chunk {i}: Skipped duplicate first turn, added {len(chunk)-1} turns")
             else:
-                merged.extend(chunk)
-            
+                # Check for partial overlap by comparing the last 2-3 turns
+                overlap_found = False
+                for overlap_size in range(1, min(4, len(chunk), len(merged))):
+                    if (len(merged) >= overlap_size and 
+                        merged[-overlap_size:] == chunk[:overlap_size]):
+                        # Found overlap, skip the overlapping turns
+                        merged.extend(chunk[overlap_size:])
+                        logger.info(f"Chunk {i}: Found {overlap_size}-turn overlap, added {len(chunk)-overlap_size} turns")
+                        overlap_found = True
+                        break
+                
+                if not overlap_found:
+                    merged.extend(chunk)
+                    logger.info(f"Chunk {i}: No overlap found, added {len(chunk)} turns")
         
         logger.info(f"Merged {len(chunk_results)} chunks into {len(merged)} dialogue turns")
         return merged
@@ -567,11 +586,14 @@ class TranscribeAudioUseCase:
                 "Format: [{\"Doctor\": \"text\"}, {\"Patient\": \"text\"}]"
             )
         
-        # Truncate very long transcripts to avoid API limits
-        max_length = 8000  # Reduced from chunking approach
+        # For very long transcripts, use chunking instead of truncation
+        max_length = 12000  # Increased limit for better coverage
         if len(raw_transcript) > max_length:
-            logger.info(f"Truncating transcript from {len(raw_transcript)} to {max_length} characters for faster processing")
-            raw_transcript = raw_transcript[:max_length] + "..."
+            logger.info(f"Long transcript detected ({len(raw_transcript)} chars), using chunking strategy instead of truncation")
+            # Use the chunking method for long transcripts instead of truncating
+            return await self._process_transcript_with_chunking(
+                client, raw_transcript, settings, logger, language
+            )
         
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
             user_prompt = f"TRANSCRIPCIÓN: {raw_transcript}\n\nConvierte a diálogo Doctor-Paciente en formato JSON."

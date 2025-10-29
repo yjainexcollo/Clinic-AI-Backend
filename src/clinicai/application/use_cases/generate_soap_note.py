@@ -81,7 +81,7 @@ class GenerateSoapNoteUseCase:
             visit.store_soap_note(soap_result)
 
             # Save updated visit
-            await self._patient_repository.save(patient)
+            await self._visit_repository.save(visit)
 
             return SoapGenerationResponse(
                 patient_id=patient.patient_id.value,
