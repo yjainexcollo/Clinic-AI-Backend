@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 import os
@@ -13,6 +13,8 @@ from beanie import PydanticObjectId
 from ...core.config import get_settings
 from ...core.utils.file_utils import save_audio_file
 from ...application.utils.structure_dialogue import structure_dialogue_from_text
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 
 router = APIRouter(prefix="/transcription", tags=["transcription"])
@@ -32,10 +34,11 @@ class AdhocTranscriptionResponse(BaseModel):
 
 @router.post(
     "",
-    response_model=AdhocTranscriptionResponse,
+    response_model=ApiResponse[AdhocTranscriptionResponse],
     status_code=status.HTTP_200_OK,
 )
 async def transcribe_audio_adhoc(
+    request: Request,
     transcription_service: TranscriptionServiceDep,
     audio_repo: AudioRepositoryDep,
     audio_file: UploadFile = File(...),
@@ -45,10 +48,7 @@ async def transcribe_audio_adhoc(
     
     if not audio_file.filename:
         logger.error("No audio file filename provided")
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "NO_AUDIO_FILE", "message": "No audio file provided", "details": {}},
-        )
+        return fail(request, error="NO_AUDIO_FILE", message="No audio file provided")
 
     content_type = audio_file.content_type or ""
     is_audio_like = content_type.startswith("audio/")
@@ -59,14 +59,7 @@ async def transcribe_audio_adhoc(
     
     if not (is_audio_like or is_supported_video or is_generic_stream):
         logger.error(f"Invalid file type: {content_type}")
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "INVALID_FILE_TYPE",
-                "message": "File must be an audio file",
-                "details": {"content_type": audio_file.content_type},
-            },
-        )
+        return fail(request, error="INVALID_FILE_TYPE", message="File must be an audio file")
 
     temp_file_path = None
     audio_data = b""
@@ -90,14 +83,7 @@ async def transcribe_audio_adhoc(
             logger.info(f"Validation result: {meta}")
             if not meta.get("is_valid"):
                 logger.error(f"Audio validation failed: {meta}")
-                raise HTTPException(
-                    status_code=422,
-                    detail={
-                        "error": "INVALID_AUDIO",
-                        "message": meta.get("error") or "Invalid audio",
-                        "details": meta,
-                    },
-                )
+                return fail(request, error="INVALID_AUDIO", message=meta.get("error") or "Invalid audio")
         except HTTPException:
             raise
         except Exception as e:
@@ -148,7 +134,7 @@ async def transcribe_audio_adhoc(
             logger.error(f"Failed to persist adhoc transcript: {e}")
             pass
 
-        return AdhocTranscriptionResponse(**{**result, "filename": audio_file.filename or None})
+        return ok(request, data=AdhocTranscriptionResponse(**{**result, "filename": audio_file.filename or None}))
     finally:
         try:
             if temp_file_path and os.path.exists(temp_file_path):
@@ -165,16 +151,14 @@ class StructureTextRequest(BaseModel):
 
 @router.post(
     "/structure",
+    response_model=ApiResponse[Dict[str, List[Dict[str, str]]]],
     status_code=status.HTTP_200_OK,
 )
-async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, List[Dict[str, str]]]:
+async def structure_transcript_text(request: Request, payload: StructureTextRequest):
     logger.info(f"Structure endpoint called with adhoc_id: {payload.adhoc_id}, transcript length: {len(payload.transcript) if payload.transcript else 0}")
     
     if not payload.transcript or not payload.transcript.strip():
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "EMPTY_TRANSCRIPT", "message": "Transcript is empty", "details": {}},
-        )
+        return fail(request, error="EMPTY_TRANSCRIPT", message="Transcript is empty")
 
     settings = get_settings()
     model = payload.model or settings.openai.model
@@ -206,7 +190,7 @@ async def structure_transcript_text(payload: StructureTextRequest) -> Dict[str, 
             pass
 
     logger.info(f"Returning dialogue with {len(normalized_dialogue)} turns")
-    return {"dialogue": normalized_dialogue}
+    return ok(request, data={"dialogue": normalized_dialogue})
 
 
 class ActionPlanRequest(BaseModel):
@@ -221,11 +205,11 @@ class ActionPlanResponse(BaseModel):
 
 @router.post(
     "/adhoc/action-plan",
-    response_model=ActionPlanResponse,
+    response_model=ApiResponse[ActionPlanResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def generate_action_plan(
-    request: ActionPlanRequest,
+    request: Request,
     action_plan_service: ActionPlanServiceDep,
 ):
     """
@@ -241,25 +225,19 @@ async def generate_action_plan(
         )
         
         if not adhoc_doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {request.adhoc_id} not found", "details": {}},
-            )
+            return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {request.adhoc_id} not found")
         
         # Check if transcript exists
         if not adhoc_doc.transcript:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "NO_TRANSCRIPT", "message": "No transcript available for action plan generation", "details": {}},
-            )
+            return fail(request, error="NO_TRANSCRIPT", message="No transcript available for action plan generation")
         
         # Check if action plan is already being processed or completed
         if adhoc_doc.action_plan_status in ["processing", "completed"]:
-            return ActionPlanResponse(
+            return ok(request, data=ActionPlanResponse(
                 adhoc_id=request.adhoc_id,
                 status=adhoc_doc.action_plan_status,
                 message="Action plan already processed or in progress"
-            )
+            ))
         
         # Start action plan generation
         adhoc_doc.action_plan_status = "processing"
@@ -278,20 +256,17 @@ async def generate_action_plan(
         
         logger.info(f"Action plan generation queued for adhoc_id: {request.adhoc_id}")
         
-        return ActionPlanResponse(
+        return ok(request, data=ActionPlanResponse(
             adhoc_id=request.adhoc_id,
             status="processing",
             message="Action plan generation started"
-        )
+        ))
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error starting action plan generation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
-        )
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 async def _generate_action_plan_background(
@@ -346,9 +321,10 @@ async def _generate_action_plan_background(
 
 @router.get(
     "/adhoc/{adhoc_id}/action-plan/status",
+    response_model=ApiResponse[Dict],
     status_code=status.HTTP_200_OK,
 )
-async def get_action_plan_status(adhoc_id: str):
+async def get_action_plan_status(request: Request, adhoc_id: str):
     """
     Get the status of action plan generation for an adhoc transcript.
     """
@@ -358,35 +334,30 @@ async def get_action_plan_status(adhoc_id: str):
         )
         
         if not adhoc_doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {adhoc_id} not found", "details": {}},
-            )
+            return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {adhoc_id} not found")
         
-        return {
+        return ok(request, data={
             "adhoc_id": adhoc_id,
             "status": adhoc_doc.action_plan_status,
             "started_at": adhoc_doc.action_plan_started_at.isoformat() if adhoc_doc.action_plan_started_at else None,
             "completed_at": adhoc_doc.action_plan_completed_at.isoformat() if adhoc_doc.action_plan_completed_at else None,
             "error_message": adhoc_doc.action_plan_error_message,
             "has_action_plan": adhoc_doc.action_plan is not None
-        }
+        })
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting action plan status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
-        )
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 @router.get(
     "/adhoc/{adhoc_id}/action-plan",
+    response_model=ApiResponse[Dict],
     status_code=status.HTTP_200_OK,
 )
-async def get_action_plan(adhoc_id: str):
+async def get_action_plan(request: Request, adhoc_id: str):
     """
     Get the generated action plan for an adhoc transcript.
     """
@@ -396,36 +367,24 @@ async def get_action_plan(adhoc_id: str):
         )
         
         if not adhoc_doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "ADHOC_NOT_FOUND", "message": f"Adhoc transcript {adhoc_id} not found", "details": {}},
-            )
+            return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {adhoc_id} not found")
         
         if adhoc_doc.action_plan_status != "completed":
-            raise HTTPException(
-                status_code=status.HTTP_202_ACCEPTED,
-                detail={"error": "NOT_READY", "message": f"Action plan status: {adhoc_doc.action_plan_status}", "details": {}},
-            )
+            return fail(request, error="NOT_READY", message=f"Action plan status: {adhoc_doc.action_plan_status}")
         
         if not adhoc_doc.action_plan:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "NO_ACTION_PLAN", "message": "No action plan available", "details": {}},
-            )
+            return fail(request, error="NO_ACTION_PLAN", message="No action plan available")
         
-        return {
+        return ok(request, data={
             "adhoc_id": adhoc_id,
             "action_plan": adhoc_doc.action_plan,
             "generated_at": adhoc_doc.action_plan_completed_at.isoformat() if adhoc_doc.action_plan_completed_at else None
-        }
+        })
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting action plan: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
-        )
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 

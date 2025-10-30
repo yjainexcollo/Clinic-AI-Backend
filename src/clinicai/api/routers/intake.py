@@ -11,11 +11,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, Field
 
 from ...adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from ..deps import QuestionServiceDep
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 
 router = APIRouter(prefix="/intake", tags=["intake"])
@@ -85,37 +87,41 @@ async def _load_preferences(doctor_id: str) -> Dict[str, Any]:
     }
 
 
-@router.post("/start", response_model=IntakeStartResponse, status_code=status.HTTP_200_OK)
-async def start_intake_session(req: IntakeStartRequest):
+@router.post("/start", response_model=ApiResponse[IntakeStartResponse], status_code=status.HTTP_200_OK)
+async def start_intake(request: Request, req: IntakeStartRequest):
     """Initialize an intake session for a patient using the doctor's preferences."""
     _cleanup_sessions()
-    prefs = await _load_preferences(req.doctor_id)
+    try:
+        prefs = await _load_preferences(req.doctor_id)
 
-    session = {
-        "patient_id": req.patient_id,
-        "doctor_id": prefs["doctor_id"],
-        "categories": prefs["categories"],
-        "max_questions": prefs["max_questions"],
-        "asked_count": 0,
-        "asked_questions": [],  # type: List[str]
-        "previous_answers": [],  # type: List[str]
-        "created_at": _now(),
-        "updated_at": _now(),
-    }
-    _SESSIONS[req.patient_id] = session
+        session = {
+            "patient_id": req.patient_id,
+            "doctor_id": prefs["doctor_id"],
+            "categories": prefs["categories"],
+            "max_questions": prefs["max_questions"],
+            "asked_count": 0,
+            "asked_questions": [],  # type: List[str]
+            "previous_answers": [],  # type: List[str]
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        _SESSIONS[req.patient_id] = session
 
-    return IntakeStartResponse(
-        patient_id=req.patient_id,
-        doctor_id=prefs["doctor_id"],
-        categories=prefs["categories"],
-        max_questions=prefs["max_questions"],
-        asked_count=0,
-        created_at=session["created_at"],
-    )
+        result = IntakeStartResponse(
+            patient_id=req.patient_id,
+            doctor_id=prefs["doctor_id"],
+            categories=prefs["categories"],
+            max_questions=prefs["max_questions"],
+            asked_count=0,
+            created_at=session["created_at"],
+        )
+        return ok(request, data=result, message="Intake started")
+    except Exception as e:
+        return fail(request, error="INTERNAL_ERROR", message="Failed to start intake")
 
 
-@router.post("/next-question", response_model=NextQuestionResponse)
-async def next_question(req: NextQuestionRequest, question_service: QuestionServiceDep):
+@router.post("/next-question", response_model=ApiResponse[NextQuestionResponse])
+async def next_question(request: Request, req: NextQuestionRequest, question_service: QuestionServiceDep):
     """Generate the next intake question using session-configured limits."""
     session = _SESSIONS.get(req.patient_id)
     if not session:
@@ -168,9 +174,10 @@ async def next_question(req: NextQuestionRequest, question_service: QuestionServ
         # Optionally return closing question already generated; client can decide to stop
         pass
 
-    return NextQuestionResponse(
+    result = NextQuestionResponse(
         question=question_text if asked_count <= max_questions else "COMPLETE",
         asked_count=asked_count,
         max_questions=max_questions,
     )
+    return ok(request, data=result, message="Next question")
 

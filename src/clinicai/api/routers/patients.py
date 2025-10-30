@@ -31,6 +31,7 @@ from ...domain.errors import (
     PatientNotFoundError,
     QuestionLimitExceededError,
     VisitNotFoundError,
+    PatientAlreadyExistsError,
 )
 
 from ..deps import PatientRepositoryDep, VisitRepositoryDep, QuestionServiceDep, SoapServiceDep
@@ -53,6 +54,8 @@ from pathlib import Path
 from datetime import datetime
 import os
 from beanie import PydanticObjectId
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 logger = logging.getLogger("clinicai")
@@ -60,10 +63,12 @@ logger = logging.getLogger("clinicai")
 
 @router.post(
     "/",
-    response_model=RegisterPatientResponse,
+    response_model=ApiResponse[RegisterPatientResponse],
     status_code=status.HTTP_201_CREATED,
+    summary="Register a new patient and start intake session",
     responses={
-        400: {"model": ErrorResponse, "description": "Validation error"},
+        201: {"description": "Patient registered successfully"},
+        400: {"model": ErrorResponse, "description": "Invalid input"},
         409: {"model": ErrorResponse, "description": "Duplicate patient"},
         422: {"model": ErrorResponse, "description": "Invalid symptom"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -108,42 +113,22 @@ async def register_patient(
         http_request.state.audit_patient_id = encode_patient_id(result.patient_id)
         http_request.state.audit_visit_id = result.visit_id
 
-        # Return opaque patient_id to callers
-        return RegisterPatientResponse(
+        # Only return opaque patient_id/visit_id, do NOT include internal details
+        response = RegisterPatientResponse(
             patient_id=encode_patient_id(result.patient_id),
             visit_id=result.visit_id,
             first_question=result.first_question,
-            message=result.message,
+            message="Patient registered successfully. Intake session started."
         )
+        return ok(http_request, data=response, message="Created")
 
     except DuplicatePatientError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "DUPLICATE_PATIENT",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(http_request, error="DUPLICATE_PATIENT", message=e.message)
     except InvalidDiseaseError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "INVALID_DISEASE",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(http_request, error="INVALID_DISEASE", message=e.message)
     except Exception as e:
-        logger.error("Unhandled error in register_patient", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        logger.exception("Unhandled error in patient registration")
+        return fail(http_request, error="INTERNAL_ERROR", message="Internal error occurred.")
 
 
 @router.post(
@@ -320,47 +305,16 @@ async def answer_intake_question(
             allows_image_upload=result.allows_image_upload,
         )
     except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "PATIENT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "VISIT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(request, error="VISIT_NOT_FOUND", message=e.message)
     except IntakeAlreadyCompletedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "INTAKE_ALREADY_COMPLETED",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(request, error="INTAKE_ALREADY_COMPLETED", message=e.message)
     except (QuestionLimitExceededError, DuplicateQuestionError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error": e.error_code, "message": e.message, "details": e.details},
-        )
+        return fail(request, error=e.error_code, message=e.message, details=e.details)
     except Exception as e:
         logger.error("Unhandled error in answer_intake_question", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.patch(
@@ -399,25 +353,12 @@ async def edit_intake_answer(
             allows_image_upload=result.allows_image_upload,
         )
     except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "PATIENT_NOT_FOUND", "message": e.message, "details": e.details},
-        )
+        return fail(http_request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "VISIT_NOT_FOUND", "message": e.message, "details": e.details},
-        )
+        return fail(http_request, error="VISIT_NOT_FOUND", message=e.message)
     except Exception as e:
         logger.error("Unhandled error in edit_intake_answer", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 # Endpoint for medication image uploads (supports both single and multiple images)
@@ -535,7 +476,7 @@ async def upload_medication_images(
                 errors.append(f"Image {i+1}: {str(e)}")
                 logger.error(f"Error uploading image {i+1}: {e}")
         
-        return {
+        return ok(request, data={
             "status": "success" if not errors else "partial_success",
             "patient_id": internal_patient_id,
             "visit_id": visit_id,
@@ -543,22 +484,16 @@ async def upload_medication_images(
             "errors": errors,
             "total_uploaded": len(uploaded_images),
             "total_errors": len(errors)
-        }
+        })
     except Exception as e:
         logger.error("Unhandled error in upload_multiple_medication_images", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "Failed to upload images",
-                "details": {"exception": str(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(request, error="INTERNAL_ERROR", message="Failed to upload images")
 
 
 # Get intake medication image content (with security validation)
 @router.get("/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content")
 async def get_intake_medication_image_content(
+    request: Request,
     patient_id: str, 
     visit_id: str, 
     image_id: str
@@ -595,15 +530,12 @@ async def get_intake_medication_image_content(
         raise
     except Exception as e:
         logger.error("Error reading intake medication image", exc_info=True)
-        raise HTTPException(
-            status_code=500, 
-            detail={"error": "INTERNAL_ERROR", "message": str(e)}
-        )
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 # List uploaded images for a visit
 @router.get("/{patient_id}/visits/{visit_id}/images")
-async def list_medication_images(patient_id: str, visit_id: str):
+async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
         try:
@@ -614,7 +546,7 @@ async def list_medication_images(patient_id: str, visit_id: str):
             MedicationImageMongo.patient_id == str(internal_patient_id),
             MedicationImageMongo.visit_id == str(visit_id),
         ).to_list()
-        return {
+        return ok(request, data={
             "patient_id": internal_patient_id,
             "visit_id": visit_id,
             "images": [
@@ -626,15 +558,15 @@ async def list_medication_images(patient_id: str, visit_id: str):
                 }
                 for d in docs
             ],
-        }
+        })
     except Exception as e:
         logger.error("Error listing medication images", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 # Delete one uploaded image by id
 @router.delete("/images/{image_id}")
-async def delete_medication_image(image_id: str):
+async def delete_medication_image(request: Request, image_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
         doc = await MedicationImageMongo.get(PydanticObjectId(image_id))
@@ -646,7 +578,7 @@ async def delete_medication_image(image_id: str):
         raise
     except Exception as e:
         logger.error("Error deleting medication image", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 @router.post(
@@ -699,42 +631,14 @@ async def generate_pre_visit_summary(
         )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "INTAKE_NOT_COMPLETED",
-                "message": str(e),
-                "details": {},
-            },
-        )
+        return fail(http_request, error="INTAKE_NOT_COMPLETED", message=str(e))
     except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "PATIENT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(http_request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "VISIT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(http_request, error="VISIT_NOT_FOUND", message=e.message)
     except Exception as e:
         logger.error("Unhandled error in generate_pre_visit_summary", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -747,6 +651,7 @@ async def generate_pre_visit_summary(
     },
 )
 async def get_pre_visit_summary(
+    request: Request,
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
@@ -812,18 +717,18 @@ async def get_pre_visit_summary(
                 result = await summary_use_case.execute(summary_request)
                 logger.info(f"Successfully generated pre-visit summary for visit {visit_id}")
                 
-                return result
+                return PreVisitSummaryResponse(
+                    patient_id=encode_patient_id(result.patient_id),
+                    visit_id=result.visit_id,
+                    summary=result.summary,
+                    generated_at=result.generated_at,
+                    medication_images=result.medication_images,
+                    red_flags=result.red_flags,
+                )
                 
             except Exception as e:
                 logger.error(f"Failed to generate pre-visit summary for visit {visit_id}: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={
-                        "error": "SUMMARY_GENERATION_FAILED",
-                        "message": f"Failed to generate pre-visit summary for visit {visit_id}",
-                        "details": {"visit_id": visit_id, "error": str(e)},
-                    },
-                )
+                return fail(request, error="SUMMARY_GENERATION_FAILED", message=f"Failed to generate pre-visit summary for visit {visit_id}")
 
         # Get stored summary
         summary_data = visit.get_pre_visit_summary()
@@ -853,38 +758,17 @@ async def get_pre_visit_summary(
         )
 
     except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "PATIENT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "VISIT_NOT_FOUND",
-                "message": e.message,
-                "details": e.details,
-            },
-        )
+        return fail(request, error="VISIT_NOT_FOUND", message=e.message)
     except Exception as e:
         logger.error("Unhandled error in get_pre_visit_summary", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.post(
     "/summary/postvisit",
-    response_model=PostVisitSummaryResponse,
+    response_model=ApiResponse[PostVisitSummaryResponse],
     status_code=status.HTTP_200_OK,
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
@@ -897,6 +781,7 @@ async def generate_post_visit_summary(
     http_request: Request,
     request: PostVisitSummaryRequest,
     patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
     soap_service: SoapServiceDep,
 ):
     """
@@ -936,59 +821,32 @@ async def generate_post_visit_summary(
             visit_id=request.visit_id
         )
         
-        # Create use case instance
-        use_case = GeneratePostVisitSummaryUseCase(patient_repo, soap_service)
+        # Create use case instance (patient_repo, visit_repo, soap_service)
+        use_case = GeneratePostVisitSummaryUseCase(patient_repo, visit_repo, soap_service)
         
         # Execute use case
         result = await use_case.execute(decoded_request)
         
-        return result
+        return ok(http_request, data=result)
         
     except PatientNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "PATIENT_NOT_FOUND",
-                "message": f"Patient {request.patient_id} not found",
-                "details": {"patient_id": request.patient_id},
-            },
-        )
+        return fail(http_request, error="PATIENT_NOT_FOUND", message=f"Patient {request.patient_id} not found")
     except VisitNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "VISIT_NOT_FOUND",
-                "message": f"Visit {request.visit_id} not found",
-                "details": {"visit_id": request.visit_id},
-            },
-        )
+        return fail(http_request, error="VISIT_NOT_FOUND", message=f"Visit {request.visit_id} not found")
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "INVALID_VISIT_STATE",
-                "message": str(e),
-                "details": {"patient_id": request.patient_id, "visit_id": request.visit_id},
-            },
-        )
+        return fail(http_request, error="INVALID_VISIT_STATE", message=str(e))
     except Exception as e:
         logger.error("Unhandled error in generate_post_visit_summary", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
     "/{patient_id}/visits/{visit_id}/summary/postvisit",
-    response_model=PostVisitSummaryResponse,
+    response_model=ApiResponse[PostVisitSummaryResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_post_visit_summary(
+    request: Request,
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
@@ -1019,16 +877,16 @@ async def get_post_visit_summary(
             
         if not data:
             raise HTTPException(status_code=404, detail={"error": "POST_VISIT_SUMMARY_NOT_FOUND", "message": "No post-visit summary stored"})
-        return PostVisitSummaryResponse(**data)
+        return ok(request, data=PostVisitSummaryResponse(**data))
     except PatientNotFoundError as e:
-        raise HTTPException(status_code=404, detail={"error": "PATIENT_NOT_FOUND", "message": e.message, "details": e.details})
+        return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
-        raise HTTPException(status_code=404, detail={"error": "VISIT_NOT_FOUND", "message": e.message, "details": e.details})
+        return fail(request, error="VISIT_NOT_FOUND", message=e.message)
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Unhandled error in get_post_visit_summary", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 # ------------------------
@@ -1058,6 +916,7 @@ class VitalsPayload(BaseModel):
     },
 )
 async def store_vitals(
+    request: Request,
     patient_id: str,
     visit_id: str,
     vitals: VitalsPayload,
@@ -1118,13 +977,13 @@ async def store_vitals(
         # Persist visit (not patient)
         await visit_repo.save(visit)
         
-        return {"success": True, "message": "Vitals stored successfully"}
+        return ok(request, data={"success": True, "message": "Vitals stored successfully"})
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Unhandled error in store_vitals", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 @router.get(
@@ -1136,6 +995,7 @@ async def store_vitals(
     },
 )
 async def get_vitals(
+    request: Request,
     patient_id: str,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
@@ -1176,12 +1036,12 @@ async def get_vitals(
                 detail={"error": "VITALS_NOT_FOUND", "message": "No vitals found for this visit", "details": {}}
             )
         
-        return visit.vitals
+        return ok(request, data=visit.vitals)
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Unhandled error in get_vitals", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "INTERNAL_ERROR", "message": str(e)})
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
  

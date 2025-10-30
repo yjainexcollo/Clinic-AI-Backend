@@ -13,7 +13,8 @@ from ...application.use_cases.create_walk_in_visit import (
 from ...domain.enums.workflow import VisitWorkflowType
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ..deps import PatientRepositoryDep, VisitRepositoryDep
-from ..schemas import ErrorResponse
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger("clinicai")
@@ -38,7 +39,7 @@ class CreateWalkInVisitResponseSchema(BaseModel):
 
 @router.post(
     "/walk-in/create-visit",
-    response_model=CreateWalkInVisitResponseSchema,
+    response_model=ApiResponse[CreateWalkInVisitResponseSchema],
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
@@ -77,24 +78,17 @@ async def create_walk_in_visit(
         http_request.state.audit_patient_id = response.patient_id
         http_request.state.audit_visit_id = response.visit_id
         
-        return CreateWalkInVisitResponseSchema(
+        return ok(http_request, data=CreateWalkInVisitResponseSchema(
             patient_id=response.patient_id,
             visit_id=response.visit_id,
             workflow_type=response.workflow_type,
             status=response.status,
             message=response.message
-        )
+        ), message="Walk-in visit created successfully")
         
     except Exception as e:
         logger.error("Error creating walk-in visit", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -134,25 +128,18 @@ async def get_available_workflow_steps(
         # Get available steps
         available_steps = visit.get_available_steps()
         
-        return {
+        return ok(None, data={
             "visit_id": visit_id,
             "workflow_type": visit.workflow_type.value,
             "current_status": visit.status,
             "available_steps": available_steps
-        }
+        })
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Error getting available workflow steps", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(None, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -177,7 +164,7 @@ async def list_walk_in_visits(
     try:
         visits = await visit_repo.find_walk_in_visits(limit, offset)
         
-        return {
+        return ok(None, data={
             "visits": [
                 {
                     "visit_id": visit.visit_id.value,
@@ -192,15 +179,8 @@ async def list_walk_in_visits(
             "limit": limit,
             "offset": offset,
             "count": len(visits)
-        }
+        })
         
     except Exception as e:
         logger.error("Error listing walk-in visits", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {"exception": str(e) or repr(e), "type": e.__class__.__name__},
-            },
-        )
+        return fail(None, error="INTERNAL_ERROR", message="An unexpected error occurred")

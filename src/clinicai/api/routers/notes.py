@@ -32,6 +32,8 @@ from ...core.utils.crypto import decode_patient_id
 from ..schemas import ErrorResponse
 from ...core.config import get_settings
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 logger = logging.getLogger("clinicai")
@@ -549,20 +551,15 @@ async def get_vitals(
 
 @router.get(
     "/{patient_id}/visits/{visit_id}/transcript",
-    response_model=TranscriptionSessionDTO,
+    response_model=ApiResponse[TranscriptionSessionDTO],
     status_code=status.HTTP_200_OK,
     responses={
-        202: {"description": "Transcript processing; client should retry after delay"},
-        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
+        200: {"description": "Transcript returned"},
+        404: {"model": ErrorResponse, "description": "Transcript not found"},
+        422: {"model": ErrorResponse, "description": "Invalid input"},
     },
 )
-async def get_transcript(
-    patient_id: str,
-    visit_id: str,
-    patient_repo: PatientRepositoryDep,
-    visit_repo: VisitRepositoryDep,
-):
+async def get_transcript(request: Request, patient_id: str, visit_id: str, patient_repo: PatientRepositoryDep, visit_repo: VisitRepositoryDep):
     """Get transcript for a visit."""
     try:
         from ...domain.value_objects.patient_id import PatientId
@@ -633,7 +630,7 @@ async def get_transcript(
         session = visit.transcription_session
 
         # Return transcript data including any stored structured dialogue
-        return TranscriptionSessionDTO(
+        return ok(request, data=TranscriptionSessionDTO(
             audio_file_path=session.audio_file_path,
             transcript=session.transcript,
             transcription_status=session.transcription_status,
@@ -643,7 +640,7 @@ async def get_transcript(
             audio_duration_seconds=session.audio_duration_seconds,
             word_count=session.word_count,
             structured_dialogue=getattr(session, "structured_dialogue", None),  # Return stored structured dialogue from database
-        )
+        ), message="Success")
 
     except PatientNotFoundError as e:
         raise HTTPException(
@@ -677,19 +674,14 @@ async def get_transcript(
 
 @router.get(
     "/{patient_id}/visits/{visit_id}/soap",
-    response_model=SoapNoteDTO,
+    response_model=ApiResponse[SoapNoteDTO],
     status_code=status.HTTP_200_OK,
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or SOAP note not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_soap_note(
-    patient_id: str,
-    visit_id: str,
-    patient_repo: PatientRepositoryDep,
-    visit_repo: VisitRepositoryDep,
-):
+async def get_soap_note(request: Request, patient_id: str, visit_id: str, patient_repo: PatientRepositoryDep, visit_repo: VisitRepositoryDep):
     """Get SOAP note for a visit."""
     try:
         from ...domain.value_objects.patient_id import PatientId
@@ -731,7 +723,7 @@ async def get_soap_note(
 
         # Return SOAP note data
         soap = visit.soap_note
-        return SoapNoteDTO(
+        return ok(request, data=SoapNoteDTO(
             subjective=soap.subjective,
             objective=soap.objective,
             assessment=soap.assessment,
@@ -741,7 +733,7 @@ async def get_soap_note(
             generated_at=soap.generated_at.isoformat(),
             model_info=soap.model_info,
             confidence_score=soap.confidence_score
-        )
+        ), message="Success")
 
     except HTTPException:
         # Re-raise HTTPException directly (like 404 for SOAP note not found)
@@ -784,12 +776,7 @@ async def get_soap_note(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def structure_dialogue(
-    patient_id: str,
-    visit_id: str,
-    patient_repo: PatientRepositoryDep,
-    visit_repo: VisitRepositoryDep,
-) -> Dict[str, Any]:
+async def structure_dialogue(request: Request, patient_id: str, visit_id: str, patient_repo: PatientRepositoryDep, visit_repo: VisitRepositoryDep) -> Dict[str, Any]:
     """Clean PII and structure transcript into alternating Doctor/Patient JSON using LLM."""
     try:
         # Resolve patient and transcript
@@ -861,7 +848,7 @@ async def structure_dialogue(
                 logger.warning(f"Failed to save structured dialogue to database: {e}")
 
         logger.info(f"Returning dialogue with {len(normalized_dialogue)} turns")
-        return {"dialogue": normalized_dialogue}
+        return ok(request, data={"dialogue": normalized_dialogue}, message="Success")
 
 
     except PatientNotFoundError as e:

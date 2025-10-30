@@ -170,7 +170,6 @@ class TranscribeAudioUseCase:
             # Always use chunking - it handles both single chunks and multi-chunk processing automatically
             LOGGER.info(f"Starting transcript processing for {len(raw_transcript)} characters")
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:200]}...")
-            
             structured_content = await self._process_transcript_with_chunking(
                 client, raw_transcript, settings, LOGGER, request.language or "en"
             )
@@ -185,18 +184,16 @@ class TranscribeAudioUseCase:
                     cleaned_content = structured_content.strip()
                     
                     # If content doesn't start with [ or {, try to find the JSON part
-                    if not cleaned_content.startswith(('{', '[')):
-                        # Look for JSON-like content
-                        start_idx = cleaned_content.find('[')
+                    if not cleaned_content.startswith(("{", "[")):
+                        start_idx = cleaned_content.find("[")
                         if start_idx == -1:
-                            start_idx = cleaned_content.find('{')
+                            start_idx = cleaned_content.find("{")
                         if start_idx != -1:
                             cleaned_content = cleaned_content[start_idx:]
                     
-                    # Try enhanced error recovery
                     parsed = None
                     recovery_method = None
-                    
+
                     # Strategy 1: Try standard JSON parsing
                     try:
                         parsed = json.loads(cleaned_content)
@@ -208,48 +205,52 @@ class TranscribeAudioUseCase:
                             parsed = recovered
                             recovery_method = "partial_recovery"
                         else:
-                            # Strategy 3: Try to fix truncated JSON
-                            if cleaned_content.startswith('[') and not cleaned_content.endswith(']'):
+                            # Strategy 3: Try to fix truncated JSON arrays
+                            if cleaned_content.startswith("[") and not cleaned_content.endswith("]"):
                                 LOGGER.warning("JSON appears truncated, attempting to fix...")
-                                # Find last complete object
-                                last_complete_idx = cleaned_content.rfind('},')
+                                last_complete_idx = cleaned_content.rfind("},")
                                 if last_complete_idx != -1:
-                                    cleaned_content = cleaned_content[:last_complete_idx + 1] + ']'
+                                    cleaned_content = cleaned_content[: last_complete_idx + 1] + "]"
                                 else:
-                                    cleaned_content = cleaned_content + ']'
-                                
+                                    cleaned_content = cleaned_content + "]"
                                 try:
                                     parsed = json.loads(cleaned_content)
                                     recovery_method = "truncation_fix"
                                 except json.JSONDecodeError:
-                                    pass
-                            
-                            # Strategy 4: Extract valid objects using regex
+                                    parsed = None
+
+                            # Strategy 4: Extract valid objects using regex on original content
                             if not parsed:
                                 recovered = self._recover_partial_json(structured_content, LOGGER)
                                 if recovered:
                                     parsed = recovered
                                     recovery_method = "regex_extraction"
-                    
+
                     if parsed and isinstance(parsed, list):
                         # Validate dialogue format
                         if all(
-                            isinstance(item, dict) and 
-                            len(item) == 1 and 
-                            list(item.keys())[0] in ["Doctor", "Patient"]
+                            isinstance(item, dict)
+                            and len(item) == 1
+                            and list(item.keys())[0] in ["Doctor", "Patient"]
                             for item in parsed
                         ):
                             structured_dialogue = parsed
-                            LOGGER.info(f"Successfully parsed structured dialogue with {len(parsed)} turns (recovery method: {recovery_method})")
+                            LOGGER.info(
+                                f"Successfully parsed structured dialogue with {len(parsed)} turns (recovery method: {recovery_method})"
+                            )
                         else:
-                            LOGGER.warning(f"Parsed content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
+                            LOGGER.warning(
+                                f"Parsed content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}..."
+                            )
                     else:
-                        LOGGER.warning(f"Failed to parse structured content. Recovery methods exhausted.")
-                        if parsed:
+                        LOGGER.warning("Failed to parse structured content. Recovery methods exhausted.")
+                        if parsed is not None:
                             LOGGER.warning(f"Parsed type: {type(parsed)}, Content: {str(parsed)[:200]}...")
-                            
+
                 except Exception as e:
-                    LOGGER.warning(f"Error validating structured content: {e}. Content: {structured_content[:200] if structured_content else 'None'}...")
+                    LOGGER.warning(
+                        f"Error validating structured content: {e}. Content: {structured_content[:200] if structured_content else 'None'}..."
+                    )
                     import traceback
                     LOGGER.debug(f"Traceback: {traceback.format_exc()}")
             

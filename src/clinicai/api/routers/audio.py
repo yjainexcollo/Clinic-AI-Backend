@@ -2,7 +2,7 @@
 Audio management API endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, status, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -13,6 +13,8 @@ import io
 from ..deps import AudioRepositoryDep
 from ...adapters.db.mongo.repositories.audio_repository import AudioRepository
 from ...adapters.db.mongo.models.patient_m import AudioFileMongo
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
 
 router = APIRouter(prefix="/audio", tags=["audio"])
 logger = logging.getLogger("clinicai")
@@ -81,10 +83,11 @@ class AudioDialogueListResponse(BaseModel):
 
 @router.get(
     "/",
-    response_model=AudioListResponse,
+    response_model=ApiResponse[AudioListResponse],
     status_code=status.HTTP_200_OK,
 )
 async def list_audio_files(
+    request: Request,
     audio_repo: AudioRepositoryDep,
     patient_id: Optional[str] = Query(None, description="Filter by patient ID"),
     visit_id: Optional[str] = Query(None, description="Filter by visit ID"),
@@ -114,27 +117,25 @@ async def list_audio_files(
         # Convert to response models
         file_responses = [AudioFileResponse.from_audio_file(f) for f in audio_files]
         
-        return AudioListResponse(
+        return ok(request, data=AudioListResponse(
             files=file_responses,
             total_count=total_count,
             limit=limit,
             offset=offset,
-        )
+        ), message="Audio files listed")
         
     except Exception as e:
         logger.error(f"Failed to list audio files: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "LIST_AUDIO_FAILED", "message": "Failed to list audio files", "details": str(e)},
-        )
+        return fail(request, error="LIST_AUDIO_FAILED", message="Failed to list audio files", details=str(e))
 
 
 @router.get(
     "/dialogue",
-    response_model=AudioDialogueListResponse,
+    response_model=ApiResponse[AudioDialogueListResponse],
     status_code=status.HTTP_200_OK,
 )
 async def list_audio_dialogues(
+    request: Request,
     audio_repo: AudioRepositoryDep,
     patient_id: Optional[str] = Query(None, description="Filter by patient ID"),
     visit_id: Optional[str] = Query(None, description="Filter by visit ID"),
@@ -170,29 +171,27 @@ async def list_audio_dialogues(
             AudioDialogueResponse(**data) for data in dialogue_data
         ]
         
-        return AudioDialogueListResponse(
+        return ok(request, data=AudioDialogueListResponse(
             dialogues=dialogue_responses,
             total_count=total_count,
             limit=limit,
             offset=offset,
-        )
+        ), message="Audio dialogues listed")
         
     except Exception as e:
         logger.error(f"Failed to list audio dialogues: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "LIST_DIALOGUE_FAILED", "message": "Failed to list audio dialogues", "details": str(e)},
-        )
+        return fail(request, error="LIST_DIALOGUE_FAILED", message="Failed to list audio dialogues", details=str(e))
 
 
 @router.get(
     "/{audio_id}",
-    response_model=AudioFileResponse,
+    response_model=ApiResponse[AudioFileResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_audio_metadata(
     audio_id: str,
     audio_repo: AudioRepositoryDep,
+    request: Request,
 ):
     """Get audio file metadata by ID."""
     try:
@@ -205,16 +204,13 @@ async def get_audio_metadata(
                 detail={"error": "AUDIO_NOT_FOUND", "message": "Audio file not found", "details": {"audio_id": audio_id}},
             )
         
-        return AudioFileResponse.from_audio_file(audio_file)
+        return ok(request, data=AudioFileResponse.from_audio_file(audio_file), message="Audio metadata retrieved")
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get audio metadata {audio_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "GET_AUDIO_FAILED", "message": "Failed to get audio file", "details": str(e)},
-        )
+        return fail(request, error="GET_AUDIO_FAILED", message="Failed to get audio file", details=str(e))
 
 
 @router.get(
@@ -224,6 +220,7 @@ async def get_audio_metadata(
 async def download_audio_file(
     audio_id: str,
     audio_repo: AudioRepositoryDep,
+    request: Request,
 ):
     """Download audio file by ID."""
     try:
@@ -261,10 +258,7 @@ async def download_audio_file(
         raise
     except Exception as e:
         logger.error(f"Failed to download audio file {audio_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "DOWNLOAD_AUDIO_FAILED", "message": "Failed to download audio file", "details": str(e)},
-        )
+        return fail(request, error="DOWNLOAD_AUDIO_FAILED", message="Failed to download audio file", details=str(e))
 
 
 @router.get(
@@ -274,6 +268,7 @@ async def download_audio_file(
 async def stream_audio_file(
     audio_id: str,
     audio_repo: AudioRepositoryDep,
+    request: Request,
 ):
     """Stream audio file for playback."""
     try:
@@ -310,10 +305,7 @@ async def stream_audio_file(
         raise
     except Exception as e:
         logger.error(f"Failed to stream audio file {audio_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "STREAM_AUDIO_FAILED", "message": "Failed to stream audio file", "details": str(e)},
-        )
+        return fail(request, error="STREAM_AUDIO_FAILED", message="Failed to stream audio file", details=str(e))
 
 
 @router.delete(
@@ -323,6 +315,7 @@ async def stream_audio_file(
 async def delete_audio_file(
     audio_id: str,
     audio_repo: AudioRepositoryDep,
+    request: Request,
 ):
     """Delete audio file by ID."""
     try:
@@ -341,10 +334,7 @@ async def delete_audio_file(
         raise
     except Exception as e:
         logger.error(f"Failed to delete audio file {audio_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "DELETE_AUDIO_FAILED", "message": "Failed to delete audio file", "details": str(e)},
-        )
+        return fail(request, error="DELETE_AUDIO_FAILED", message="Failed to delete audio file", details=str(e))
 
 
 @router.get(
@@ -353,6 +343,7 @@ async def delete_audio_file(
 )
 async def get_audio_stats(
     audio_repo: AudioRepositoryDep,
+    request: Request,
 ):
     """Get audio storage statistics."""
     try:
@@ -363,16 +354,13 @@ async def get_audio_stats(
         visit_count = await audio_repo.get_audio_count(audio_type="visit")
         total_count = await audio_repo.get_audio_count()
         
-        return {
+        return ok(request, data={
             "total_files": total_count,
             "adhoc_files": adhoc_count,
             "visit_files": visit_count,
             "other_files": total_count - adhoc_count - visit_count,
-        }
+        }, message="Audio stats retrieved")
         
     except Exception as e:
         logger.error(f"Failed to get audio stats: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "GET_STATS_FAILED", "message": "Failed to get audio statistics", "details": str(e)},
-        )
+        return fail(request, error="GET_STATS_FAILED", message="Failed to get audio statistics", details=str(e))

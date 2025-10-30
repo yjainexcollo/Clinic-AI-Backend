@@ -1,52 +1,53 @@
+# NOTE: Building the spec module-by-module. First: Health.
 openapi: 3.0.3
 info:
-  title: Clinic-AI Backend API
-  description: |
-    A comprehensive medical consultation platform that provides AI-powered patient intake, 
-    audio transcription and SOAP note generation.
-    
-    ## Features
-    - **Patient Management**: Register patients and manage their medical records
-    - **Intelligent Intake**: AI-powered adaptive questioning system for patient intake
-    - **Audio Transcription**: Convert consultation audio to text using Whisper (for visit transcripts)
-    - **SOAP Notes**: Generate structured medical notes from transcripts
-    - **Multi-language Support**: English and Spanish language support
-    
-    ## Architecture
-    This API follows Clean Architecture principles with:
-    - **Domain Layer**: Core business entities and rules
-    - **Application Layer**: Use cases and business logic
-    - **Infrastructure Layer**: External services and data persistence
-    - **Presentation Layer**: FastAPI endpoints and schemas
-    
-    ## External Services
-    - **OpenAI**: Question generation, SOAP notes, post-visit summaries
-    - **Whisper**: Audio transcription (local or OpenAI API)
-    - **MongoDB**: Document storage with Beanie ODM
-    
+  title: Clinic-AI API
   version: 1.0.0
-  contact:
-    name: Clinic-AI Support
-    email: support@clinic-ai.com
-  license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
-
+  description: "AI-powered clinical intake system. This spec is being filled module-by-module."
 servers:
   - url: http://localhost:8000
-    description: Local development server
-  - url: https://api.clinic-ai.com
-    description: Production server
-
 paths:
-
+  /health/:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: health_check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_HealthResponse'
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      operationId: readiness_check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_Dict'
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      operationId: liveness_check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_Dict'
   /patients/:
     post:
-      summary: Register New Patient
-      description: Register a new patient and start the intake process
+      tags: [Patients]
+      summary: Register a new patient and start intake session
       operationId: register_patient
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
@@ -59,87 +60,58 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RegisterPatientResponse'
+                $ref: '#/components/schemas/ApiResponse_RegisterPatientResponse'
         '400':
-          description: Invalid request data
+          description: Invalid input
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: Patient already exists
+          description: Duplicate patient
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
+        '422':
+          description: Invalid symptom
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /patients/consultations/answer:
     post:
-      summary: Answer Intake Question
-      description: Submit an answer to an intake question, optionally with medication images
+      tags: [Patients]
+      summary: Answer an intake question
       operationId: answer_intake_question
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AnswerIntakeRequest'
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                patient_id:
-                  type: string
-                  description: Opaque patient ID
-                visit_id:
-                  type: string
-                  description: Visit ID
-                question_id:
-                  type: string
-                  description: Question ID being answered
-                answer:
-                  type: string
-                  description: Patient's answer
-                medication_images:
-                  type: array
-                  items:
-                    type: string
-                    format: binary
-                  description: Optional medication images
       responses:
         '200':
-          description: Answer processed successfully
+          description: Answer accepted, next question or completion returned
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AnswerIntakeResponse'
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient or visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
-          description: Intake already completed or duplicate question
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+                $ref: '#/components/schemas/ApiResponse_AnswerIntakeResponse'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '409': {description: Intake already completed, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Question limit exceeded or duplicate question, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
     patch:
-      summary: Edit Intake Answer
-      description: Edit a previously submitted intake answer
+      tags: [Patients]
+      summary: Edit intake answer
       operationId: edit_intake_answer
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
@@ -147,32 +119,15 @@ paths:
             schema:
               $ref: '#/components/schemas/EditAnswerRequest'
       responses:
-        '200':
-          description: Answer updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EditAnswerResponse'
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient, visit, or question not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+        '200': {description: Edit accepted, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_EditAnswerResponse'}}}}
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/webhook/images:
     post:
-      summary: Upload Medication Images
-      description: Webhook endpoint for uploading medication images (supports both single and multiple images)
+      tags: [Patients]
+      summary: Upload medication images for intake
       operationId: upload_medication_images
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
@@ -180,176 +135,76 @@ paths:
             schema:
               type: object
               properties:
-                patient_id:
-                  type: string
-                  description: Opaque patient ID
-                visit_id:
-                  type: string
-                  description: Visit ID
+                patient_id: {type: string}
+                visit_id: {type: string}
                 images:
                   type: array
                   items:
                     type: string
                     format: binary
-                  description: Medication image files
       responses:
-        '200':
-          description: Images uploaded successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  image_ids:
-                    type: array
-                    items:
-                      type: string
-                    description: Generated image IDs
-                  message:
-                    type: string
-                    example: "Images uploaded successfully"
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+        '200': {description: Successful uploads or errors }
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content:
     get:
-      summary: Get Intake Medication Image Content
-      description: Stream medication image content uploaded during intake with proper access control
+      tags: [Patients]
+      summary: Get intake medication image content
       operationId: get_intake_medication_image_content
-      tags:
-        - Patients
       parameters:
         - name: patient_id
           in: path
           required: true
-          description: Opaque patient ID
-          schema:
-            type: string
+          schema: {type: string}
         - name: visit_id
           in: path
           required: true
-          description: Visit ID
-          schema:
-            type: string
+          schema: {type: string}
         - name: image_id
           in: path
           required: true
-          description: Image ID
-          schema:
-            type: string
+          schema: {type: string}
       responses:
-        '200':
-          description: Image content
-          content:
-            image/*:
-              schema:
-                type: string
-                format: binary
-        '403':
-          description: Access denied to this image
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Image not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+        '200': {description: Raw content returned}
+        '403': {description: Access denied, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/{patient_id}/visits/{visit_id}/images:
     get:
-      summary: List Medication Images
-      description: List metadata for uploaded medication images for a specific visit
+      tags: [Patients]
+      summary: List medication images for a visit
       operationId: list_medication_images
-      tags:
-        - Patients
       parameters:
         - name: patient_id
           in: path
           required: true
-          description: Opaque patient ID
-          schema:
-            type: string
+          schema: {type: string}
         - name: visit_id
           in: path
           required: true
-          description: Visit ID
-          schema:
-            type: string
+          schema: {type: string}
       responses:
-        '200':
-          description: List of medication images
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  images:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        image_id:
-                          type: string
-                        filename:
-                          type: string
-                        upload_date:
-                          type: string
-                          format: date-time
-                        file_size:
-                          type: integer
-        '404':
-          description: Patient or visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+        '200': {description: JSON with image metadata}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/images/{image_id}:
     delete:
-      summary: Delete Medication Image
-      description: Delete a medication image by ID
+      tags: [Patients]
+      summary: Delete a medication image
       operationId: delete_medication_image
-      tags:
-        - Patients
       parameters:
         - name: image_id
           in: path
           required: true
-          description: Image ID
-          schema:
-            type: string
+          schema: {type: string}
       responses:
-        '200':
-          description: Image deleted successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Image deleted successfully"
-        '404':
-          description: Image not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+        '200': {description: Successful deletion}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/summary/previsit:
     post:
-      summary: Generate Pre-Visit Summary
-      description: Generate an AI-powered pre-visit summary from intake data
+      tags: [Patients]
+      summary: Generate pre-visit clinical summary
       operationId: generate_pre_visit_summary
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
@@ -358,65 +213,43 @@ paths:
               $ref: '#/components/schemas/PreVisitSummaryRequest'
       responses:
         '200':
-          description: Pre-visit summary generated successfully
+          description: Previsit summary generated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PreVisitSummaryResponse'
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient or visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+                $ref: '#/components/schemas/ApiResponse_PreVisitSummaryResponse'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Intake not completed, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/{patient_id}/visits/{visit_id}/summary:
     get:
-      summary: Get Pre-Visit Summary
-      description: Retrieve a stored pre-visit summary
+      tags: [Patients]
+      summary: Get pre-visit summary
       operationId: get_pre_visit_summary
-      tags:
-        - Patients
       parameters:
         - name: patient_id
           in: path
           required: true
-          description: Opaque patient ID
-          schema:
-            type: string
+          schema: {type: string}
         - name: visit_id
           in: path
           required: true
-          description: Visit ID
-          schema:
-            type: string
+          schema: {type: string}
       responses:
         '200':
-          description: Pre-visit summary
+          description: Previsit summary found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PreVisitSummaryResponse'
-        '404':
-          description: Patient, visit, or summary not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+                $ref: '#/components/schemas/ApiResponse_PreVisitSummaryResponse'
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/summary/postvisit:
     post:
-      summary: Generate Post-Visit Summary
-      description: Generate a patient-friendly post-visit summary for sharing
+      tags: [Patients]
+      summary: Generate post-visit summary
       operationId: generate_post_visit_summary
-      tags:
-        - Patients
       requestBody:
         required: true
         content:
@@ -425,391 +258,69 @@ paths:
               $ref: '#/components/schemas/PostVisitSummaryRequest'
       responses:
         '200':
-          description: Post-visit summary generated successfully
+          description: Postvisit summary generated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PostVisitSummaryResponse'
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient or visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
+                $ref: '#/components/schemas/ApiResponse_PostVisitSummaryResponse'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Visit not completed or SOAP not available, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /patients/{patient_id}/visits/{visit_id}/summary/postvisit:
     get:
-      summary: Get Post-Visit Summary
-      description: Retrieve a stored post-visit summary
+      tags: [Patients]
+      summary: Get post-visit summary
       operationId: get_post_visit_summary
-      tags:
-        - Patients
       parameters:
         - name: patient_id
           in: path
           required: true
-          description: Opaque patient ID
-          schema:
-            type: string
+          schema: {type: string}
         - name: visit_id
           in: path
           required: true
-          description: Visit ID
-          schema:
-            type: string
+          schema: {type: string}
       responses:
         '200':
-          description: Post-visit summary
+          description: Postvisit summary retrieved
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PostVisitSummaryResponse'
-        '404':
-          description: Patient, visit, or summary not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /workflow/walk-in/create-visit:
+                $ref: '#/components/schemas/ApiResponse_PostVisitSummaryResponse'
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /patients/{patient_id}/visits/{visit_id}/vitals:
     post:
-      summary: Create Walk-In Visit
-      description: Create a walk-in visit for patients without intake
-      operationId: create_walk_in_visit
-      tags:
-        - Workflow
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateWalkInVisitRequest'
-      responses:
-        '201':
-          description: Walk-in visit created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreateWalkInVisitResponse'
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /workflow/visit/{visit_id}/available-steps:
-    get:
-      summary: Get Available Workflow Steps
-      description: Get available workflow steps for a visit based on its workflow type and status
-      operationId: get_available_workflow_steps
-      tags:
-        - Workflow
-      parameters:
-        - name: visit_id
-          in: path
-          required: true
-          description: Visit ID
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Available workflow steps
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  visit_id:
-                    type: string
-                    description: Visit ID
-                  workflow_type:
-                    type: string
-                    description: Type of workflow
-                  current_status:
-                    type: string
-                    description: Current visit status
-                  available_steps:
-                    type: array
-                    items:
-                      type: string
-                    description: List of available workflow steps
-        '404':
-          description: Visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /workflow/visits/walk-in:
-    get:
-      summary: List Walk-In Visits
-      description: List walk-in visits with pagination
-      operationId: list_walk_in_visits
-      tags:
-        - Workflow
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          description: Number of visits to return
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 100
-        - name: offset
-          in: query
-          required: false
-          description: Number of visits to skip
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-      responses:
-        '200':
-          description: List of walk-in visits
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  visits:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        visit_id:
-                          type: string
-                          description: Visit ID
-                        patient_id:
-                          type: string
-                          description: Patient ID
-                        workflow_type:
-                          type: string
-                          description: Workflow type
-                        status:
-                          type: string
-                          description: Visit status
-                        created_at:
-                          type: string
-                          format: date-time
-                          description: Creation timestamp
-                        updated_at:
-                          type: string
-                          format: date-time
-                          description: Last update timestamp
-                  limit:
-                    type: integer
-                    description: Number of items per page
-                  offset:
-                    type: integer
-                    description: Number of items skipped
-                  count:
-                    type: integer
-                    description: Number of items returned
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /notes/transcribe:
-    post:
-      summary: Transcribe Audio
-      description: Queue audio transcription as a background task
-      operationId: transcribe_audio
-      tags:
-        - Notes
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                patient_id:
-                  type: string
-                  description: Opaque patient ID
-                visit_id:
-                  type: string
-                  description: Visit ID
-                audio_file:
-                  type: string
-                  format: binary
-                  description: Audio file to transcribe
-                language:
-                  type: string
-                  enum: [en, sp]
-                  default: en
-                  description: Audio language
-      responses:
-        '202':
-          description: Transcription queued successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Transcription queued successfully"
-                  task_id:
-                    type: string
-                    description: Background task ID
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /notes/soap/generate:
-    post:
-      summary: Generate SOAP Note
-      description: Generate a SOAP note from a transcript using AI
-      operationId: generate_soap_note
-      tags:
-        - Notes
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                patient_id:
-                  type: string
-                  description: Opaque patient ID
-                visit_id:
-                  type: string
-                  description: Visit ID
-                transcript:
-                  type: string
-                  description: Consultation transcript
-                language:
-                  type: string
-                  enum: [en, sp]
-                  default: en
-                  description: Language for SOAP note generation
-      responses:
-        '200':
-          description: SOAP note generated successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  soap_note:
-                    type: object
-                    properties:
-                      subjective:
-                        type: string
-                        description: Patient's subjective complaints
-                      objective:
-                        type: string
-                        description: Objective findings
-                      assessment:
-                        type: string
-                        description: Clinical assessment
-                      plan:
-                        type: string
-                        description: Treatment plan
-                  language:
-                    type: string
-                    description: Language of the SOAP note
-        '400':
-          description: Invalid request data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient or visit not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /notes/vitals:
-    post:
-      summary: Store Vitals
-      description: Store objective vitals data for a visit
+      tags: [Patients]
+      summary: Store vitals data for a visit
       operationId: store_vitals
-      tags:
-        - Notes
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: visit_id
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                patient_id:
-                  type: string
-                  description: Opaque patient ID
-                visit_id:
-                  type: string
-                  description: Visit ID
-                vitals:
-                  type: object
-                  properties:
-                    blood_pressure_systolic:
-                      type: integer
-                      description: Systolic blood pressure
-                    blood_pressure_diastolic:
-                      type: integer
-                      description: Diastolic blood pressure
-                    heart_rate:
-                      type: integer
-                      description: Heart rate (BPM)
-                    temperature:
-                      type: number
-                      format: float
-                      description: Body temperature
-                    weight:
-                      type: number
-                      format: float
-                      description: Weight
-                    height:
-                      type: number
-                      format: float
-                      description: Height
-                    oxygen_saturation:
-                      type: integer
-                      description: Oxygen saturation percentage
+              $ref: '#/components/schemas/VitalsPayload'
       responses:
         '200':
           description: Vitals stored successfully
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Vitals stored successfully"
+                $ref: '#/components/schemas/ApiResponse_Dict'
         '400':
-          description: Invalid request data
+          description: Validation error
           content:
             application/json:
               schema:
@@ -820,635 +331,1157 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
-  /patients/{patient_id}/visits/{visit_id}/vitals:
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
-      summary: Get Vitals
-      description: Retrieve stored vitals data for a visit
+      tags: [Patients]
+      summary: Get vitals data for a visit
       operationId: get_vitals
-      tags:
-        - Notes
       parameters:
         - name: patient_id
           in: path
           required: true
-          description: Opaque patient ID
           schema:
             type: string
         - name: visit_id
           in: path
           required: true
-          description: Visit ID
           schema:
             type: string
       responses:
         '200':
-          description: Vitals data
+          description: Get vitals success
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  vitals:
-                    type: object
-                    properties:
-                      blood_pressure_systolic:
-                        type: integer
-                      blood_pressure_diastolic:
-                        type: integer
-                      heart_rate:
-                        type: integer
-                      temperature:
-                        type: number
-                        format: float
-                      weight:
-                        type: number
-                        format: float
-                      height:
-                        type: number
-                        format: float
-                      oxygen_saturation:
-                        type: integer
-                  recorded_at:
-                    type: string
-                    format: date-time
+                $ref: '#/components/schemas/ApiResponse_Dict'
         '404':
           description: Patient, visit, or vitals not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
-  /patients/{patient_id}/visits/{visit_id}/transcript:
-    get:
-      summary: Get Transcript
-      description: Retrieve the stored transcript for a visit, including structured dialogue
-      operationId: get_transcript
-      tags:
-        - Notes
-      parameters:
-        - name: patient_id
-          in: path
-          required: true
-          description: Opaque patient ID
-          schema:
-            type: string
-        - name: visit_id
-          in: path
-          required: true
-          description: Visit ID
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Transcript data
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  transcript:
-                    type: string
-                    description: Raw transcript text
-                  structured_dialogue:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        speaker:
-                          type: string
-                          enum: [Doctor, Patient]
-                        text:
-                          type: string
-                  language:
-                    type: string
-                  word_count:
-                    type: integer
-                  duration:
-                    type: number
-                    format: float
-        '404':
-          description: Patient, visit, or transcript not found
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
-  /patients/{patient_id}/visits/{visit_id}/soap:
-    get:
-      summary: Get SOAP Note
-      description: Retrieve the stored SOAP note for a visit
-      operationId: get_soap_note
-      tags:
-        - Notes
-      parameters:
-        - name: patient_id
-          in: path
-          required: true
-          description: Opaque patient ID
-          schema:
-            type: string
-        - name: visit_id
-          in: path
-          required: true
-          description: Visit ID
-          schema:
-            type: string
-      responses:
-        '200':
-          description: SOAP note
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  soap_note:
-                    type: object
-                    properties:
-                      subjective:
-                        type: string
-                      objective:
-                        type: string
-                      assessment:
-                        type: string
-                      plan:
-                        type: string
-                  language:
-                    type: string
-                  generated_at:
-                    type: string
-                    format: date-time
-        '404':
-          description: Patient, visit, or SOAP note not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /patients/{patient_id}/visits/{visit_id}/dialogue/structure:
+  /notes/transcribe:
     post:
-      summary: Structure Dialogue
-      description: Clean PII and structure a transcript into alternating Doctor/Patient JSON using an LLM
-      operationId: structure_dialogue
-      tags:
-        - Notes
-      parameters:
-        - name: patient_id
-          in: path
-          required: true
-          description: Opaque patient ID
-          schema:
-            type: string
-        - name: visit_id
-          in: path
-          required: true
-          description: Visit ID
-          schema:
-            type: string
+      tags: [notes]
+      summary: Transcribe audio
+      description: Queue audio transcription and return immediately (202).
+      operationId: transcribe_audio
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [patient_id, visit_id, audio_file]
+              properties:
+                patient_id: {type: string}
+                visit_id: {type: string}
+                language: {type: string, default: en}
+                audio_file: {type: string, format: binary}
+      responses:
+        '202': {description: Queued for transcription}
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Invalid audio file or visit status, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/soap/generate:
+    post:
+      tags: [notes]
+      summary: Generate SOAP note
+      description: Generate SOAP note from transcript.
+      operationId: generate_soap_note
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                transcript:
-                  type: string
-                  description: Raw transcript text to structure
-                language:
-                  type: string
-                  enum: [en, sp]
-                  default: en
-                  description: Language of the transcript
+              $ref: '#/components/schemas/SoapGenerationRequest'
       responses:
         '200':
-          description: Dialogue structured successfully
+          description: SOAP note generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoapGenerationResponse'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: No transcript available or invalid visit status, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/{patient_id}/visits/{visit_id}/transcript:
+    get:
+      tags: [notes]
+      summary: Get transcript
+      description: Get transcript for a visit.
+      operationId: get_transcript
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Transcript returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_TranscriptionSessionDTO'
+        '404': {description: Transcript not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Invalid input, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/{patient_id}/visits/{visit_id}/soap:
+    get:
+      tags: [notes]
+      summary: Get SOAP note
+      description: Get SOAP note for a visit.
+      operationId: get_soap_note
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: SOAP note returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_SoapNoteDTO'
+        '404': {description: Patient, visit, or SOAP note not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/vitals:
+    post:
+      tags: [notes]
+      summary: Store objective vitals
+      operationId: store_vitals_notes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotesVitalsPayload'
+      responses:
+        '200': {description: Vitals stored}
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/{patient_id}/visits/{visit_id}/vitals:
+    get:
+      tags: [notes]
+      summary: Get vitals
+      operationId: get_vitals_notes
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Vitals returned
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  structured_dialogue:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        speaker:
-                          type: string
-                          enum: [Doctor, Patient]
-                        text:
-                          type: string
-                  language:
-                    type: string
-        '400':
-          description: Invalid request data
+                additionalProperties: true
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/test-cors:
+    get:
+      tags: [notes]
+      summary: Test CORS
+      operationId: test_cors
+      responses:
+        '200': {description: OK}
+  /workflow/walk-in/create-visit:
+    post:
+      tags: [workflow]
+      summary: Create walk-in visit
+      description: Create a walk-in visit for patients without intake.
+      operationId: create_walk_in_visit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWalkInVisitRequestSchema'
+      responses:
+        '201':
+          description: Walk-in visit created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Patient or visit not found
+                $ref: '#/components/schemas/ApiResponse_CreateWalkInVisitResponseSchema'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /workflow/visit/{visit_id}/available-steps:
+    get:
+      tags: [workflow]
+      summary: Get available workflow steps
+      description: Get available workflow steps for a visit based on its workflow type and status.
+      operationId: get_available_workflow_steps
+      parameters:
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Available steps, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /workflow/visits/walk-in:
+    get:
+      tags: [workflow]
+      summary: List walk-in visits
+      description: List walk-in visits with pagination.
+      operationId: list_walk_in_visits
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 100}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, default: 0}
+      responses:
+        '200': {description: Walk-in visits listed, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /doctor/preferences:
+    get:
+      tags: [doctor]
+      summary: Get doctor preferences
+      description: Return latest preferences for the default doctor; independent of intake flow.
+      operationId: get_doctor_preferences
+      responses:
+        '200':
+          description: Doctor preferences loaded
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-
-
-
-
+                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+    post:
+      tags: [doctor]
+      summary: Set doctor preferences
+      description: Merge and persist doctor preferences; independent of intake flow.
+      operationId: set_doctor_preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertPreferencesRequest'
+      responses:
+        '200':
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/:
+    get:
+      tags: [audio]
+      summary: List audio files
+      operationId: list_audio_files
+      parameters:
+        - name: patient_id
+          in: query
+          required: false
+          schema: {type: string}
+        - name: visit_id
+          in: query
+          required: false
+          schema: {type: string}
+        - name: audio_type
+          in: query
+          required: false
+          schema: {type: string, description: 'adhoc | visit'}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: Audio files listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_AudioListResponse'
+        '500': {description: Failed to list audio files, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/dialogue:
+    get:
+      tags: [audio]
+      summary: List structured dialogues for audio files
+      operationId: list_audio_dialogues
+      parameters:
+        - name: patient_id
+          in: query
+          required: false
+          schema: {type: string}
+        - name: visit_id
+          in: query
+          required: false
+          schema: {type: string}
+        - name: audio_type
+          in: query
+          required: false
+          schema: {type: string}
+        - name: start_date
+          in: query
+          required: false
+          schema: {type: string, format: date-time}
+        - name: end_date
+          in: query
+          required: false
+          schema: {type: string, format: date-time}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: Audio dialogues listed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_AudioDialogueListResponse'
+        '500': {description: Failed to list audio dialogues, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/{audio_id}:
+    get:
+      tags: [audio]
+      summary: Get audio file metadata
+      operationId: get_audio_metadata
+      parameters:
+        - name: audio_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Audio metadata retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_AudioFileResponse'
+        '404': {description: Audio not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Failed to get audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+    delete:
+      tags: [audio]
+      summary: Delete audio file
+      operationId: delete_audio_file
+      parameters:
+        - name: audio_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204': {description: Deleted}
+        '404': {description: Audio not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Failed to delete audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/{audio_id}/download:
+    get:
+      tags: [audio]
+      summary: Download audio file
+      operationId: download_audio_file
+      parameters:
+        - name: audio_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Binary stream}
+        '404': {description: Audio not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Failed to download audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/{audio_id}/stream:
+    get:
+      tags: [audio]
+      summary: Stream audio file
+      operationId: stream_audio_file
+      parameters:
+        - name: audio_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Binary stream}
+        '404': {description: Audio not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Failed to stream audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /audio/stats/summary:
+    get:
+      tags: [audio]
+      summary: Get audio storage statistics
+      operationId: get_audio_stats
+      responses:
+        '200': {description: Stats returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '500': {description: Failed to get audio statistics, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /intake/start:
+    post:
+      tags: [intake]
+      summary: Start intake session
+      description: Initialize an intake session for a patient using the doctor's preferences.
+      operationId: start_intake
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeStartRequest'
+      responses:
+        '200':
+          description: Intake started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_IntakeStartResponse'
+        '500': {description: Failed to start intake, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /intake/next-question:
+    post:
+      tags: [intake]
+      summary: Get next intake question
+      description: Generate the next intake question using session-configured limits.
+      operationId: next_question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NextQuestionRequest'
+      responses:
+        '200':
+          description: Next question returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_NextQuestionResponse'
+        '404': {description: Session not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription:
+    post:
+      tags: [transcription]
+      summary: Adhoc transcription
+      operationId: transcribe_audio_adhoc
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio_file]
+              properties:
+                audio_file: {type: string, format: binary}
+                language: {type: string, default: en}
+      responses:
+        '200':
+          description: Transcription result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_AdhocTranscriptionResponse'
+        '400': {description: No audio file or validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Invalid file type, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/structure:
+    post:
+      tags: [transcription]
+      summary: Structure transcript text
+      operationId: structure_transcript_text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StructureTextRequest'
+      responses:
+        '200': {description: Structured dialogue returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '400': {description: Empty transcript, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/action-plan:
+    post:
+      tags: [transcription]
+      summary: Queue action plan generation
+      operationId: generate_action_plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanRequest'
+      responses:
+        '202': {description: Action plan generation started, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_ActionPlanResponse'}}}}
+        '404': {description: Adhoc not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: No transcript available, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/{adhoc_id}/action-plan/status:
+    get:
+      tags: [transcription]
+      summary: Get action plan status
+      operationId: get_action_plan_status
+      parameters:
+        - name: adhoc_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Status returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/{adhoc_id}/action-plan:
+    get:
+      tags: [transcription]
+      summary: Get action plan
+      operationId: get_action_plan
+      parameters:
+        - name: adhoc_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Action plan returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
 components:
   schemas:
-
-    RegisterPatientRequest:
-      type: object
-      required:
-        - name
-        - age
-        - gender
-        - chief_complaint
-      properties:
-        name:
-          type: string
-          description: Patient's full name
-          example: "John Doe"
-        age:
-          type: integer
-          minimum: 0
-          maximum: 150
-          description: Patient's age
-          example: 35
-        gender:
-          type: string
-          enum: [male, female, other, prefer_not_to_say]
-          description: Patient's gender
-          example: "male"
-        chief_complaint:
-          type: string
-          description: Primary reason for the visit
-          example: "Chest pain and shortness of breath"
-        language:
-          type: string
-          enum: [en, sp]
-          default: en
-          description: Preferred language for the consultation
-          example: "en"
-
-    RegisterPatientResponse:
-      type: object
-      properties:
-        patient_id:
-          type: string
-          description: Opaque patient ID for external use
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        first_question:
-          type: object
-          properties:
-            question_id:
-              type: string
-              example: "q_001"
-            question:
-              type: string
-              example: "Can you describe the chest pain you're experiencing?"
-            category:
-              type: string
-              example: "symptoms"
-            allows_images:
-              type: boolean
-              example: false
-        language:
-          type: string
-          example: "en"
-        message:
-          type: string
-          example: "Patient registered successfully. Please answer the first question to continue."
-
-    AnswerIntakeRequest:
-      type: object
-      required:
-        - patient_id
-        - visit_id
-        - question_id
-        - answer
-      properties:
-        patient_id:
-          type: string
-          description: Opaque patient ID
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        question_id:
-          type: string
-          description: Question ID being answered
-          example: "q_001"
-        answer:
-          type: string
-          description: Patient's answer
-          example: "The pain is sharp and located in the center of my chest. It started about 2 hours ago."
-        medication_images:
-          type: array
-          items:
-            type: string
-            format: binary
-          description: Optional medication images (for medication-related questions)
-        language:
-          type: string
-          enum: [en, sp]
-          default: en
-          description: Language of the answer
-          example: "en"
-
-    AnswerIntakeResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        message:
-          type: string
-          example: "Answer recorded successfully"
-        next_question:
-          type: object
-          properties:
-            question_id:
-              type: string
-              example: "q_002"
-            question:
-              type: string
-              example: "Have you taken any medications for this pain?"
-            category:
-              type: string
-              example: "medications"
-            allows_images:
-              type: boolean
-              example: true
-        is_complete:
-          type: boolean
-          description: Whether the intake process is complete
-          example: false
-        progress:
-          type: object
-          properties:
-            questions_answered:
-              type: integer
-              example: 1
-            total_questions:
-              type: integer
-              example: 8
-            completion_percentage:
-              type: number
-              format: float
-              example: 12.5
-        ocr_quality_info:
-          $ref: '#/components/schemas/OCRQualityInfo'
-
-    EditAnswerRequest:
-      type: object
-      required:
-        - patient_id
-        - visit_id
-        - question_id
-        - new_answer
-      properties:
-        patient_id:
-          type: string
-          description: Opaque patient ID
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        question_id:
-          type: string
-          description: Question ID to edit
-          example: "q_001"
-        new_answer:
-          type: string
-          description: New answer text
-          example: "The pain is more of a dull ache and has been present for about 3 hours."
-
-    EditAnswerResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        message:
-          type: string
-          example: "Answer updated successfully"
-        updated_answer:
-          type: object
-          properties:
-            question_id:
-              type: string
-              example: "q_001"
-            answer:
-              type: string
-              example: "The pain is more of a dull ache and has been present for about 3 hours."
-            updated_at:
-              type: string
-              format: date-time
-
-    OCRQualityInfo:
-      type: object
-      properties:
-        has_images:
-          type: boolean
-          description: Whether medication images were provided
-          example: true
-        image_count:
-          type: integer
-          description: Number of images processed
-          example: 2
-        processing_status:
-          type: string
-          enum: [success, failed, partial]
-          description: Overall processing status
-          example: "success"
-        extracted_text:
-          type: string
-          description: Text extracted from images
-          example: "Lisinopril 10mg daily, Metformin 500mg twice daily"
-        confidence_score:
-          type: number
-          format: float
-          minimum: 0
-          maximum: 1
-          description: Confidence score for OCR extraction
-          example: 0.85
-
-    PreVisitSummaryRequest:
-      type: object
-      required:
-        - patient_id
-        - visit_id
-      properties:
-        patient_id:
-          type: string
-          description: Opaque patient ID
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        language:
-          type: string
-          enum: [en, sp]
-          default: en
-          description: Language for summary generation
-          example: "en"
-
-    PreVisitSummaryResponse:
-      type: object
-      properties:
-        summary:
-          type: string
-          description: AI-generated pre-visit summary
-          example: "35-year-old male presenting with chest pain and shortness of breath. Pain described as sharp, central chest pain that started 2 hours ago. No current medications. No known allergies. Vital signs pending."
-        language:
-          type: string
-          example: "en"
-        generated_at:
-          type: string
-          format: date-time
-        word_count:
-          type: integer
-          example: 45
-
-    PostVisitSummaryRequest:
-      type: object
-      required:
-        - patient_id
-        - visit_id
-      properties:
-        patient_id:
-          type: string
-          description: Opaque patient ID
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        language:
-          type: string
-          enum: [en, sp]
-          default: en
-          description: Language for summary generation
-          example: "en"
-
-    PostVisitSummaryResponse:
-      type: object
-      properties:
-        summary:
-          type: object
-          properties:
-            diagnosis:
-              type: string
-              description: Primary diagnosis
-              example: "Acute chest pain, likely musculoskeletal"
-            treatment:
-              type: string
-              description: Treatment plan
-              example: "Rest, NSAIDs as needed, follow up if symptoms worsen"
-            follow_up:
-              type: string
-              description: Follow-up instructions
-              example: "Return in 1 week or sooner if pain increases"
-            medications:
-              type: array
-              items:
-                type: string
-              example: ["Ibuprofen 400mg every 6 hours as needed"]
-        language:
-          type: string
-          example: "en"
-        generated_at:
-          type: string
-          format: date-time
-
-    CreateWalkInVisitRequest:
-      type: object
-      required:
-        - name
-        - mobile
-      properties:
-        name:
-          type: string
-          description: Patient name
-          example: "John Doe"
-        mobile:
-          type: string
-          description: Patient mobile number
-          example: "+1234567890"
-        age:
-          type: integer
-          description: Patient age
-          example: 35
-        gender:
-          type: string
-          description: Patient gender
-          example: "male"
-
-    CreateWalkInVisitResponse:
-      type: object
-      properties:
-        patient_id:
-          type: string
-          description: Patient ID
-          example: "pat_abc123def456"
-        visit_id:
-          type: string
-          description: Visit ID
-          example: "vis_xyz789uvw012"
-        workflow_type:
-          type: string
-          description: Workflow type
-          example: "walk_in"
-        status:
-          type: string
-          description: Visit status
-          example: "walk_in_patient"
-        message:
-          type: string
-          description: Response message
-          example: "Walk-in visit created successfully"
-
     ErrorResponse:
       type: object
+      required: [success, error, message, timestamp, request_id]
       properties:
+        success:
+          type: boolean
+          example: false
         error:
           type: string
-          description: Error type
-          example: "ValidationError"
+          example: INTERNAL_SERVER_ERROR
         message:
           type: string
-          description: Error message
-          example: "Invalid patient data provided"
+          example: An unexpected internal server error occurred.
         details:
           type: object
-          description: Additional error details
+          additionalProperties: true
         timestamp:
           type: string
           format: date-time
-          description: When the error occurred
-
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-API-Key
-      description: API key for authentication
-
+        request_id:
+          type: string
+          format: uuid
+    ApiResponse_HealthResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          $ref: '#/components/schemas/HealthResponse'
+    ApiResponse_RegisterPatientResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Created
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          $ref: '#/components/schemas/RegisterPatientResponse'
+    RegisterPatientRequest:
+      type: object
+      required: [first_name, last_name, mobile, age, gender, recently_travelled, consent, country, language]
+      properties:
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        mobile:
+          type: string
+          pattern: "^(\\+|)[0-9]{8,16}$"
+        age:
+          type: integer
+          minimum: 0
+          maximum: 120
+        gender:
+          type: string
+        recently_travelled:
+          type: boolean
+        consent:
+          type: boolean
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+        language:
+          type: string
+          minLength: 2
+          maxLength: 2
+    RegisterPatientResponse:
+      type: object
+      required: [patient_id, visit_id, first_question, message]
+      properties:
+        patient_id:
+          type: string
+        visit_id:
+          type: string
+        first_question:
+          type: string
+        message:
+          type: string
+    ApiResponse_Dict:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          additionalProperties: true
+    HealthResponse:
+      type: object
+      required: [status, timestamp, version, service]
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+          example: 0.1.0
+        service:
+          type: string
+          example: Clinic-AI Intake Assistant
+    VitalsPayload:
+      type: object
+      properties:
+        bloodPressure: {type: string}
+        heartRate: {type: string}
+        temperature: {type: string}
+        respiratoryRate: {type: string}
+        oxygenSaturation: {type: string}
+        weight: {type: string}
+        height: {type: string}
+        bmi: {type: string}
+        notes: {type: string}
+    AnswerIntakeRequest:
+      type: object
+      required: [patient_id, visit_id, question_id, answer]
+      properties:
+        patient_id:
+          type: string
+          format: uuid
+        visit_id:
+          type: string
+          format: uuid
+        question_id:
+          type: string
+          format: uuid
+        answer:
+          type: string
+    ApiResponse_AnswerIntakeResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          properties:
+            next_question_id:
+              type: string
+              format: uuid
+            completion_message:
+              type: string
+    EditAnswerRequest:
+      type: object
+      required: [patient_id, visit_id, question_id, answer]
+      properties:
+        patient_id:
+          type: string
+          format: uuid
+        visit_id:
+          type: string
+          format: uuid
+        question_id:
+          type: string
+          format: uuid
+        answer:
+          type: string
+    ApiResponse_EditAnswerResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          properties:
+            next_question_id:
+              type: string
+              format: uuid
+            completion_message:
+              type: string
+    PreVisitSummaryRequest:
+      type: object
+      required: [patient_id, visit_id]
+      properties:
+        patient_id:
+          type: string
+          format: uuid
+        visit_id:
+          type: string
+          format: uuid
+    ApiResponse_PreVisitSummaryResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          properties:
+            summary:
+              type: string
+    PostVisitSummaryRequest:
+      type: object
+      required: [patient_id, visit_id]
+      properties:
+        patient_id:
+          type: string
+          format: uuid
+        visit_id:
+          type: string
+          format: uuid
+    ApiResponse_PostVisitSummaryResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: OK
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          type: object
+          properties:
+            summary:
+              type: string
+    SoapGenerationRequest:
+      type: object
+      required: [patient_id, visit_id]
+      properties:
+        patient_id: {type: string}
+        visit_id: {type: string}
+        transcript: {type: string, nullable: true}
+    SoapGenerationResponse:
+      type: object
+      required: [patient_id, visit_id, soap_note, generated_at, message]
+      properties:
+        patient_id: {type: string}
+        visit_id: {type: string}
+        soap_note:
+          type: object
+          additionalProperties: true
+        generated_at: {type: string}
+        message: {type: string}
+    SoapNoteDTO:
+      type: object
+      required: [subjective, objective, assessment, plan, highlights, red_flags, generated_at]
+      properties:
+        subjective: {type: string}
+        objective: {type: object, additionalProperties: true}
+        assessment: {type: string}
+        plan: {type: string}
+        highlights: {type: array, items: {type: string}}
+        red_flags: {type: array, items: {type: string}}
+        generated_at: {type: string}
+        model_info: {type: object, additionalProperties: true, nullable: true}
+        confidence_score: {type: number, nullable: true}
+    TranscriptionSessionDTO:
+      type: object
+      required: [audio_file_path, transcript, transcription_status, started_at, completed_at, error_message, audio_duration_seconds, word_count]
+      properties:
+        audio_file_path: {type: string, nullable: true}
+        transcript: {type: string, nullable: true}
+        transcription_status: {type: string}
+        started_at: {type: string, nullable: true}
+        completed_at: {type: string, nullable: true}
+        error_message: {type: string, nullable: true}
+        audio_duration_seconds: {type: number, nullable: true}
+        word_count: {type: integer, nullable: true}
+        structured_dialogue:
+          type: array
+          items: {type: object, additionalProperties: true}
+          nullable: true
+    ApiResponse_TranscriptionSessionDTO:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: Success}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/TranscriptionSessionDTO'
+    ApiResponse_SoapNoteDTO:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: Success}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/SoapNoteDTO'
+    NotesVitalsPayload:
+      type: object
+      required: [patient_id, visit_id, vitals]
+      properties:
+        patient_id: {type: string}
+        visit_id: {type: string}
+        vitals: {type: object, additionalProperties: true}
+    CreateWalkInVisitRequestSchema:
+      type: object
+      required: [name, mobile]
+      properties:
+        name: {type: string, description: Patient name}
+        mobile: {type: string, description: Patient mobile number}
+        age: {type: integer, nullable: true, description: Patient age}
+        gender: {type: string, nullable: true, description: Patient gender}
+    CreateWalkInVisitResponseSchema:
+      type: object
+      required: [patient_id, visit_id, workflow_type, status, message]
+      properties:
+        patient_id: {type: string}
+        visit_id: {type: string}
+        workflow_type: {type: string}
+        status: {type: string}
+        message: {type: string}
+    ApiResponse_CreateWalkInVisitResponseSchema:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Walk-in visit created successfully'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/CreateWalkInVisitResponseSchema'
+    DoctorPreferencesResponse:
+      type: object
+      required: [doctor_id, global_categories, selected_categories, max_questions]
+      properties:
+        doctor_id: {type: string}
+        global_categories:
+          type: array
+          items: {type: string}
+        selected_categories:
+          type: array
+          items: {type: string}
+        max_questions: {type: integer}
+    UpsertPreferencesRequest:
+      type: object
+      properties:
+        categories:
+          type: array
+          items: {type: string}
+          default: []
+        max_questions:
+          type: integer
+          minimum: 1
+          maximum: 10
+        global_categories:
+          type: array
+          nullable: true
+          items: {type: string}
+    ApiResponse_DoctorPreferencesResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: Doctor preferences loaded}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/DoctorPreferencesResponse'
+    AudioFileResponse:
+      type: object
+      required: [audio_id, filename, content_type, file_size, audio_type, created_at, updated_at]
+      properties:
+        audio_id: {type: string}
+        filename: {type: string}
+        content_type: {type: string}
+        file_size: {type: integer}
+        duration_seconds: {type: number, nullable: true}
+        patient_id: {type: string, nullable: true}
+        visit_id: {type: string, nullable: true}
+        adhoc_id: {type: string, nullable: true}
+        audio_type: {type: string}
+        created_at: {type: string}
+        updated_at: {type: string}
+    AudioListResponse:
+      type: object
+      required: [files, total_count, limit, offset]
+      properties:
+        files:
+          type: array
+          items: {$ref: '#/components/schemas/AudioFileResponse'}
+        total_count: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+    AudioDialogueResponse:
+      type: object
+      required: [audio_id, filename, audio_type, created_at]
+      properties:
+        audio_id: {type: string}
+        filename: {type: string}
+        duration_seconds: {type: number, nullable: true}
+        patient_id: {type: string, nullable: true}
+        visit_id: {type: string, nullable: true}
+        adhoc_id: {type: string, nullable: true}
+        audio_type: {type: string}
+        created_at: {type: string}
+        structured_dialogue:
+          type: array
+          items: {type: object, additionalProperties: true}
+          nullable: true
+    AudioDialogueListResponse:
+      type: object
+      required: [dialogues, total_count, limit, offset]
+      properties:
+        dialogues:
+          type: array
+          items: {$ref: '#/components/schemas/AudioDialogueResponse'}
+        total_count: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+    ApiResponse_AudioListResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Audio files listed'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/AudioListResponse'
+    ApiResponse_AudioDialogueListResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Audio dialogues listed'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/AudioDialogueListResponse'
+    ApiResponse_AudioFileResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Audio metadata retrieved'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/AudioFileResponse'
+    IntakeStartRequest:
+      type: object
+      required: [patient_id, doctor_id]
+      properties:
+        patient_id: {type: string}
+        doctor_id: {type: string}
+    IntakeStartResponse:
+      type: object
+      required: [patient_id, doctor_id, categories, max_questions, asked_count, created_at]
+      properties:
+        patient_id: {type: string}
+        doctor_id: {type: string}
+        categories:
+          type: array
+          items: {type: string}
+        max_questions: {type: integer}
+        asked_count: {type: integer}
+        created_at: {type: string, format: date-time}
+    NextQuestionRequest:
+      type: object
+      required: [patient_id]
+      properties:
+        patient_id: {type: string}
+        last_answer: {type: string, nullable: true}
+    NextQuestionResponse:
+      type: object
+      required: [question, asked_count, max_questions]
+      properties:
+        question: {type: string}
+        asked_count: {type: integer}
+        max_questions: {type: integer}
+    ApiResponse_IntakeStartResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Intake started'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/IntakeStartResponse'
+    ApiResponse_NextQuestionResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Next question'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/NextQuestionResponse'
+    AdhocTranscriptionResponse:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+        language: {type: string, nullable: true}
+        confidence: {type: number, nullable: true}
+        duration: {type: number, nullable: true}
+        word_count: {type: integer, nullable: true}
+        model: {type: string, nullable: true}
+        filename: {type: string, nullable: true}
+        adhoc_id: {type: string, nullable: true}
+    StructureTextRequest:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+        model: {type: string, nullable: true}
+        adhoc_id: {type: string, nullable: true}
+    ActionPlanRequest:
+      type: object
+      required: [adhoc_id]
+      properties:
+        adhoc_id: {type: string}
+    ActionPlanResponse:
+      type: object
+      required: [adhoc_id, status, message]
+      properties:
+        adhoc_id: {type: string}
+        status: {type: string}
+        message: {type: string}
+    ApiResponse_AdhocTranscriptionResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: Success}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/AdhocTranscriptionResponse'
+    ApiResponse_ActionPlanResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: 'Action plan generation started'}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/ActionPlanResponse'
 tags:
+  - name: Health
   - name: Patients
-    description: Patient management and intake
-  - name: Notes
-    description: Medical notes, transcripts, and SOAP notes
-  - name: Workflow
-    description: Workflow management for different visit types

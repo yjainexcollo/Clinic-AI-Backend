@@ -3,10 +3,12 @@ Common schemas and reusable components for scalable API design.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Union
+from typing import Generic, Optional, TypeVar, List, Dict, Any, Union
+from pydantic.generics import GenericModel
 from pydantic import BaseModel, Field, validator
 import uuid
 
+T = TypeVar("T")
 
 # ============================================================================
 # BASE RESPONSE SCHEMAS
@@ -26,6 +28,14 @@ class BaseResponse(BaseModel):
         }
 
 
+class ApiResponse(GenericModel, Generic[T]):
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field("", description="Response message")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Response timestamp")
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking")
+    data: Optional[T] = Field(None, description="Response payload")
+
+
 class ErrorResponse(BaseModel):
     """Standardized error response schema."""
     
@@ -33,7 +43,7 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error type/code")
     message: str = Field(..., description="Human-readable error message")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Error timestamp")
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking")
 
 

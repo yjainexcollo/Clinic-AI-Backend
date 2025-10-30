@@ -5,35 +5,47 @@ Patient registration schemas.
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, validator
+import re
 
 from .common import PersonalInfo, ContactInfo
 
 
-class RegisterPatientRequest(PersonalInfo, ContactInfo):
-    """Request schema for patient registration."""
-    
-    recently_travelled: bool = Field(False, description="Has the patient travelled recently")
-    consent: bool = Field(..., description="Patient consent for data processing (must be true)")
-    country: str = Field("US", description="ISO 3166-1 alpha-2 country code (default US)")
-    language: str = Field("en", description="Preferred language (en for English, es for Spanish)")
-    
-    @validator("language")
-    def validate_language(cls, v):
-        if v not in ["en", "es"]:
-            raise ValueError("Language must be 'en' (English) or 'es' (Spanish)")
-        return v
-    
+class RegisterPatientRequest(BaseModel):
+    first_name: str = Field(..., min_length=1, max_length=40, description="First name")
+    last_name: str = Field(..., min_length=1, max_length=40, description="Last name")
+    mobile: str = Field(..., pattern=r"^(\\+|)[0-9]{8,16}$", description="Mobile phone number (E.164 or local)")
+    age: int = Field(..., ge=0, le=120)
+    gender: str = Field(...)
+    recently_travelled: bool = Field(False)
+    consent: bool = Field(..., description="Must be true")
+    country: str = Field("US", min_length=2, max_length=2)
+    language: str = Field("en", pattern=r"^(en|es)$")
+
+    @validator("first_name", "last_name", pre=True)
+    def validate_names(cls, v):
+        s = v.strip() if isinstance(v, str) else v
+        if not s:
+            raise ValueError("First and last names cannot be blank")
+        return re.sub(r"[\x00-\x1F]+", "", s)[:40]
+
+    @validator("country", pre=True)
+    def validate_country(cls, v):
+        s = v.strip().upper()
+        if len(s) != 2 or not s.isalpha():
+            raise ValueError("country must be ISO alpha-2 code")
+        return s
+
+    @validator("mobile")
+    def validate_mobile(cls, v):
+        if not re.match(r"^(\\+|)[0-9]{8,16}$", v):
+            raise ValueError("Invalid mobile format")
+        return v.strip()
+
     @validator("consent")
     def validate_consent(cls, v):
         if v is not True:
-            raise ValueError("Consent must be provided to proceed")
+            raise ValueError("Consent must be True")
         return v
-    
-    @validator("country")
-    def validate_country(cls, v):
-        if len(v) != 2 or not v.isalpha():
-            raise ValueError("Country must be a 2-letter ISO code")
-        return v.upper()
 
 
 class RegisterPatientResponse(BaseModel):

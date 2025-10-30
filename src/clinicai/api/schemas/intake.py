@@ -5,6 +5,7 @@ Intake session schemas for patient Q&A.
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, validator
+import re
 
 from .common import QuestionAnswer
 
@@ -12,17 +13,16 @@ from .common import QuestionAnswer
 class AnswerIntakeRequest(BaseModel):
     """Request schema for answering intake questions."""
     
-    patient_id: str = Field(..., description="Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
-    answer: str = Field(
-        ..., min_length=1, max_length=1000, description="Answer to the question"
-    )
+    patient_id: str = Field(..., min_length=10, max_length=50)
+    visit_id: str = Field(..., min_length=10, max_length=50)
+    answer: str = Field(..., min_length=1, max_length=1000)
     
-    @validator("answer")
-    def validate_answer(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Answer cannot be empty")
-        return v.strip()
+    @validator("answer", pre=True)
+    def sanitize_answer(cls, v):
+        s = v.strip() if isinstance(v, str) else v
+        if not s:
+            raise ValueError("Answer cannot be blank")
+        return re.sub(r"[\x00-\x1F]+", "", s)[:1000]
     
     @validator("patient_id")
     def validate_patient_id(cls, v):
@@ -52,16 +52,17 @@ class AnswerIntakeResponse(BaseModel):
 class EditAnswerRequest(BaseModel):
     """Request schema for editing an existing answer."""
     
-    patient_id: str = Field(..., description="Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
-    question_number: int = Field(..., ge=1, description="Question number to edit (1-based)")
-    new_answer: str = Field(..., min_length=1, max_length=1000, description="Replacement answer")
-    
-    @validator("new_answer")
-    def validate_answer(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Answer cannot be empty")
-        return v.strip()
+    patient_id: str = Field(..., min_length=10, max_length=50)
+    visit_id: str = Field(..., min_length=10, max_length=50)
+    question_number: int = Field(..., ge=1)
+    new_answer: str = Field(..., min_length=1, max_length=1000)
+
+    @validator("new_answer", pre=True)
+    def sanitize_new_answer(cls, v):
+        s = v.strip() if isinstance(v, str) else v
+        if not s:
+            raise ValueError("New answer cannot be blank")
+        return re.sub(r"[\x00-\x1F]+", "", s)[:1000]
     
     @validator("patient_id")
     def validate_patient_id(cls, v):

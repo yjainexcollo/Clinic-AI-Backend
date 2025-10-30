@@ -106,3 +106,8 @@ class GeneratePreVisitSummaryUseCase:
             medication_images=summary_result.get("medication_images") if isinstance(summary_result, dict) else None,
             red_flags=summary_result.get("red_flags") if isinstance(summary_result, dict) else None,
         )
+
+def clean_summary_for_patient(response_dict):
+    # Remove common internal fields not meant for patients
+    forbidden = ["clinic_name", "doctor_name", "patient_name", "visit_date", "storage_path"]
+    return {k: v for k, v in response_dict.items() if k not in forbidden}

@@ -14,11 +14,19 @@ from .api.routers import health, patients, notes, workflow
 from .api.routers import doctor as doctor_router
 from .api.routers import transcription as transcription_router
 from .api.routers import audio as audio_router
+from .api.routers import intake as intake_router
 from .core.config import get_settings
 from .domain.errors import DomainError
 from .core.hipaa_audit import get_audit_logger
 from .middleware.hipaa_middleware import HIPAAAuditMiddleware
 from .middleware.performance_middleware import PerformanceMiddleware
+from clinicai.middleware.request_id_middleware import RequestIDMiddleware
+from clinicai.api.errors import APIError, ValidationError, NotFoundError
+from clinicai.api.schemas.common import ErrorResponse
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+import logging
 # Azure Monitor removed - was causing issues
 import asyncio
 
@@ -128,8 +136,9 @@ def create_app() -> FastAPI:
         title="Clinic-AI Intake Assistant",
         description="AI-powered clinical intake system for small and mid-sized clinics",
         version=settings.app_version,
-        docs_url="/docs",  # Always enable docs
-        redoc_url="/redoc",  # Always enable redoc
+        docs_url="/docs",   # Restore Swagger UI
+        redoc_url="/redoc", # Restore ReDoc UI (optional)
+        openapi_url="/openapi.json", # Restore OpenAPI JSON
         lifespan=lifespan,
     )
 
@@ -201,16 +210,18 @@ def create_app() -> FastAPI:
         
         return response
 
+    # Register X-Request-ID middleware after CORS etc.
+    app.add_middleware(RequestIDMiddleware)
+
     # Include only the routers you want to show in Swagger UI
     app.include_router(patients.router)
     app.include_router(notes.router)
     app.include_router(workflow.router)
     app.include_router(health.router)
-    
-    # Comment out unwanted routers to hide them from Swagger UI
-    # app.include_router(transcription_router.router)
-    # app.include_router(doctor_router.router)
-    # app.include_router(audio_router.router)
+    app.include_router(doctor_router.router)
+    app.include_router(audio_router.router)
+    app.include_router(intake_router.router)
+    app.include_router(transcription_router.router)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)
@@ -230,6 +241,61 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=422,
             content={"error": "VALIDATION_ERROR", "message": str(exc), "details": {}},
+        )
+
+    @app.exception_handler(APIError)
+    async def api_error_handler(request: Request, exc: APIError):
+        req_id = getattr(request.state, "request_id", None)
+        logging.error(f"APIError: {exc.code} ({exc.http_status}) {exc.message} | request_id={req_id}")
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=ErrorResponse(
+                error=exc.code,
+                message=exc.message,
+                request_id=req_id or "",
+                details=exc.details or {}
+            ).dict(),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def pydantic_error_handler(request: Request, exc: RequestValidationError):
+        req_id = getattr(request.state, "request_id", None)
+        logging.error(f"ValidationError: {exc.errors()} | request_id={req_id}")
+        return JSONResponse(
+            status_code=422,
+            content=ErrorResponse(
+                error="INVALID_INPUT",
+                message="Input validation failed.",
+                request_id=req_id or "",
+                details={"errors": exc.errors()}
+            ).dict()
+        )
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError):
+        req_id = getattr(request.state, "request_id", None)
+        logging.error(f"NotFoundError: {exc.message} | request_id={req_id}")
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error="NOT_FOUND",
+                message=exc.message,
+                request_id=req_id or "",
+                details=exc.details or {}
+            ).dict()
+        )
+
+    @app.exception_handler(Exception)
+    async def internal_error_handler(request: Request, exc: Exception):
+        req_id = getattr(request.state, "request_id", None)
+        logging.error(f"Unhandled error: {type(exc)} | request_id={req_id}")
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error="INTERNAL_ERROR",
+                message="An unexpected error has occurred. Please try again later.",
+                request_id=req_id or "",
+            ).dict(),
         )
 
     return app
