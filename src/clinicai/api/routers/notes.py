@@ -372,7 +372,7 @@ async def generate_soap_note(
         )
 
         # Execute use case
-        use_case = GenerateSoapNoteUseCase(patient_repo, soap_service)
+        use_case = GenerateSoapNoteUseCase(patient_repo, visit_repo, soap_service)
         result = await use_case.execute(decoded_request)
         
         return result
