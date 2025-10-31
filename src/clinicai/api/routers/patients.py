@@ -46,7 +46,8 @@ from ..schemas import (
     RegisterPatientResponse,
     EditAnswerRequest as EditAnswerRequestSchema,
     EditAnswerResponse as EditAnswerResponseSchema,
-    RegisterPatientRequest as RegisterPatientRequestSchema
+    RegisterPatientRequest as RegisterPatientRequestSchema,
+    IntakeSummarySchema
 )
 from fastapi import UploadFile, File, Form
 from fastapi.responses import Response
@@ -250,8 +251,14 @@ async def answer_intake_question(
                     logger.warning("[AnswerIntake][FORM] Failed to decode patient_id '%s': %s; using raw value", form_patient_id, e)
                     internal_pid = form_patient_id
                 
-                # Store each image in database
+                # Store each image using blob storage (same as webhook endpoint)
                 from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+                from ...adapters.storage.azure_blob_service import get_azure_blob_service
+                from ...adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+                
+                blob_service = get_azure_blob_service()
+                blob_repo = BlobFileRepository()
+                
                 for file in files:
                     if isinstance(file, UploadFile) and file.filename:
                         raw_ct = (file.content_type or "").lower()
@@ -259,15 +266,42 @@ async def answer_intake_question(
                         valid_types = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
                         if content_type in valid_types:
                             content = await file.read()
+                            
+                            # Upload to blob storage
+                            blob_info = await blob_service.upload_file(
+                                file_data=content,
+                                filename=file.filename,
+                                content_type=content_type,
+                                file_type="image",
+                                patient_id=str(internal_pid),
+                                visit_id=str(form_visit_id)
+                            )
+                            
+                            # Create blob reference
+                            blob_reference = await blob_repo.create_blob_reference(
+                                blob_path=blob_info["blob_path"],
+                                container_name=blob_info["container_name"],
+                                original_filename=file.filename,
+                                content_type=content_type,
+                                file_size=len(content),
+                                blob_url=blob_info["blob_url"],
+                                file_type="image",
+                                category="medication",
+                                patient_id=str(internal_pid),
+                                visit_id=str(form_visit_id)
+                            )
+                            
+                            # Store DB record with blob reference
                             doc = MedicationImageMongo(
                                 patient_id=str(internal_pid),
                                 visit_id=str(form_visit_id),
-                                image_data=content,
                                 content_type=content_type,
                                 filename=file.filename,
+                                file_size=len(content),
+                                blob_reference_id=blob_reference.file_id,
                             )
                             await doc.insert()
-                            logger.info(f"[AnswerIntake] Stored image {file.filename} in database")
+                            logger.info(f"[AnswerIntake] Stored image {file.filename} in blob storage and database")
                         else:
                             logger.warning(f"[AnswerIntake] Skipping invalid file type: {content_type}")
             
@@ -501,31 +535,105 @@ async def get_intake_medication_image_content(
     """Get medication image content uploaded during intake with proper access control."""
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
+        logger.info(f"[GetMedicationImage] Request: patient_id={patient_id[:50]}..., visit_id={visit_id}, image_id={image_id}")
+        
         # Normalize patient ID
         try:
             internal_patient_id = decode_patient_id(patient_id)
-        except Exception:
+            logger.info(f"[GetMedicationImage] Decoded patient_id: {internal_patient_id[:50]}...")
+        except Exception as e:
+            logger.warning(f"[GetMedicationImage] Could not decode patient_id, using as-is: {e}")
             internal_patient_id = patient_id
         
         # Find the image with security validation
-        doc = await MedicationImageMongo.get(PydanticObjectId(image_id))
+        try:
+            # Try to parse as ObjectId
+            try:
+                obj_id = PydanticObjectId(image_id)
+            except Exception as parse_error:
+                logger.error(f"[GetMedicationImage] Invalid ObjectId format: {image_id}, error: {parse_error}")
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "INVALID_IMAGE_ID", "message": f"Invalid image ID format: {image_id}"}
+                )
+            
+            doc = await MedicationImageMongo.get(obj_id)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[GetMedicationImage] Failed to get image document with ID {image_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=404, 
+                detail={"error": "NOT_FOUND", "message": f"Image not found: {image_id}"}
+            )
+            
         if not doc:
+            logger.warning(f"[GetMedicationImage] Image document not found for ID: {image_id}")
             raise HTTPException(
                 status_code=404, 
                 detail={"error": "NOT_FOUND", "message": "Image not found"}
             )
         
+        logger.info(f"[GetMedicationImage] Found image document: patient_id={doc.patient_id[:50] if len(str(doc.patient_id)) > 50 else doc.patient_id}..., visit_id={doc.visit_id}, blob_reference_id={doc.blob_reference_id}")
+        
         # Security check: verify the image belongs to the specified patient and visit
-        if doc.patient_id != str(internal_patient_id) or doc.visit_id != str(visit_id):
+        # Check both internal and encoded patient_id (images might be stored with either format)
+        from ...core.utils.crypto import encode_patient_id
+        patient_encoded_id = encode_patient_id(str(internal_patient_id))
+        patient_id_matches = (
+            doc.patient_id == str(internal_patient_id) or 
+            doc.patient_id == patient_encoded_id or
+            doc.patient_id == patient_id  # Also check original request ID
+        )
+        
+        logger.info(f"[GetMedicationImage] Patient ID match check: doc.patient_id={doc.patient_id[:50] if len(str(doc.patient_id)) > 50 else doc.patient_id}, internal={str(internal_patient_id)[:50]}..., encoded={patient_encoded_id[:50]}..., request={patient_id[:50]}..., matches={patient_id_matches}")
+        
+        if not patient_id_matches or doc.visit_id != str(visit_id):
+            logger.warning(f"[GetMedicationImage] Access denied: patient_id_match={patient_id_matches}, visit_match={doc.visit_id == str(visit_id)}")
             raise HTTPException(
                 status_code=403, 
                 detail={"error": "FORBIDDEN", "message": "Access denied to this image"}
             )
         
-        return Response(
-            content=doc.image_data, 
-            media_type=getattr(doc, "content_type", "application/octet-stream")
-        )
+        # Fetch image from blob storage
+        from ...adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+        from ...adapters.storage.azure_blob_service import get_azure_blob_service
+        
+        try:
+            logger.info(f"[GetMedicationImage] Fetching blob reference: {doc.blob_reference_id}")
+            blob_repo = BlobFileRepository()
+            blob_service = get_azure_blob_service()
+            
+            # Get blob reference
+            blob_ref = await blob_repo.get_blob_reference_by_id(doc.blob_reference_id)
+            if not blob_ref:
+                logger.error(f"[GetMedicationImage] Blob reference not found: {doc.blob_reference_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": "NOT_FOUND", "message": "Blob reference not found"}
+                )
+            
+            logger.info(f"[GetMedicationImage] Blob reference found: blob_path={blob_ref.blob_path}")
+            
+            # Download from blob storage
+            file_data = await blob_service.download_file(
+                blob_path=blob_ref.blob_path
+            )
+            
+            logger.info(f"[GetMedicationImage] Successfully downloaded {len(file_data)} bytes from blob storage")
+            
+            return Response(
+                content=file_data,
+                media_type=doc.content_type or "application/octet-stream"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[GetMedicationImage] Error fetching image from blob storage: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "INTERNAL_ERROR", "message": "Failed to retrieve image from storage"}
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -579,6 +687,129 @@ async def delete_medication_image(request: Request, image_id: str):
     except Exception as e:
         logger.error("Error deleting medication image", exc_info=True)
         return fail(request, error="INTERNAL_ERROR", message=str(e))
+
+
+@router.post(
+    "/{patient_id}/visits/{visit_id}/intake/reset",
+    response_model=ApiResponse[Dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ErrorResponse, "description": "Validation error"},
+        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def reset_intake_session(
+    request: Request,
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
+):
+    """Reset intake session - clear all questions and start fresh."""
+    try:
+        # Decode patient ID if needed
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        # Get patient and visit
+        from ...domain.value_objects.patient_id import PatientId
+        from ...domain.value_objects.visit_id import VisitId
+        
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        if not patient:
+            return fail(request, error="PATIENT_NOT_FOUND", message=f"Patient {patient_id} not found", status_message=status.HTTP_404_NOT_FOUND)
+        
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        if not visit:
+            return fail(request, error="VISIT_NOT_FOUND", message=f"Visit {visit_id} not found", status_message=status.HTTP_404_NOT_FOUND)
+        
+        # Reset intake session by truncating all questions (pass -1 to truncate_after to clear all)
+        if visit.intake_session:
+            visit.intake_session.truncate_after(-1)
+            visit.symptom = ""  # Reset symptom too
+            visit.status = "intake"  # Reset visit status
+            visit.updated_at = datetime.utcnow()
+            await visit_repo.save(visit)
+            logger.info(f"Reset intake session for patient {internal_patient_id}, visit {visit_id}")
+        
+        return ok(request, data={"message": "Intake session reset successfully", "patient_id": internal_patient_id, "visit_id": visit_id})
+        
+    except Exception as e:
+        logger.error("Unhandled error in reset_intake_session", exc_info=True)
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
+
+
+@router.get(
+    "/{patient_id}/visits/{visit_id}/intake/status",
+    response_model=ApiResponse[IntakeSummarySchema],
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_intake_status(
+    request: Request,
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
+):
+    """Get the current status and history of an intake session for a given patient and visit."""
+    from ...domain.value_objects.patient_id import PatientId
+    from ...domain.value_objects.visit_id import VisitId
+    from ..schemas.common import QuestionAnswer
+    
+    try:
+        # Decode patient ID if needed
+        try:
+            internal_patient_id = decode_patient_id(patient_id)
+        except Exception:
+            internal_patient_id = patient_id
+        
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        if not patient:
+            return fail(request, error="PATIENT_NOT_FOUND", message=f"Patient {patient_id} not found", status_message=status.HTTP_404_NOT_FOUND)
+
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        if not visit:
+            return fail(request, error="VISIT_NOT_FOUND", message=f"Visit {visit_id} not found for patient {patient_id}", status_message=status.HTTP_404_NOT_FOUND)
+
+        if not visit.intake_session:
+            return fail(request, error="INTAKE_SESSION_NOT_FOUND", message="No intake session found for this visit", status_message=status.HTTP_404_NOT_FOUND)
+
+        intake_session = visit.intake_session
+        questions_asked_schema = [
+            QuestionAnswer(
+                question_id=qa.question_id.value,
+                question=qa.question,
+                answer=qa.answer,
+                timestamp=qa.timestamp,
+                question_number=qa.question_number
+            ) for qa in intake_session.questions_asked
+        ]
+
+        response_data = IntakeSummarySchema(
+            visit_id=visit_id,
+            status=visit.status,
+            questions_asked=questions_asked_schema,
+            total_questions=intake_session.current_question_count,
+            max_questions=intake_session.max_questions,
+            intake_status=intake_session.status,
+            started_at=intake_session.started_at,
+            completed_at=intake_session.completed_at,
+            pending_question=intake_session.pending_question
+        )
+        return ok(request, data=response_data)
+
+    except Exception as e:
+        logger.error("Error getting intake status", exc_info=True)
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred while retrieving intake status")
 
 
 @router.post(
@@ -709,13 +940,44 @@ async def get_pre_visit_summary(
                 question_service = OpenAIQuestionService()
                 
                 summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
+                # Pass the original patient_id (encoded) to use case so it can query images correctly
                 summary_request = PreVisitSummaryRequest(
-                    patient_id=internal_patient_id,
+                    patient_id=patient_id,  # Use original encoded patient_id from request
                     visit_id=visit_id,
                 )
                 
                 result = await summary_use_case.execute(summary_request)
                 logger.info(f"Successfully generated pre-visit summary for visit {visit_id}")
+                
+                # Attach images explicitly in case use case didn't find them
+                if not result.medication_images:
+                    logger.warning(f"[GetPreVisitSummary] Use case returned no images, querying directly...")
+                    from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+                    from beanie.operators import Or
+                    from ...core.utils.crypto import encode_patient_id
+                    
+                    patient_internal_id = str(patient.patient_id.value)
+                    patient_encoded_id = encode_patient_id(patient_internal_id)
+                    
+                    docs = await MedicationImageMongo.find(
+                        Or(
+                            MedicationImageMongo.patient_id == patient_internal_id,
+                            MedicationImageMongo.patient_id == patient_encoded_id,
+                            MedicationImageMongo.patient_id == patient_id  # Original request ID
+                        ),
+                        MedicationImageMongo.visit_id == visit_id,
+                    ).to_list()
+                    
+                    if docs:
+                        result.medication_images = [
+                            {
+                                "id": str(getattr(d, "id", "")),
+                                "filename": getattr(d, "filename", "unknown"),
+                                "content_type": getattr(d, "content_type", ""),
+                            }
+                            for d in docs
+                        ]
+                        logger.info(f"[GetPreVisitSummary] Found {len(result.medication_images)} images in direct query")
                 
                 return PreVisitSummaryResponse(
                     patient_id=encode_patient_id(result.patient_id),
@@ -735,10 +997,27 @@ async def get_pre_visit_summary(
 
         # Attach any uploaded medication images
         from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+        from beanie.operators import Or
+        from ...core.utils.crypto import encode_patient_id
+        
+        # Try both internal ID and encoded ID (in case images were stored with encoded ID)
+        patient_internal_id = str(patient.patient_id.value)
+        patient_encoded_id = encode_patient_id(patient_internal_id)
+        
+        # Also try with the original patient_id from request (might be encoded)
+        # This handles cases where images were stored with the exact encoded ID from the request
         docs = await MedicationImageMongo.find(
-            MedicationImageMongo.patient_id == patient.patient_id.value,
+            Or(
+                MedicationImageMongo.patient_id == patient_internal_id,
+                MedicationImageMongo.patient_id == patient_encoded_id,
+                MedicationImageMongo.patient_id == patient_id  # Also check the original request ID
+            ),
             MedicationImageMongo.visit_id == visit.visit_id.value,
         ).to_list()
+        
+        logger.info(f"[GetPreVisitSummary] Querying images for visit {visit.visit_id.value} with patient_id variants: internal={patient_internal_id[:20]}..., encoded={patient_encoded_id[:20]}..., request={patient_id[:20]}...")
+        logger.info(f"[GetPreVisitSummary] Found {len(docs) if docs else 0} medication images")
+        
         images_meta = [
             {
                 "id": str(getattr(d, "id", "")),
@@ -747,6 +1026,9 @@ async def get_pre_visit_summary(
             }
             for d in docs
         ] if docs else None
+        
+        if images_meta:
+            logger.info(f"[GetPreVisitSummary] Returning {len(images_meta)} medication images: {[img['filename'] for img in images_meta]}")
 
         return PreVisitSummaryResponse(
             patient_id=encode_patient_id(patient.patient_id.value),

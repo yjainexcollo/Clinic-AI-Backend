@@ -28,6 +28,9 @@ class GeneratePreVisitSummaryUseCase:
 
     async def execute(self, request: PreVisitSummaryRequest) -> PreVisitSummaryResponse:
         """Execute the pre-visit summary generation use case."""
+        # Store original request patient_id for image querying
+        original_request_patient_id = request.patient_id
+        
         # Find patient
         patient_id = PatientId(request.patient_id)
         patient = await self._patient_repository.find_by_id(patient_id)
@@ -57,21 +60,45 @@ class GeneratePreVisitSummaryUseCase:
 
         # Get intake answers
         intake_answers = visit.get_intake_summary()
-
-        # Generate summary using AI service
-        summary_result = await self._question_service.generate_pre_visit_summary(
-            patient_data, intake_answers, language=patient.language
-        )
-
-        # Attach references to any uploaded medication images for this visit
+        
+        # Check for medication images first (before AI generation) so we can pass info to AI
+        medication_images_info = None
+        medication_images_list = None
         try:
             from clinicai.adapters.db.mongo.models.patient_m import MedicationImageMongo
+            from clinicai.core.utils.crypto import encode_patient_id
+            
+            # Try both internal ID and encoded ID (in case images were stored with encoded ID)
+            patient_internal_id = str(patient.patient_id.value)
+            patient_encoded_id = encode_patient_id(patient_internal_id)
+            
+            # Query with OR condition to find images stored with either format
+            from beanie.operators import Or
+            logger.info(f"[GeneratePreVisitSummary] Querying medication images for visit {visit.visit_id.value}")
+            logger.info(f"[GeneratePreVisitSummary] Patient internal_id: {patient_internal_id[:50]}..., encoded_id: {patient_encoded_id[:50]}...")
+            
+            # Also check original request patient_id (might be encoded and different from our encoding)
             docs = await MedicationImageMongo.find(
-                MedicationImageMongo.patient_id == visit.patient_id,
+                Or(
+                    MedicationImageMongo.patient_id == patient_internal_id,
+                    MedicationImageMongo.patient_id == patient_encoded_id,
+                    MedicationImageMongo.patient_id == original_request_patient_id  # Check original request ID
+                ),
                 MedicationImageMongo.visit_id == visit.visit_id.value,
             ).to_list()
+            
+            # If no docs found, try querying all images for this visit to see what patient_ids exist
+            if not docs:
+                all_visit_images = await MedicationImageMongo.find(
+                    MedicationImageMongo.visit_id == visit.visit_id.value,
+                ).to_list()
+                if all_visit_images:
+                    logger.warning(f"[GeneratePreVisitSummary] No images found with patient_id match, but found {len(all_visit_images)} images for visit {visit.visit_id.value}")
+                    logger.warning(f"[GeneratePreVisitSummary] Images have patient_ids: {[str(img.patient_id)[:50] for img in all_visit_images]}")
+            
             if docs:
-                summary_result["medication_images"] = [
+                logger.info(f"[GeneratePreVisitSummary] Found {len(docs)} medication images for visit {visit.visit_id.value}")
+                medication_images_list = [
                     {
                         "id": str(getattr(d, "id", "")),
                         "filename": getattr(d, "filename", "unknown"),
@@ -79,9 +106,21 @@ class GeneratePreVisitSummaryUseCase:
                     }
                     for d in docs
                 ]
-        except Exception:
-            # Non-fatal if images cannot be listed
-            pass
+                medication_images_info = f"Patient uploaded {len(docs)} medication image(s): {', '.join([d.filename for d in docs])}"
+                logger.info(f"[GeneratePreVisitSummary] Medication images list: {medication_images_list}")
+            else:
+                logger.warning(f"[GeneratePreVisitSummary] No medication images found for visit {visit.visit_id.value} (checked both internal_id={patient_internal_id[:50]}... and encoded_id={patient_encoded_id[:50]}...)")
+        except Exception as e:
+            logger.warning(f"Failed to query medication images before summary generation: {e}", exc_info=True)
+
+        # Generate summary using AI service
+        summary_result = await self._question_service.generate_pre_visit_summary(
+            patient_data, intake_answers, language=patient.language, medication_images_info=medication_images_info
+        )
+
+        # Attach medication images to summary result (already queried above)
+        if medication_images_list:
+            summary_result["medication_images"] = medication_images_list
 
         # Store minimal summary in visit for EHR
         visit.store_pre_visit_summary(

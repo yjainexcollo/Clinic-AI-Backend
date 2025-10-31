@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 class PreVisitSummaryRequest(BaseModel):
     """Request schema for generating pre-visit summary."""
     
-    patient_id: str = Field(..., description="Opaque Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Visit ID (can be longer when encoded)")
 
 
 class PreVisitSummaryResponse(BaseModel):
@@ -31,8 +31,8 @@ class PreVisitSummaryResponse(BaseModel):
 class PostVisitSummaryRequest(BaseModel):
     """Request schema for generating post-visit summary."""
     
-    patient_id: str = Field(..., description="Opaque Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Visit ID (can be longer when encoded)")
 
 
 class PostVisitSummaryResponse(BaseModel):

@@ -20,6 +20,7 @@ from ...application.dto.patient_dto import (
     SoapNoteDTO,
     TranscriptionSessionDTO
 )
+from ..schemas.medical import SOAPNoteRequest
 from pydantic import BaseModel
 from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from ...application.use_cases.generate_soap_note import GenerateSoapNoteUseCase
@@ -335,7 +336,7 @@ async def transcribe_audio(
 )
 async def generate_soap_note(
     http_request: Request,
-    request: SoapGenerationRequest,
+    request: SOAPNoteRequest,  # Use Pydantic schema instead of dataclass
     patient_repo: PatientRepositoryDep,
     visit_repo: VisitRepositoryDep,
     soap_service: SoapServiceDep,
@@ -367,6 +368,8 @@ async def generate_soap_note(
             internal_patient_id = decode_patient_id(decoded_input)
         except Exception:
             internal_patient_id = decoded_input
+        
+        # Create DTO for use case (dataclass)
         decoded_request = SoapGenerationRequest(
             patient_id=internal_patient_id,
             visit_id=request.visit_id,
@@ -377,7 +380,15 @@ async def generate_soap_note(
         use_case = GenerateSoapNoteUseCase(patient_repo, visit_repo, soap_service)
         result = await use_case.execute(decoded_request)
         
-        return result
+        # Convert DTO to response format (encode patient_id for client)
+        from ...core.utils.crypto import encode_patient_id
+        return {
+            "patient_id": encode_patient_id(result.patient_id),
+            "visit_id": result.visit_id,
+            "soap_note": result.soap_note,
+            "generated_at": result.generated_at,
+            "message": result.message
+        }
         
     except ValueError as e:
         raise HTTPException(
@@ -723,17 +734,18 @@ async def get_soap_note(request: Request, patient_id: str, visit_id: str, patien
 
         # Return SOAP note data
         soap = visit.soap_note
-        return ok(request, data=SoapNoteDTO(
-            subjective=soap.subjective,
-            objective=soap.objective,
-            assessment=soap.assessment,
-            plan=soap.plan,
-            highlights=soap.highlights,
-            red_flags=soap.red_flags,
-            generated_at=soap.generated_at.isoformat(),
-            model_info=soap.model_info,
+        soap_data = SoapNoteDTO(
+            subjective=soap.subjective or "",
+            objective=soap.objective or {},
+            assessment=soap.assessment or "",
+            plan=soap.plan or "",
+            highlights=soap.highlights or [],
+            red_flags=soap.red_flags or [],
+            generated_at=soap.generated_at.isoformat() if soap.generated_at else "",
+            model_info=soap.model_info or {},
             confidence_score=soap.confidence_score
-        ), message="Success")
+        )
+        return ok(request, data=soap_data, message="Success")
 
     except HTTPException:
         # Re-raise HTTPException directly (like 404 for SOAP note not found)

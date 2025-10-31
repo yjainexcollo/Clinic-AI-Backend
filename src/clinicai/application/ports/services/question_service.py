@@ -46,7 +46,9 @@ class QuestionService(ABC):
     async def generate_pre_visit_summary(
         self, 
         patient_data: Dict[str, Any], 
-        intake_answers: Dict[str, Any]
+        intake_answers: Dict[str, Any],
+        language: str = "en",
+        medication_images_info: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data."""
         pass

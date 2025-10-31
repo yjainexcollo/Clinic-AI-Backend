@@ -13,8 +13,8 @@ from .common import QuestionAnswer
 class AnswerIntakeRequest(BaseModel):
     """Request schema for answering intake questions."""
     
-    patient_id: str = Field(..., min_length=10, max_length=50)
-    visit_id: str = Field(..., min_length=10, max_length=50)
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted visit ID (can be longer when encoded)")
     answer: str = Field(..., min_length=1, max_length=1000)
     
     @validator("answer", pre=True)
@@ -52,8 +52,8 @@ class AnswerIntakeResponse(BaseModel):
 class EditAnswerRequest(BaseModel):
     """Request schema for editing an existing answer."""
     
-    patient_id: str = Field(..., min_length=10, max_length=50)
-    visit_id: str = Field(..., min_length=10, max_length=50)
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted visit ID (can be longer when encoded)")
     question_number: int = Field(..., ge=1)
     new_answer: str = Field(..., min_length=1, max_length=1000)
 
@@ -102,6 +102,7 @@ class IntakeSummarySchema(BaseModel):
     intake_status: str = Field(..., description="Intake session status")
     started_at: datetime = Field(..., description="Intake start time")
     completed_at: Optional[datetime] = Field(None, description="Intake completion time")
+    pending_question: Optional[str] = Field(None, description="Pending next question to ask")
     
     class Config:
         # Exclude revision_id and other MongoDB-specific fields

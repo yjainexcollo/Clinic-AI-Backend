@@ -13,7 +13,7 @@ from .common import PersonalInfo, ContactInfo
 class RegisterPatientRequest(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=40, description="First name")
     last_name: str = Field(..., min_length=1, max_length=40, description="Last name")
-    mobile: str = Field(..., pattern=r"^(\\+|)[0-9]{8,16}$", description="Mobile phone number (E.164 or local)")
+    mobile: str = Field(..., description="Mobile phone number (E.164 or local format)")
     age: int = Field(..., ge=0, le=120)
     gender: str = Field(...)
     recently_travelled: bool = Field(False)
@@ -37,9 +37,16 @@ class RegisterPatientRequest(BaseModel):
 
     @validator("mobile")
     def validate_mobile(cls, v):
-        if not re.match(r"^(\\+|)[0-9]{8,16}$", v):
-            raise ValueError("Invalid mobile format")
-        return v.strip()
+        """Validate mobile number - supports E.164 format (+country code) or local format (8-16 digits)."""
+        s = (v or "").strip()
+        # E.164 format: + followed by 1-3 digit country code, then 7-14 digits (total 8-15 digits after +)
+        # Examples: +1234567890, +18983492384, +447911123456
+        if re.fullmatch(r"^\+[1-9]\d{7,14}$", s):
+            return s
+        # Local format: 8-16 digits without country code
+        if re.fullmatch(r"^\d{8,16}$", s):
+            return s
+        raise ValueError("Phone must be E.164 format (+country code followed by 7-14 digits) or 8-16 local digits")
 
     @validator("consent")
     def validate_consent(cls, v):

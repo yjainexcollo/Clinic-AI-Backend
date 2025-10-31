@@ -908,6 +908,7 @@ STEP 2: Verify the question hasn't been asked before.
         patient_data: Dict[str, Any],
         intake_answers: Dict[str, Any],
         language: str = "en",
+        medication_images_info: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data with red flag detection."""
         
@@ -944,13 +945,14 @@ STEP 2: Verify the question hasn't been asked before.
                 "  Médica: ...; Quirúrgica: ...; Familiar: ...; Estilo de vida: ...\n"
                 "  (Incluye SOLO las partes que fueron realmente preguntadas y respondidas por el paciente. Si un tema no fue discutido, no lo incluyas en absoluto).\n"
                 "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados explícitamente por el paciente. Mantén como prosa, no como lista. Solo incluye si los sistemas fueron realmente revisados.\n"
-                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente (nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las reportó explícitamente. Solo incluye si los medicamentos fueron realmente discutidos.\n\n"
+                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente (nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las reportó explícitamente. Si el paciente subió imágenes de medicamentos (incluso si no mencionó explícitamente los nombres), menciona esto: \"El paciente proporcionó imágenes de medicamentos: [nombre(s) de archivo(s)]\". Incluye esta sección si los medicamentos fueron discutidos O si se subieron imágenes de medicamentos.\n\n"
                 "Ejemplo de Formato\n"
                 "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
                 "Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.\n"
                 "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana y empeoran durante el día, llegando hasta 8/10 en los últimos 3 días. El dolor es sobre ambas sienes y se siente diferente de migrañas previas; la fatiga es prominente y se niega náusea. Los episodios se agravan por estrés y más tarde en el día, con alivio mínimo de analgésicos de venta libre y algo de alivio usando compresas frías.\n"
                 "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador, alcohol ocasional, trabajo de alto estrés.\n"
                 "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad; alergias incluidas solo si el paciente las declaró explícitamente.\n\n"
+                f"{f'Imágenes de Medicamentos: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Respuestas de Admisión:\n{self._format_intake_answers(intake_answers)}"
             )
         else:
@@ -986,13 +988,14 @@ STEP 2: Verify the question hasn't been asked before.
                 "  Medical: …; Surgical: …; Family: …; Lifestyle: …\n"
                 "  (Include ONLY parts that were actually asked about and answered by the patient. If a topic was not discussed, do not include it at all.)\n"
                 "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list. Only include if systems were actually reviewed.\n"
-                "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. Only include if medications were actually discussed.\n\n"
+                "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. If the patient uploaded medication images (even if they didn't explicitly name the medications), mention this: \"Patient provided medication images: [filename(s)]\". Include this section if medications were discussed OR if medication images were uploaded.\n\n"
                 "Example Format\n"
                 "(Structure and tone only—content will differ; each section on a single line.)\n"
                 "Chief Complaint: Patient reports severe headache for 3 days.\n"
                 "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through the day, reaching up to 8/10 over the last 3 days. Pain is over both temples and feels different from prior migraines; fatigue is prominent and nausea is denied. Episodes are aggravated by stress and later in the day, with minimal relief from over-the-counter analgesics and some relief using cold compresses. No radiation is reported, evenings are typically worse, and there have been no recent changes in medications or lifestyle.\n"
                 "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker, occasional alcohol, high-stress job.\n"
                 "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if the patient explicitly stated them.\n\n"
+                f"{f'Medication Images: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Intake Responses:\n{self._format_intake_answers(intake_answers)}"
             )
 

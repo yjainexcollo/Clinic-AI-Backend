@@ -38,8 +38,9 @@ class PhysicalExam(BaseModel):
 class SOAPNoteRequest(BaseModel):
     """Request schema for SOAP note generation."""
     
-    patient_id: str = Field(..., description="Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Visit ID (can be longer when encoded)")
+    transcript: Optional[str] = Field(None, description="Optional transcript text. If not provided, will use stored transcript from visit.")
 
 
 class SOAPNoteResponse(BaseModel):
@@ -91,8 +92,8 @@ class MedicalRecommendation(BaseModel):
 class ActionPlanRequest(BaseModel):
     """Request schema for action plan generation."""
     
-    patient_id: str = Field(..., description="Patient ID")
-    visit_id: str = Field(..., description="Visit ID")
+    patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Patient ID (can be longer when encoded)")
+    visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Visit ID (can be longer when encoded)")
 
 
 class ActionPlanResponse(BaseModel):
