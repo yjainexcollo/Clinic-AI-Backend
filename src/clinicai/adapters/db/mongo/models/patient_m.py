@@ -220,8 +220,8 @@ class AudioFileMongo(Document):
     file_size: int = Field(..., description="File size in bytes")
     duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
     
-    # Blob storage reference
-    blob_reference_id: str = Field(..., description="Reference to blob file storage")
+    # Blob storage reference (optional for backward compatibility with legacy records)
+    blob_reference_id: Optional[str] = Field(None, description="Reference to blob file storage")
     
     # Metadata
     patient_id: Optional[str] = Field(None, description="Patient ID if linked to a patient")

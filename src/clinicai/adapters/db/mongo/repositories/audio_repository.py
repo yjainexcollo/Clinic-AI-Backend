@@ -334,12 +334,15 @@ class AudioRepository:
                     date_query["$lte"] = end_date
                 query["created_at"] = date_query
                 
+            # Query audio files (blob_reference_id is now optional to support legacy records)
             audio_files = await AudioFileMongo.find(
                 query,
                 skip=offset,
                 limit=limit,
                 sort=[("created_at", -1)]
             ).to_list()
+            
+            logger.info(f"Found {len(audio_files)} audio files matching query: {query}")
             
             for audio_file in audio_files:
                 dialogue_data = {
@@ -351,7 +354,7 @@ class AudioRepository:
                     "adhoc_id": audio_file.adhoc_id,
                     "audio_type": audio_file.audio_type,
                     "created_at": audio_file.created_at.isoformat(),
-                    "structured_dialogue": None
+                    "structured_dialogue": []  # Initialize as empty list instead of None
                 }
                 
                 # Get structured dialogue based on audio type
@@ -359,9 +362,15 @@ class AudioRepository:
                     try:
                         adhoc_doc = await AdhocTranscriptMongo.get(PydanticObjectId(audio_file.adhoc_id))
                         if adhoc_doc and adhoc_doc.structured_dialogue:
-                            dialogue_data["structured_dialogue"] = adhoc_doc.structured_dialogue
+                            # Ensure structured_dialogue is a list
+                            if isinstance(adhoc_doc.structured_dialogue, list):
+                                dialogue_data["structured_dialogue"] = adhoc_doc.structured_dialogue
+                            else:
+                                logger.warning(f"structured_dialogue is not a list for adhoc {audio_file.audio_id}")
+                                dialogue_data["structured_dialogue"] = []
                     except Exception as e:
                         logger.warning(f"Failed to get adhoc dialogue for {audio_file.audio_id}: {e}")
+                        dialogue_data["structured_dialogue"] = []
                         
                 elif audio_file.audio_type == "visit" and audio_file.patient_id and audio_file.visit_id:
                     try:
@@ -371,9 +380,15 @@ class AudioRepository:
                         )
                         if (visit and visit.transcription_session and 
                             visit.transcription_session.structured_dialogue):
-                            dialogue_data["structured_dialogue"] = visit.transcription_session.structured_dialogue
+                            # Ensure structured_dialogue is a list
+                            if isinstance(visit.transcription_session.structured_dialogue, list):
+                                dialogue_data["structured_dialogue"] = visit.transcription_session.structured_dialogue
+                            else:
+                                logger.warning(f"structured_dialogue is not a list for visit {audio_file.audio_id}")
+                                dialogue_data["structured_dialogue"] = []
                     except Exception as e:
                         logger.warning(f"Failed to get visit dialogue for {audio_file.audio_id}: {e}")
+                        dialogue_data["structured_dialogue"] = []
                 
                 dialogue_list.append(dialogue_data)
             

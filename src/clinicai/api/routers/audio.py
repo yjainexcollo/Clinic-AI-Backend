@@ -160,16 +160,31 @@ async def list_audio_dialogues(
             offset=offset,
         )
         
+        logger.info(f"Retrieved {len(dialogue_data) if dialogue_data else 0} dialogue records from repository")
+        
         # Get total count
         total_count = await audio_repo.get_audio_count(
             patient_id=patient_id,
             audio_type=audio_type,
         )
         
-        # Convert to response models
-        dialogue_responses = [
-            AudioDialogueResponse(**data) for data in dialogue_data
-        ]
+        logger.info(f"Total audio count: {total_count}")
+        
+        # Convert to response models with validation
+        dialogue_responses = []
+        for data in dialogue_data:
+            # Ensure structured_dialogue is always a list (never None)
+            if "structured_dialogue" not in data or data["structured_dialogue"] is None:
+                data["structured_dialogue"] = []
+            elif not isinstance(data["structured_dialogue"], list):
+                logger.warning(f"structured_dialogue is not a list for {data.get('audio_id')}, converting to empty list")
+                data["structured_dialogue"] = []
+            
+            try:
+                dialogue_responses.append(AudioDialogueResponse(**data))
+            except Exception as e:
+                logger.error(f"Failed to create AudioDialogueResponse from data: {e}, data keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+                continue
         
         return ok(request, data=AudioDialogueListResponse(
             dialogues=dialogue_responses,
