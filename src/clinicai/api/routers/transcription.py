@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, Request
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 import os
 import tempfile
 import logging
+import json
 from datetime import datetime
 
 from ..deps import TranscriptionServiceDep, AudioRepositoryDep, ActionPlanServiceDep
@@ -21,8 +22,161 @@ router = APIRouter(prefix="/transcription", tags=["transcription"])
 logger = logging.getLogger("clinicai")
 
 
+async def _process_transcript_with_llm(
+    raw_transcript: str,
+    language: str = "en"
+) -> Optional[List[Dict[str, str]]]:
+    """
+    Process raw transcript with LLM to create structured dialogue.
+    Uses the SAME robust processing logic as visit-based transcription.
+    """
+    if not raw_transcript or not raw_transcript.strip():
+        return None
+    
+    try:
+        settings = get_settings()
+        from openai import OpenAI
+        from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
+        
+        # Create a minimal use case instance to reuse the robust processing method
+        # The processing method doesn't use repositories, so we create minimal mock objects
+        class MockRepo:
+            """Minimal mock repository that won't be used by processing methods."""
+            pass
+        
+        # Create use case instance with mock repos (only processing method will be used)
+        use_case = TranscribeAudioUseCase(
+            patient_repository=MockRepo(),  # type: ignore
+            visit_repository=MockRepo(),  # type: ignore
+            transcription_service=MockRepo()  # type: ignore
+        )
+        
+        client = OpenAI(api_key=settings.openai.api_key)
+        
+        # Use the same robust processing method as visit-based transcription
+        logger.info(f"Using _process_transcript_with_chunking (same as visit-based) for {len(raw_transcript)} chars")
+        structured_content = await use_case._process_transcript_with_chunking(
+            client=client,
+            raw_transcript=raw_transcript,
+            settings=settings,
+            logger=logger,
+            language=language
+        )
+        
+        if not structured_content or structured_content.strip() == "":
+            logger.warning("LLM processing returned empty content, trying fallback")
+            # Fallback to structure_dialogue_from_text
+            dialogue = await structure_dialogue_from_text(
+                raw_transcript,
+                model=settings.openai.model,
+                api_key=settings.openai.api_key
+            )
+            if dialogue and isinstance(dialogue, list):
+                logger.info(f"Fallback processing returned {len(dialogue)} dialogue turns")
+                return dialogue
+            return None
+        
+        # Parse the structured content (same logic as visit-based)
+        cleaned_content = structured_content.strip()
+        
+        # If content doesn't start with [ or {, try to find the JSON part
+        if not cleaned_content.startswith(("{", "[")):
+            start_idx = cleaned_content.find("[")
+            if start_idx == -1:
+                start_idx = cleaned_content.find("{")
+            if start_idx != -1:
+                cleaned_content = cleaned_content[start_idx:]
+        
+        parsed = None
+        recovery_method = None
+        
+        # Strategy 1: Try standard JSON parsing
+        try:
+            parsed = json.loads(cleaned_content)
+            recovery_method = "standard_json"
+        except json.JSONDecodeError:
+            # Strategy 2: Try to recover partial JSON using use case method
+            try:
+                recovered = use_case._recover_partial_json(cleaned_content, logger)
+                if recovered:
+                    parsed = recovered
+                    recovery_method = "partial_recovery"
+                else:
+                    # Strategy 3: Try to fix truncated JSON arrays
+                    if cleaned_content.startswith("[") and not cleaned_content.endswith("]"):
+                        logger.warning("JSON appears truncated, attempting to fix...")
+                        last_complete_idx = cleaned_content.rfind("},")
+                        if last_complete_idx != -1:
+                            cleaned_content = cleaned_content[: last_complete_idx + 1] + "]"
+                        else:
+                            cleaned_content = cleaned_content + "]"
+                        try:
+                            parsed = json.loads(cleaned_content)
+                            recovery_method = "truncation_fix"
+                        except json.JSONDecodeError:
+                            parsed = None
+                    
+                    # Strategy 4: Extract valid objects using regex
+                    if not parsed:
+                        recovered = use_case._recover_partial_json(structured_content, logger)
+                        if recovered:
+                            parsed = recovered
+                            recovery_method = "regex_extraction"
+            except Exception as recovery_error:
+                logger.warning(f"Error in recovery methods: {recovery_error}")
+        
+        if parsed and isinstance(parsed, list):
+            # Validate dialogue format (same as visit-based)
+            if all(
+                isinstance(item, dict)
+                and len(item) == 1
+                and list(item.keys())[0] in ["Doctor", "Patient", "Paciente"]  # Support Spanish
+                for item in parsed
+            ):
+                logger.info(
+                    f"Successfully parsed structured dialogue with {len(parsed)} turns (recovery method: {recovery_method})"
+                )
+                return parsed
+            else:
+                logger.warning(f"Parsed content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
+        else:
+            logger.warning("Failed to parse structured content. Recovery methods exhausted.")
+            if parsed is not None:
+                logger.warning(f"Parsed type: {type(parsed)}, Content: {str(parsed)[:200]}...")
+        
+        # Final fallback
+        logger.warning("All parsing strategies failed, trying structure_dialogue_from_text as last resort")
+        dialogue = await structure_dialogue_from_text(
+            raw_transcript,
+            model=settings.openai.model,
+            api_key=settings.openai.api_key
+        )
+        if dialogue and isinstance(dialogue, list):
+            logger.info(f"Fallback structure_dialogue_from_text returned {len(dialogue)} dialogue turns")
+            return dialogue
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error processing transcript with LLM: {e}", exc_info=True)
+        # Last resort fallback
+        try:
+            settings = get_settings()
+            dialogue = await structure_dialogue_from_text(
+                raw_transcript,
+                model=settings.openai.model,
+                api_key=settings.openai.api_key
+            )
+            if dialogue and isinstance(dialogue, list):
+                logger.info(f"Exception fallback returned {len(dialogue)} dialogue turns")
+                return dialogue
+        except Exception as fallback_error:
+            logger.error(f"Fallback also failed: {fallback_error}", exc_info=True)
+        return None
+
+
 class AdhocTranscriptionResponse(BaseModel):
     transcript: str
+    structured_dialogue: Optional[List[Dict[str, str]]] = None
     language: Optional[str] = None
     confidence: Optional[float] = None
     duration: Optional[float] = None
@@ -90,6 +244,23 @@ async def transcribe_audio_adhoc(
             logger.warning(f"Audio validation error: {e}")
 
         result = await transcription_service.transcribe_audio(temp_file_path, language=language)
+        
+        raw_transcript = result.get("transcript") or ""
+        logger.info(f"Whisper transcription completed. Transcript length: {len(raw_transcript)} characters")
+        
+        if not raw_transcript or raw_transcript.strip() == "":
+            return fail(request, error="EMPTY_TRANSCRIPT", message="Whisper transcription returned empty transcript")
+
+        # Automatically process transcript with LLM to create structured dialogue (like visit-based)
+        logger.info("Starting LLM processing for transcript cleaning and structuring (visit-based flow)")
+        logger.info(f"Raw transcript preview: {raw_transcript[:200]}...")
+        structured_dialogue = await _process_transcript_with_llm(raw_transcript, language=language)
+        
+        if structured_dialogue:
+            logger.info(f"✅ Successfully created structured dialogue with {len(structured_dialogue)} turns")
+        else:
+            logger.error("❌ LLM processing did not return structured dialogue - this should not happen with visit-based flow!")
+            logger.error("Check logs above for processing errors. Continuing with raw transcript only.")
 
         # Save audio file to database
         audio_file_record = None
@@ -109,11 +280,11 @@ async def transcribe_audio_adhoc(
             logger.error(f"Full traceback: {traceback.format_exc()}")
             # Continue without failing the transcription
 
-        # Persist ad-hoc transcript
+        # Persist ad-hoc transcript with structured dialogue
         try:
             doc = AdhocTranscriptMongo(
-                transcript=result.get("transcript") or "",
-                structured_dialogue=None,
+                transcript=raw_transcript,
+                structured_dialogue=structured_dialogue,  # Save structured dialogue automatically
                 language=result.get("language"),
                 confidence=result.get("confidence"),
                 duration=result.get("duration"),
@@ -134,7 +305,13 @@ async def transcribe_audio_adhoc(
             logger.error(f"Failed to persist adhoc transcript: {e}")
             pass
 
-        return ok(request, data=AdhocTranscriptionResponse(**{**result, "filename": audio_file.filename or None}))
+        # Return response with both raw transcript and structured dialogue
+        response_data = {
+            **result,
+            "filename": audio_file.filename or None,
+            "structured_dialogue": structured_dialogue,  # Include structured dialogue in response
+        }
+        return ok(request, data=AdhocTranscriptionResponse(**response_data))
     finally:
         try:
             if temp_file_path and os.path.exists(temp_file_path):
@@ -207,34 +384,56 @@ class ActionPlanResponse(BaseModel):
     "/adhoc/action-plan",
     response_model=ApiResponse[ActionPlanResponse],
     status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        400: {"model": ErrorResponse, "description": "Validation error"},
+        404: {"model": ErrorResponse, "description": "Adhoc transcript not found"},
+        422: {"model": ErrorResponse, "description": "No transcript available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def generate_action_plan(
-    request: Request,
+    http_request: Request,
+    payload: ActionPlanRequest,
     action_plan_service: ActionPlanServiceDep,
 ):
     """
     Generate Action and Plan for an adhoc transcript.
     This endpoint queues the action plan generation and returns immediately.
     """
-    logger.info(f"Action plan generation request for adhoc_id: {request.adhoc_id}")
+    logger.info(f"Action plan generation request for adhoc_id: {payload.adhoc_id}")
+    
+    # Validate adhoc_id format (MongoDB ObjectId is 24 hex characters)
+    if not payload.adhoc_id or len(payload.adhoc_id) != 24 or not all(c in '0123456789abcdefABCDEF' for c in payload.adhoc_id):
+        logger.warning(f"Invalid adhoc_id format: {payload.adhoc_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {payload.adhoc_id}"}
+        )
     
     try:
         # Find the adhoc transcript
-        adhoc_doc = await AdhocTranscriptMongo.find_one(
-            AdhocTranscriptMongo.id == PydanticObjectId(request.adhoc_id)
-        )
+        try:
+            oid = PydanticObjectId(payload.adhoc_id)
+        except Exception as e:
+            logger.error(f"Invalid ObjectId format: {payload.adhoc_id}, error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {payload.adhoc_id}"}
+            )
+        
+        adhoc_doc = await AdhocTranscriptMongo.get(oid)  # Use .get() for better error handling
         
         if not adhoc_doc:
-            return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {request.adhoc_id} not found")
+            return fail(http_request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {payload.adhoc_id} not found")
         
         # Check if transcript exists
         if not adhoc_doc.transcript:
-            return fail(request, error="NO_TRANSCRIPT", message="No transcript available for action plan generation")
+            return fail(http_request, error="NO_TRANSCRIPT", message="No transcript available for action plan generation")
         
         # Check if action plan is already being processed or completed
         if adhoc_doc.action_plan_status in ["processing", "completed"]:
-            return ok(request, data=ActionPlanResponse(
-                adhoc_id=request.adhoc_id,
+            return ok(http_request, data=ActionPlanResponse(
+                adhoc_id=payload.adhoc_id,
                 status=adhoc_doc.action_plan_status,
                 message="Action plan already processed or in progress"
             ))
@@ -247,17 +446,17 @@ async def generate_action_plan(
         # Queue background processing
         import asyncio
         asyncio.create_task(_generate_action_plan_background(
-            request.adhoc_id, 
+            payload.adhoc_id, 
             adhoc_doc.transcript, 
             adhoc_doc.structured_dialogue,
             adhoc_doc.language or "en",
             action_plan_service
         ))
         
-        logger.info(f"Action plan generation queued for adhoc_id: {request.adhoc_id}")
+        logger.info(f"Action plan generation queued for adhoc_id: {payload.adhoc_id}")
         
-        return ok(request, data=ActionPlanResponse(
-            adhoc_id=request.adhoc_id,
+        return ok(http_request, data=ActionPlanResponse(
+            adhoc_id=payload.adhoc_id,
             status="processing",
             message="Action plan generation started"
         ))
@@ -266,7 +465,7 @@ async def generate_action_plan(
         raise
     except Exception as e:
         logger.error(f"Error starting action plan generation: {e}")
-        return fail(request, error="INTERNAL_ERROR", message=str(e))
+        return fail(http_request, error="INTERNAL_ERROR", message=str(e))
 
 
 async def _generate_action_plan_background(
@@ -288,9 +487,12 @@ async def _generate_action_plan_background(
         )
         
         # Update the adhoc transcript with the generated action plan
-        adhoc_doc = await AdhocTranscriptMongo.find_one(
-            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
-        )
+        try:
+            oid = PydanticObjectId(adhoc_id)
+            adhoc_doc = await AdhocTranscriptMongo.get(oid)  # Use .get() for better error handling
+        except Exception as e:
+            logger.error(f"Invalid ObjectId format or not found: {adhoc_id}, error: {e}")
+            adhoc_doc = None
         
         if adhoc_doc:
             adhoc_doc.action_plan = action_plan_data
@@ -307,9 +509,8 @@ async def _generate_action_plan_background(
         
         # Update status to failed
         try:
-            adhoc_doc = await AdhocTranscriptMongo.find_one(
-                AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
-            )
+            oid = PydanticObjectId(adhoc_id)
+            adhoc_doc = await AdhocTranscriptMongo.get(oid)  # Use .get() for better error handling
             if adhoc_doc:
                 adhoc_doc.action_plan_status = "failed"
                 adhoc_doc.action_plan_error_message = str(e)
@@ -323,15 +524,35 @@ async def _generate_action_plan_background(
     "/adhoc/{adhoc_id}/action-plan/status",
     response_model=ApiResponse[Dict],
     status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorResponse, "description": "Adhoc transcript not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_action_plan_status(request: Request, adhoc_id: str):
     """
     Get the status of action plan generation for an adhoc transcript.
     """
+    logger.info(f"Getting action plan status for adhoc_id: {adhoc_id}")
     try:
-        adhoc_doc = await AdhocTranscriptMongo.find_one(
-            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
-        )
+        # Validate adhoc_id format (MongoDB ObjectId is 24 hex characters)
+        if not adhoc_id or len(adhoc_id) != 24 or not all(c in '0123456789abcdefABCDEF' for c in adhoc_id):
+            logger.warning(f"Invalid adhoc_id format: {adhoc_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {adhoc_id}"}
+            )
+        
+        try:
+            oid = PydanticObjectId(adhoc_id)
+        except Exception as e:
+            logger.error(f"Invalid ObjectId format: {adhoc_id}, error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {adhoc_id}"}
+            )
+        
+        adhoc_doc = await AdhocTranscriptMongo.get(oid)  # Use .get() for better error handling
         
         if not adhoc_doc:
             return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {adhoc_id} not found")
@@ -356,15 +577,36 @@ async def get_action_plan_status(request: Request, adhoc_id: str):
     "/adhoc/{adhoc_id}/action-plan",
     response_model=ApiResponse[Dict],
     status_code=status.HTTP_200_OK,
+    responses={
+        404: {"model": ErrorResponse, "description": "Adhoc transcript or action plan not found"},
+        422: {"model": ErrorResponse, "description": "Action plan not ready"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_action_plan(request: Request, adhoc_id: str):
     """
     Get the generated action plan for an adhoc transcript.
     """
+    logger.info(f"Getting action plan for adhoc_id: {adhoc_id}")
     try:
-        adhoc_doc = await AdhocTranscriptMongo.find_one(
-            AdhocTranscriptMongo.id == PydanticObjectId(adhoc_id)
-        )
+        # Validate adhoc_id format (MongoDB ObjectId is 24 hex characters)
+        if not adhoc_id or len(adhoc_id) != 24 or not all(c in '0123456789abcdefABCDEF' for c in adhoc_id):
+            logger.warning(f"Invalid adhoc_id format: {adhoc_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {adhoc_id}"}
+            )
+        
+        try:
+            oid = PydanticObjectId(adhoc_id)
+        except Exception as e:
+            logger.error(f"Invalid ObjectId format: {adhoc_id}, error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_ADHOC_ID", "message": f"Invalid adhoc_id format: {adhoc_id}"}
+            )
+        
+        adhoc_doc = await AdhocTranscriptMongo.get(oid)  # Use .get() for better error handling
         
         if not adhoc_doc:
             return fail(request, error="ADHOC_NOT_FOUND", message=f"Adhoc transcript {adhoc_id} not found")

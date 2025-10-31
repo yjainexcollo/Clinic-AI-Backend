@@ -41,6 +41,7 @@ class OpenAIActionPlanService(ActionPlanService):
                 user_prompt = self._get_english_user_prompt(transcript, structured_dialogue)
 
             # Call OpenAI API with Helicone tracking
+            # Note: patient_id is not needed for adhoc flows - it's optional and defaults to None
             response, metrics = await self.client.chat_completion(
                 model=self.settings.openai.model,
                 messages=[
@@ -49,11 +50,12 @@ class OpenAIActionPlanService(ActionPlanService):
                 ],
                 temperature=0.3,  # Lower temperature for more consistent medical recommendations
                 max_tokens=2000,
-                patient_id=patient_id,
+                # patient_id is not passed - this is for adhoc transcripts (no patient)
                 prompt_name="action_plan_generation",
                 custom_properties={
                     "service": "action_plan",
-                    "language": language
+                    "language": language,
+                    "flow_type": "adhoc"  # Mark this as adhoc flow
                 }
             )
             
