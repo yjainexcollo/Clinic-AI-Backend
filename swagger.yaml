@@ -371,9 +371,104 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /intake/start:
+    post:
+      tags: [Intake]
+      summary: Start intake session
+      description: Initialize an intake session for a patient using the doctor's preferences.
+      operationId: start_intake
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeStartRequest'
+      responses:
+        '200':
+          description: Intake started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_IntakeStartResponse'
+        '500': {description: Failed to start intake, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /intake/next-question:
+    post:
+      tags: [Intake]
+      summary: Get next intake question
+      description: Generate the next intake question using session-configured limits.
+      operationId: next_question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NextQuestionRequest'
+      responses:
+        '200':
+          description: Next question returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_NextQuestionResponse'
+        '404': {description: Session not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /workflow/walk-in/create-visit:
+    post:
+      tags: [Workflow]
+      summary: Create walk-in visit
+      description: Create a walk-in visit for patients without intake.
+      operationId: create_walk_in_visit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWalkInVisitRequestSchema'
+      responses:
+        '201':
+          description: Walk-in visit created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_CreateWalkInVisitResponseSchema'
+        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /workflow/visit/{visit_id}/available-steps:
+    get:
+      tags: [Workflow]
+      summary: Get available workflow steps
+      description: Get available workflow steps for a visit based on its workflow type and status.
+      operationId: get_available_workflow_steps
+      parameters:
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Available steps, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /workflow/visits/walk-in:
+    get:
+      tags: [Workflow]
+      summary: List walk-in visits
+      description: List walk-in visits with pagination.
+      operationId: list_walk_in_visits
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 100}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, default: 0}
+      responses:
+        '200': {description: Walk-in visits listed, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/transcribe:
     post:
-      tags: [notes]
+      tags: [Notes]
       summary: Transcribe audio
       description: Queue audio transcription and return immediately (202).
       operationId: transcribe_audio
@@ -397,7 +492,7 @@ paths:
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/soap/generate:
     post:
-      tags: [notes]
+      tags: [Notes]
       summary: Generate SOAP note
       description: Generate SOAP note from transcript.
       operationId: generate_soap_note
@@ -420,7 +515,7 @@ paths:
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/{patient_id}/visits/{visit_id}/transcript:
     get:
-      tags: [notes]
+      tags: [Notes]
       summary: Get transcript
       description: Get transcript for a visit.
       operationId: get_transcript
@@ -444,7 +539,7 @@ paths:
         '422': {description: Invalid input, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/{patient_id}/visits/{visit_id}/soap:
     get:
-      tags: [notes]
+      tags: [Notes]
       summary: Get SOAP note
       description: Get SOAP note for a visit.
       operationId: get_soap_note
@@ -468,7 +563,7 @@ paths:
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/vitals:
     post:
-      tags: [notes]
+      tags: [Notes]
       summary: Store objective vitals
       operationId: store_vitals_notes
       requestBody:
@@ -484,7 +579,7 @@ paths:
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/{patient_id}/visits/{visit_id}/vitals:
     get:
-      tags: [notes]
+      tags: [Notes]
       summary: Get vitals
       operationId: get_vitals_notes
       parameters:
@@ -499,110 +594,131 @@ paths:
       responses:
         '200':
           description: Vitals returned
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /notes/test-cors:
-    get:
-      tags: [notes]
-      summary: Test CORS
-      operationId: test_cors
-      responses:
-        '200': {description: OK}
-  /workflow/walk-in/create-visit:
-    post:
-      tags: [workflow]
-      summary: Create walk-in visit
-      description: Create a walk-in visit for patients without intake.
-      operationId: create_walk_in_visit
-      requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateWalkInVisitRequestSchema'
-      responses:
-        '201':
-          description: Walk-in visit created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse_CreateWalkInVisitResponseSchema'
-        '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+              type: object
+                additionalProperties: true
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /workflow/visit/{visit_id}/available-steps:
-    get:
-      tags: [workflow]
-      summary: Get available workflow steps
-      description: Get available workflow steps for a visit based on its workflow type and status.
-      operationId: get_available_workflow_steps
+  /notes/{patient_id}/visits/{visit_id}/dialogue/structure:
+    post:
+      tags: [Notes]
+      summary: Structure dialogue from transcript
+      description: Clean PII and structure transcript into alternating Doctor/Patient JSON using LLM.
+      operationId: structure_dialogue
       parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: {type: string}
         - name: visit_id
           in: path
           required: true
           schema: {type: string}
       responses:
-        '200': {description: Available steps, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '404': {description: Visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /workflow/visits/walk-in:
-    get:
-      tags: [workflow]
-      summary: List walk-in visits
-      description: List walk-in visits with pagination.
-      operationId: list_walk_in_visits
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema: {type: integer, default: 100}
-        - name: offset
-          in: query
-          required: false
-          schema: {type: integer, default: 0}
-      responses:
-        '200': {description: Walk-in visits listed, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /doctor/preferences:
-    get:
-      tags: [doctor]
-      summary: Get doctor preferences
-      description: Return latest preferences for the default doctor; independent of intake flow.
-      operationId: get_doctor_preferences
-      responses:
         '200':
-          description: Doctor preferences loaded
+          description: Structured dialogue returned
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
+                $ref: '#/components/schemas/ApiResponse_Dict'
+        '404': {description: Patient, visit, or transcript not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/test-cors:
+    get:
+      tags: [Notes]
+      summary: Test CORS
+      operationId: test_cors
+      responses:
+        '200': {description: OK}
+  /transcription:
     post:
-      tags: [doctor]
-      summary: Set doctor preferences
-      description: Merge and persist doctor preferences; independent of intake flow.
-      operationId: set_doctor_preferences
+      tags: [Transcription]
+      summary: Adhoc transcription
+      operationId: transcribe_audio_adhoc
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+              schema:
+                type: object
+              required: [audio_file]
+                properties:
+                audio_file: {type: string, format: binary}
+                language: {type: string, default: en}
+      responses:
+        '200':
+          description: Transcription result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_AdhocTranscriptionResponse'
+        '400': {description: No audio file or validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: Invalid file type, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/structure:
+    post:
+      tags: [Transcription]
+      summary: Structure transcript text
+      operationId: structure_transcript_text
+      requestBody:
+        required: true
+          content:
+            application/json:
+              schema:
+              $ref: '#/components/schemas/StructureTextRequest'
+      responses:
+        '200': {description: Structured dialogue returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '400': {description: Empty transcript, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/action-plan:
+    post:
+      tags: [Transcription]
+      summary: Queue action plan generation
+      operationId: generate_action_plan
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpsertPreferencesRequest'
+              $ref: '#/components/schemas/ActionPlanRequest'
       responses:
-        '200':
-          description: Preferences updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
+        '202': {description: Action plan generation started, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_ActionPlanResponse'}}}}
+        '404': {description: Adhoc not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '422': {description: No transcript available, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/{adhoc_id}/action-plan/status:
+    get:
+      tags: [Transcription]
+      summary: Get action plan status
+      operationId: get_action_plan_status
+      parameters:
+        - name: adhoc_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Status returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /transcription/adhoc/{adhoc_id}/action-plan:
+    get:
+      tags: [Transcription]
+      summary: Get action plan
+      operationId: get_action_plan
+      parameters:
+        - name: adhoc_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Action plan returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
+        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: List audio files
       operationId: list_audio_files
       parameters:
@@ -636,7 +752,7 @@ paths:
         '500': {description: Failed to list audio files, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/dialogue:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: List structured dialogues for audio files
       operationId: list_audio_dialogues
       parameters:
@@ -678,7 +794,7 @@ paths:
         '500': {description: Failed to list audio dialogues, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/{audio_id}:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: Get audio file metadata
       operationId: get_audio_metadata
       parameters:
@@ -691,12 +807,12 @@ paths:
           description: Audio metadata retrieved
           content:
             application/json:
-              schema:
+          schema:
                 $ref: '#/components/schemas/ApiResponse_AudioFileResponse'
         '404': {description: Audio not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Failed to get audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
     delete:
-      tags: [audio]
+      tags: [Audio]
       summary: Delete audio file
       operationId: delete_audio_file
       parameters:
@@ -710,7 +826,7 @@ paths:
         '500': {description: Failed to delete audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/{audio_id}/download:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: Download audio file
       operationId: download_audio_file
       parameters:
@@ -724,7 +840,7 @@ paths:
         '500': {description: Failed to download audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/{audio_id}/stream:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: Stream audio file
       operationId: stream_audio_file
       parameters:
@@ -738,136 +854,44 @@ paths:
         '500': {description: Failed to stream audio file, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /audio/stats/summary:
     get:
-      tags: [audio]
+      tags: [Audio]
       summary: Get audio storage statistics
       operationId: get_audio_stats
       responses:
         '200': {description: Stats returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
         '500': {description: Failed to get audio statistics, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /intake/start:
-    post:
-      tags: [intake]
-      summary: Start intake session
-      description: Initialize an intake session for a patient using the doctor's preferences.
-      operationId: start_intake
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/IntakeStartRequest'
-      responses:
-        '200':
-          description: Intake started
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse_IntakeStartResponse'
-        '500': {description: Failed to start intake, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /intake/next-question:
-    post:
-      tags: [intake]
-      summary: Get next intake question
-      description: Generate the next intake question using session-configured limits.
-      operationId: next_question
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/NextQuestionRequest'
-      responses:
-        '200':
-          description: Next question returned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse_NextQuestionResponse'
-        '404': {description: Session not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription:
-    post:
-      tags: [transcription]
-      summary: Adhoc transcription
-      operationId: transcribe_audio_adhoc
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [audio_file]
-              properties:
-                audio_file: {type: string, format: binary}
-                language: {type: string, default: en}
-      responses:
-        '200':
-          description: Transcription result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse_AdhocTranscriptionResponse'
-        '400': {description: No audio file or validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '422': {description: Invalid file type, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription/structure:
-    post:
-      tags: [transcription]
-      summary: Structure transcript text
-      operationId: structure_transcript_text
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StructureTextRequest'
-      responses:
-        '200': {description: Structured dialogue returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '400': {description: Empty transcript, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription/adhoc/action-plan:
-    post:
-      tags: [transcription]
-      summary: Queue action plan generation
-      operationId: generate_action_plan
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ActionPlanRequest'
-      responses:
-        '202': {description: Action plan generation started, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_ActionPlanResponse'}}}}
-        '404': {description: Adhoc not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '422': {description: No transcript available, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription/adhoc/{adhoc_id}/action-plan/status:
+  /doctor/preferences:
     get:
-      tags: [transcription]
-      summary: Get action plan status
-      operationId: get_action_plan_status
-      parameters:
-        - name: adhoc_id
-          in: path
-          required: true
-          schema: {type: string}
+      tags: [Doctor]
+      summary: Get doctor preferences
+      description: Return latest preferences for the default doctor; independent of intake flow.
+      operationId: get_doctor_preferences
       responses:
-        '200': {description: Status returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '200':
+          description: Doctor preferences loaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription/adhoc/{adhoc_id}/action-plan:
-    get:
-      tags: [transcription]
-      summary: Get action plan
-      operationId: get_action_plan
-      parameters:
-        - name: adhoc_id
-          in: path
-          required: true
-          schema: {type: string}
+    post:
+      tags: [Doctor]
+      summary: Set doctor preferences
+      description: Merge and persist doctor preferences; independent of intake flow.
+      operationId: set_doctor_preferences
+      requestBody:
+        required: true
+          content:
+            application/json:
+              schema:
+              $ref: '#/components/schemas/UpsertPreferencesRequest'
       responses:
-        '200': {description: Action plan returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '404': {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '200':
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_DoctorPreferencesResponse'
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
 components:
   schemas:
@@ -879,13 +903,13 @@ components:
           type: boolean
           example: false
         error:
-          type: string
+                  type: string
           example: INTERNAL_SERVER_ERROR
         message:
-          type: string
+                  type: string
           example: An unexpected internal server error occurred.
         details:
-          type: object
+                type: object
           additionalProperties: true
         timestamp:
           type: string
@@ -896,7 +920,7 @@ components:
     ApiResponse_HealthResponse:
       type: object
       required: [success, message, timestamp, request_id]
-      properties:
+                properties:
         success:
           type: boolean
           example: true
@@ -912,20 +936,20 @@ components:
         data:
           $ref: '#/components/schemas/HealthResponse'
     ApiResponse_RegisterPatientResponse:
-      type: object
+                      type: object
       required: [success, message, timestamp, request_id, data]
-      properties:
+                      properties:
         success:
           type: boolean
           example: true
         message:
-          type: string
+                          type: string
           example: Created
         timestamp:
-          type: string
+                          type: string
           format: date-time
         request_id:
-          type: string
+                    type: string
           format: uuid
         data:
           $ref: '#/components/schemas/RegisterPatientResponse'
@@ -975,20 +999,20 @@ components:
         message:
           type: string
     ApiResponse_Dict:
-      type: object
+          type: object
       required: [success, message, timestamp, request_id, data]
-      properties:
+          properties:
         success:
           type: boolean
           example: true
         message:
-          type: string
+              type: string
           example: OK
         timestamp:
-          type: string
+              type: string
           format: date-time
         request_id:
-          type: string
+              type: string
           format: uuid
         data:
           type: object
@@ -1047,10 +1071,10 @@ components:
           type: string
           example: OK
         timestamp:
-          type: string
+              type: string
           format: date-time
         request_id:
-          type: string
+              type: string
           format: uuid
         data:
           type: object
@@ -1086,19 +1110,19 @@ components:
           type: string
           example: OK
         timestamp:
-          type: string
-          format: date-time
+              type: string
+              format: date-time
         request_id:
           type: string
           format: uuid
         data:
-          type: object
-          properties:
+      type: object
+      properties:
             next_question_id:
-              type: string
+          type: string
               format: uuid
             completion_message:
-              type: string
+          type: string
     PreVisitSummaryRequest:
       type: object
       required: [patient_id, visit_id]
@@ -1157,14 +1181,14 @@ components:
           type: string
           format: uuid
         data:
-          type: object
-          properties:
-            summary:
+      type: object
+      properties:
+        summary:
               type: string
     SoapGenerationRequest:
-      type: object
+          type: object
       required: [patient_id, visit_id]
-      properties:
+          properties:
         patient_id: {type: string}
         visit_id: {type: string}
         transcript: {type: string, nullable: true}
@@ -1205,7 +1229,7 @@ components:
         audio_duration_seconds: {type: number, nullable: true}
         word_count: {type: integer, nullable: true}
         structured_dialogue:
-          type: array
+              type: array
           items: {type: object, additionalProperties: true}
           nullable: true
     ApiResponse_TranscriptionSessionDTO:
@@ -1315,7 +1339,7 @@ components:
         created_at: {type: string}
         updated_at: {type: string}
     AudioListResponse:
-      type: object
+          type: object
       required: [files, total_count, limit, offset]
       properties:
         files:
@@ -1484,4 +1508,18 @@ components:
           $ref: '#/components/schemas/ActionPlanResponse'
 tags:
   - name: Health
+    description: Health and readiness checks
   - name: Patients
+    description: Patient management and intake
+  - name: Intake
+    description: Intake session management
+  - name: Workflow
+    description: Workflow management
+  - name: Notes
+    description: Clinical notes and documentation
+  - name: Transcription
+    description: Audio transcription services
+  - name: Audio
+    description: Audio file management
+  - name: Doctor
+    description: Doctor preferences and settings
