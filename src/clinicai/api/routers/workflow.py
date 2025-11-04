@@ -74,12 +74,16 @@ async def create_walk_in_visit(
         use_case = CreateWalkInVisitUseCase(patient_repo, visit_repo)
         response = await use_case.execute(use_case_request)
         
+        # Encode patient_id for client (opaque token) - same as scheduled flow
+        from ...core.utils.crypto import encode_patient_id
+        encoded_patient_id = encode_patient_id(response.patient_id)
+        
         # Set IDs in request state for HIPAA audit middleware
-        http_request.state.audit_patient_id = response.patient_id
+        http_request.state.audit_patient_id = encoded_patient_id
         http_request.state.audit_visit_id = response.visit_id
         
         return ok(http_request, data=CreateWalkInVisitResponseSchema(
-            patient_id=response.patient_id,
+            patient_id=encoded_patient_id,  # Use encoded patient_id
             visit_id=response.visit_id,
             workflow_type=response.workflow_type,
             status=response.status,
@@ -100,6 +104,7 @@ async def create_walk_in_visit(
     },
 )
 async def get_available_workflow_steps(
+    request: Request,
     visit_id: str,
     patient_repo: PatientRepositoryDep,
     visit_repo: VisitRepositoryDep,
@@ -128,7 +133,7 @@ async def get_available_workflow_steps(
         # Get available steps
         available_steps = visit.get_available_steps()
         
-        return ok(None, data={
+        return ok(request, data={
             "visit_id": visit_id,
             "workflow_type": visit.workflow_type.value,
             "current_status": visit.status,
@@ -139,7 +144,7 @@ async def get_available_workflow_steps(
         raise
     except Exception as e:
         logger.error("Error getting available workflow steps", exc_info=True)
-        return fail(None, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -150,6 +155,7 @@ async def get_available_workflow_steps(
     },
 )
 async def list_walk_in_visits(
+    request: Request,
     visit_repo: VisitRepositoryDep,
     limit: int = 100,
     offset: int = 0,
@@ -164,7 +170,7 @@ async def list_walk_in_visits(
     try:
         visits = await visit_repo.find_walk_in_visits(limit, offset)
         
-        return ok(None, data={
+        return ok(request, data={
             "visits": [
                 {
                     "visit_id": visit.visit_id.value,
@@ -183,4 +189,4 @@ async def list_walk_in_visits(
         
     except Exception as e:
         logger.error("Error listing walk-in visits", exc_info=True)
-        return fail(None, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")

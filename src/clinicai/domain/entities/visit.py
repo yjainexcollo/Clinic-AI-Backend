@@ -518,8 +518,18 @@ class Visit:
 
     def store_soap_note(self, soap_data: Dict[str, Any]) -> None:
         """Store generated SOAP note."""
-        if self.status != "soap_generation":
-            raise ValueError(f"Cannot store SOAP note. Current status: {self.status}")
+        # Allow storing SOAP note from various valid statuses
+        valid_statuses_for_soap = ["soap_generation", "soap_pending"]
+        
+        # For walk-in workflows, also allow vitals_completed (next step after vitals)
+        if self.is_walk_in_workflow():
+            valid_statuses_for_soap.extend(["vitals_completed", "transcription_completed"])
+        # For scheduled workflows, also allow transcription and transcription_completed
+        elif self.is_scheduled_workflow():
+            valid_statuses_for_soap.extend(["transcription", "transcription_completed"])
+        
+        if self.status not in valid_statuses_for_soap:
+            raise ValueError(f"Cannot store SOAP note. Current status: {self.status}, valid statuses: {valid_statuses_for_soap}")
         
         self.soap_note = SoapNote(
             subjective=soap_data.get("subjective", ""),
@@ -532,8 +542,11 @@ class Visit:
             confidence_score=soap_data.get("confidence_score")
         )
         
-        # Move to prescription analysis status
-        self.status = "prescription_analysis"
+        # Update status appropriately based on workflow type
+        if self.is_walk_in_workflow():
+            self.status = "soap_completed"
+        else:
+            self.status = "prescription_analysis"
         self.updated_at = datetime.utcnow()
 
     def store_vitals(self, vitals: Dict[str, Any]) -> None:
@@ -570,7 +583,29 @@ class Visit:
 
     def can_generate_soap(self) -> bool:
         """Check if SOAP can be generated."""
-        return self.status == "soap_generation" and self.is_transcription_complete()
+        has_transcript = self.is_transcription_complete()
+        if not has_transcript:
+            return False
+        
+        if self.workflow_type == VisitWorkflowType.WALK_IN:
+            # For walk-in: can generate SOAP after transcription and vitals are completed
+            return self.status in ["transcription_completed", "vitals", "vitals_completed", "soap_generation", "soap_pending"]
+        else:
+            # For scheduled: can generate SOAP if transcript exists AND vitals exist
+            # This is more permissive - allows generation regardless of exact status
+            # Status-based checks (fallback for backward compatibility):
+            if self.status == "soap_generation":
+                return True
+            if self.status == "transcription_completed":
+                return True
+            # Most permissive: if transcript exists and vitals exist, allow SOAP generation
+            # This handles cases where status wasn't updated correctly
+            if has_transcript and self.vitals:
+                return True
+            # Fallback: status is transcription and vitals exist
+            if self.status == "transcription" and self.vitals:
+                return True
+            return False
 
     def store_vitals(self, vitals_data: Dict[str, Any]) -> None:
         """Store vitals data for the visit."""

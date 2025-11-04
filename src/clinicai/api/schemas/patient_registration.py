@@ -23,13 +23,13 @@ class RegisterPatientRequest(BaseModel):
     
     @validator("language", pre=True)
     def normalize_language(cls, v):
-        """Normalize language codes: 'sp' -> 'es' for consistency."""
+        """Normalize language codes: 'es' -> 'sp' for consistency with frontend."""
         if v and isinstance(v, str):
             normalized = v.lower().strip()
-            # Map 'sp' to 'es' for backend consistency
-            if normalized == "sp":
-                return "es"
-            if normalized in ["en", "es"]:
+            # Map 'es' to 'sp' for consistency with frontend LanguageContext
+            if normalized == "es":
+                return "sp"
+            if normalized in ["en", "sp"]:
                 return normalized
         return "en"  # Default to English
 

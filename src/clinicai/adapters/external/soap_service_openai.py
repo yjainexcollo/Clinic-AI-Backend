@@ -81,6 +81,15 @@ class OpenAISoapService(SoapService):
             
         return translated_text
 
+    def _normalize_language(self, language: str) -> str:
+        """Normalize language code to handle both 'sp' and 'es' for backward compatibility."""
+        if not language:
+            return "en"
+        normalized = language.lower().strip()
+        if normalized in ['es', 'sp']:
+            return 'sp'
+        return normalized if normalized in ['en', 'sp'] else 'en'
+    
     async def generate_soap_note(
         self,
         transcript: str,
@@ -91,6 +100,8 @@ class OpenAISoapService(SoapService):
         language: str = "en"
     ) -> Dict[str, Any]:
         """Generate SOAP note using OpenAI GPT-4."""
+        # Normalize language code
+        lang = self._normalize_language(language)
         
         # Build context from available data
         context_parts = []
@@ -107,7 +118,7 @@ class OpenAISoapService(SoapService):
                 vitals_data = pre_visit_summary['vitals']['data']
                 vitals_text = self._format_vitals_for_soap(vitals_data)
                 # Translate vitals to Spanish if needed
-                if language == "sp":
+                if lang == "sp":
                     vitals_text = self._translate_vitals_to_spanish(vitals_text)
                 context_parts.append(f"Vitals Data: {vitals_text}")
         
@@ -168,7 +179,7 @@ class OpenAISoapService(SoapService):
         context = "\n\n".join(context_parts) if context_parts else "No additional context available"
         
         # Create language-aware prompt
-        if language == "sp":
+        if lang == "sp":
             prompt = f"""
 Eres un escribano clínico que genera notas SOAP a partir de consultas médico-paciente.
 
@@ -538,9 +549,11 @@ Generate the SOAP note now:
         language: str = "en"
     ) -> Dict[str, Any]:
         """Generate post-visit summary for patient sharing."""
+        # Normalize language code
+        lang = self._normalize_language(language)
         
         # Create the prompt for post-visit summary
-        if language == "sp":
+        if lang == "sp":
             prompt = f"""
 Estás generando un resumen post-consulta para un paciente para compartir por WhatsApp. Debe ser claro, completo y amigable para el paciente.
 

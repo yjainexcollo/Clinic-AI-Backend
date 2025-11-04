@@ -391,12 +391,14 @@ async def generate_soap_note(
         }
         
     except ValueError as e:
+        error_message = str(e)
+        logger.warning(f"SOAP generation validation failed: {error_message}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "error": "INVALID_REQUEST",
-                "message": str(e),
-                "details": {},
+                "message": error_message,
+                "details": {"reason": "Visit not ready for SOAP generation"},
             },
         )
     except PatientNotFoundError as e:
@@ -477,6 +479,16 @@ async def store_vitals(
         if not visit:
             raise VisitNotFoundError(payload.visit_id)
         visit.store_vitals(payload.vitals)
+        
+        # Update visit status appropriately after storing vitals
+        if visit.is_walk_in_workflow():
+            visit.complete_vitals()  # Sets status to "vitals_completed" for walk-in
+        elif visit.is_scheduled_workflow():
+            # For scheduled visits, if transcript exists and status isn't already soap_generation, update it
+            if visit.is_transcription_complete():
+                if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
+                    visit.status = "soap_generation"
+        
         await visit_repo.save(visit)
         return {"success": True, "message": "Vitals stored", "vitals_id": f"{payload.visit_id}:vitals"}
     except PatientNotFoundError as e:
@@ -849,6 +861,20 @@ async def structure_dialogue(request: Request, patient_id: str, visit_id: str, p
 
         # Normalize dialogue to a list (empty list if None)
         normalized_dialogue: List[Dict[str, str]] = dialogue if isinstance(dialogue, list) else []
+
+        # Apply PII removal to the structured dialogue (even though LLM should have done it)
+        if normalized_dialogue:
+            from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
+            # Create a temporary instance just to use the PII removal methods
+            # We don't need the full use case, just the PII removal logic
+            temp_transcription_service = None  # Not needed for PII removal
+            temp_use_case = TranscribeAudioUseCase(None, None, temp_transcription_service)  # type: ignore
+            
+            # Apply PII removal (standard + aggressive)
+            normalized_dialogue = temp_use_case._remove_pii_from_dialogue(normalized_dialogue)
+            normalized_dialogue = temp_use_case._aggressive_pii_removal_from_dialogue(normalized_dialogue)
+            
+            logger.info(f"Applied PII removal to structured dialogue")
 
         # Save the structured dialogue back to the database for future use
         if normalized_dialogue and visit.transcription_session:

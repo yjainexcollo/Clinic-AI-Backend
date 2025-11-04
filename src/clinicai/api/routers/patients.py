@@ -1252,9 +1252,14 @@ async def store_vitals(
         # Store vitals in visit
         visit.store_vitals(vitals_dict)
         
-        # Update visit status for walk-in workflow
+        # Update visit status based on workflow type
         if visit.is_walk_in_workflow():
             visit.complete_vitals()
+        elif visit.is_scheduled_workflow():
+            # For scheduled visits, if transcript exists and status isn't already soap_generation, update it
+            if visit.is_transcription_complete():
+                if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
+                    visit.status = "soap_generation"
         
         # Persist visit (not patient)
         await visit_repo.save(visit)

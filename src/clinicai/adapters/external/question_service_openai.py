@@ -142,8 +142,18 @@ Return ONLY the category name (e.g., "duration", "pain", "medications", etc.). N
     # ----------------------
     # Question generation
     # ----------------------
+    def _normalize_language(self, language: str) -> str:
+        """Normalize language code to handle both 'sp' and 'es' for backward compatibility."""
+        if not language:
+            return "en"
+        normalized = language.lower().strip()
+        if normalized in ['es', 'sp']:
+            return 'sp'
+        return normalized if normalized in ['en', 'sp'] else 'en'
+    
     async def generate_first_question(self, disease: str, language: str = "en") -> str:
-        if language == "sp":
+        lang = self._normalize_language(language)
+        if lang == "sp":
             question = "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?"
             return question
         question = "Why have you come in today? What is the main concern you want help with?"
@@ -164,9 +174,12 @@ Return ONLY the category name (e.g., "duration", "pain", "medications", etc.). N
         patient_age: Optional[int] = None,
         language: str = "en",
     ) -> str:
+        # Normalize language code
+        lang = self._normalize_language(language)
+        
         # Force closing question at the end
         if current_count + 1 >= max_count:
-            if language == "sp":
+            if lang == "sp":
                 return "¿Hemos pasado por alto algo importante sobre su salud o hay otras preocupaciones que desee que el médico sepa?"
             return "Have we missed anything important about your health, or any other concerns you want the doctor to know?"
 
@@ -179,7 +192,7 @@ Return ONLY the category name (e.g., "duration", "pain", "medications", etc.). N
             prior_block += "Prior QAs: " + "; ".join(prior_qas[:6]) + "\n"
 
         # Build sophisticated prompt with detailed medical knowledge
-        if language == "sp":
+        if lang == "sp":
             system_prompt = f"""
 SISTEMA
 
@@ -912,7 +925,10 @@ STEP 2: Verify the question hasn't been asked before.
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data with red flag detection."""
         
-        if language == "sp":
+        # Normalize language code
+        lang = self._normalize_language(language)
+        
+        if lang == "sp":
             prompt = (
                 "Rol y Tarea\n"
                 "Eres un Asistente de Admisión Clínica.\n"
@@ -1002,7 +1018,7 @@ STEP 2: Verify the question hasn't been asked before.
         try:
             # Detect abusive language red flags
             try:
-                red_flags = await self._detect_red_flags(intake_answers, language)
+                red_flags = await self._detect_red_flags(intake_answers, lang)
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
@@ -1043,6 +1059,9 @@ STEP 2: Verify the question hasn't been asked before.
     # ----------------------
     async def _detect_red_flags(self, intake_answers: Dict[str, Any], language: str = "en") -> List[Dict[str, str]]:
         """Hybrid abusive language detection: hardcoded rules + LLM analysis."""
+        # Normalize language code
+        lang = self._normalize_language(language)
+        
         red_flags = []
         
         if not isinstance(intake_answers, dict) or "questions_asked" not in intake_answers:
@@ -1063,12 +1082,12 @@ STEP 2: Verify the question hasn't been asked before.
         logger.info(f"Starting hybrid abusive language detection for {len(questions_asked)} questions")
         
         # Step 1: Fast hardcoded detection for obvious cases
-        obvious_flags = self._detect_obvious_abusive_language(questions_asked, language)
+        obvious_flags = self._detect_obvious_abusive_language(questions_asked, lang)
         red_flags.extend(obvious_flags)
         logger.info(f"Obvious abusive language flags detected: {len(obvious_flags)}")
         
         # Step 2: LLM analysis for subtle/contextual abusive language
-        complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, language)
+        complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, lang)
         red_flags.extend(complex_flags)
         logger.info(f"Subtle abusive language flags detected: {len(complex_flags)}")
         
@@ -1077,6 +1096,8 @@ STEP 2: Verify the question hasn't been asked before.
     
     def _detect_obvious_abusive_language(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
         """Fast hardcoded detection for obvious abusive language."""
+        # Normalize language code
+        lang = self._normalize_language(language)
         red_flags = []
         
         for qa in questions_asked:
@@ -1087,12 +1108,12 @@ STEP 2: Verify the question hasn't been asked before.
                 continue
             
             # Check for obvious abusive language
-            if self._contains_abusive_language(answer, language):
+            if self._contains_abusive_language(answer, lang):
                 red_flags.append({
                     "type": "abusive_language",
                     "question": question,
                     "answer": answer,
-                    "message": self._get_abusive_language_message(language),
+                    "message": self._get_abusive_language_message(lang),
                     "detection_method": "hardcoded"
                 })
         
@@ -1108,14 +1129,14 @@ STEP 2: Verify the question hasn't been asked before.
                 question = qa.get("question", "").strip()
                 
                 if (answer and answer.lower() not in ["", "n/a", "not provided", "unknown", "don't know", "no se", "no proporcionado"] 
-                    and not self._contains_abusive_language(answer, language)):
+                    and not self._contains_abusive_language(answer, lang)):
                     subtle_cases.append(qa)
             
             if not subtle_cases:
                 return []
             
             # Use LLM to analyze subtle cases
-            return await self._analyze_abusive_language_with_llm(subtle_cases, language)
+            return await self._analyze_abusive_language_with_llm(subtle_cases, lang)
             
         except Exception as e:
             import logging
@@ -1125,8 +1146,10 @@ STEP 2: Verify the question hasn't been asked before.
     
     async def _analyze_abusive_language_with_llm(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
         """Use LLM to analyze question-answer pairs for subtle abusive language."""
+        # Normalize language code
+        lang = self._normalize_language(language)
         
-        if language == "sp":
+        if lang == "sp":
             prompt = f"""
 Analiza estas respuestas de admisión del paciente para detectar LENGUAJE ABUSIVO O INAPROPIADO:
 
@@ -1231,7 +1254,7 @@ Responses to analyze:
                         "type": "abusive_language",
                         "question": case.get("question", ""),
                         "answer": case.get("answer", ""),
-                        "message": self._get_llm_abusive_language_message(case.get("reason", ""), language),
+                        "message": self._get_llm_abusive_language_message(case.get("reason", ""), lang),
                         "detection_method": "llm"
                     })
                 
@@ -1255,13 +1278,15 @@ Responses to analyze:
     
     def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
         """Get message for LLM-detected abusive language."""
-        if language == "sp":
+        lang = self._normalize_language(language)
+        if lang == "sp":
             return f"⚠️ BANDERA ROJA: Lenguaje abusivo detectado. Razón: {reason}"
         else:
             return f"⚠️ RED FLAG: Abusive language detected. Reason: {reason}"
     
     def _contains_abusive_language(self, text: str, language: str = "en") -> bool:
         """Check if text contains abusive or inappropriate language."""
+        lang = self._normalize_language(language)
         text_lower = text.lower()
         
         # Common abusive words/phrases in English
@@ -1278,14 +1303,15 @@ Responses to analyze:
             "pinche", "chingado", "verga", "pendejo", "culero", "mamón"
         ]
         
-        abusive_words = spanish_abusive if language == "sp" else english_abusive
+        abusive_words = spanish_abusive if lang == "sp" else english_abusive
         
         return any(word in text_lower for word in abusive_words)
     
     
     def _get_abusive_language_message(self, language: str = "en") -> str:
         """Get message for abusive language red flag."""
-        if language == "sp":
+        lang = self._normalize_language(language)
+        if lang == "sp":
             return "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
         else:
             return "⚠️ RED FLAG: Patient used inappropriate or abusive language in their responses."

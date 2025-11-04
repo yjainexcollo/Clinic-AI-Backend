@@ -88,20 +88,27 @@ class TranscribeAudioUseCase:
             ],
             'name': [
                 # Doctor titles with names (most specific - highest priority)
-                # Match: Dr. Prasad, Dr. John Smith, Doctor Kumar
-                # Ensure word boundary after name to avoid matching beyond
-                r'\b(?:Dr|Doctor|Dr\.|MD|MD\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?=\s|\.|,|$)',  # Dr. Prasad, Dr. John Smith
+                # Match: Dr. Prasad, Dr. John Smith, Doctor Kumar, Dr Prasad
+                r'\b(?:Dr|Doctor|Dr\.|MD|MD\.)\s+[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?(?=\s|\.|,|:|$)',  # Dr. Prasad, Dr. John Smith, Dr Prasad
                 # Title prefixes with names
                 r'\b(Mr|Mrs|Ms|Miss|Mr\.|Mrs\.|Ms\.|Miss\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?=\s|\.|,|$)',  # Mr. Smith, Mrs. Johnson
                 # Names after greetings/addresses (exclude titles like Dr, Doctor)
-                # Match: Hello John, Hi Mary Smith (but not "Thank you, Dr")
-                r'\b(?:Hello|Hi|Hey|Dear),?\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)(?=\s|\.|,|$)',  # Hello John, Hi Mary Smith
+                # Match: Hello John, Hi Mary Smith, Hey Prasad
+                r'\b(?:Hello|Hi|Hey|Dear),?\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)(?=\s|\.|,|:|$)',  # Hello John, Hi Mary Smith, Hey Prasad
                 # Full names in context
-                r"\b(?:I'?m|name is|called|named)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|\.|,|$)",  # I'm John Smith, name is Mary Johnson
+                r"\b(?:I'?m|name is|called|named|this is)\s+([A-Z][a-z]{2,}\s+[A-Z][a-z]+)(?=\s|\.|,|$)",  # I'm John Smith, name is Mary Johnson
                 # Patient/Doctor name mentions with context
                 r'\b(?:patient|doctor)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|\.|,|$)',  # patient John Smith, doctor Mary Johnson
                 # Standalone capitalized names after "Thank you" (excluding titles)
-                r'\b(?:Thank you|Thanks),?\s+([A-Z][a-z]{2,})(?=\s|\.|,|$)',  # Thank you, John (but not "Thank you, Dr")
+                r'\b(?:Thank you|Thanks),?\s+([A-Z][a-z]{2,})(?=\s|\.|,|:|$)',  # Thank you, John (but not "Thank you, Dr")
+                # Standalone capitalized first names in medical context (common doctor names)
+                # Match: "Prasad said", "Kumar will", "Smith mentioned" but NOT medication names
+                r'\b([A-Z][a-z]{3,})(?:\s+(?:said|will|mentioned|told|asked|examined|checked|found|sees|sees|prescribed|ordered))',  # Prasad said, Kumar will
+                # Capitalized words at start of sentences that might be names (context-dependent)
+                # Match: "Prasad, how are you?" but not "Diabetes is..."
+                r'(?:^|\.\s+)([A-Z][a-z]{3,})(?:,\s*(?:how|what|when|where|why|can|do|are|is|have))',  # Prasad, how are you?
+                # Names mentioned as "Mr/Mrs [Name]" pattern
+                r'\b(?:Mr|Mrs|Ms|Miss)\s+([A-Z][a-z]{2,})\b',  # Mr Prasad, Mrs Smith
             ],
         }
 
@@ -141,16 +148,22 @@ class TranscribeAudioUseCase:
             if not validation_result.get("is_valid", False):
                 raise ValueError(f"Invalid audio file: {validation_result.get('error', 'Unknown error')}")
 
+            # Get language from request or fallback to patient language
+            transcription_language = request.language or getattr(patient, 'language', 'en') or 'en'
+            # Normalize language code (handle both 'sp' and 'es' for backward compatibility)
+            if transcription_language in ['es', 'sp']:
+                transcription_language = 'sp'
+            
             # Start transcription process
             visit.start_transcription(request.audio_file_path)
             await self._visit_repository.save(visit)
 
             # Transcribe audio
-            LOGGER.info(f"Starting Whisper transcription for file: {request.audio_file_path}")
+            LOGGER.info(f"Starting Whisper transcription for file: {request.audio_file_path}, language: {transcription_language}")
             
             transcription_result = await self._transcription_service.transcribe_audio(
                 request.audio_file_path,
-                language=request.language,
+                language=transcription_language,
                 medical_context=True
             )
 
@@ -171,7 +184,7 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Starting transcript processing for {len(raw_transcript)} characters")
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:200]}...")
             structured_content = await self._process_transcript_with_chunking(
-                client, raw_transcript, settings, LOGGER, request.language or "en"
+                client, raw_transcript, settings, LOGGER, transcription_language
             )
 
             # Process structured dialogue separately from raw transcript
@@ -281,24 +294,50 @@ class TranscribeAudioUseCase:
             raw_transcript_cleaned = self._remove_pii_from_text(raw_transcript)
             if raw_transcript_cleaned != raw_transcript:
                 LOGGER.info(f"PII removed from raw transcript: {len(raw_transcript)} -> {len(raw_transcript_cleaned)} chars")
+                # Log sample of what was removed
+                if len(raw_transcript) > 100:
+                    sample_before = raw_transcript[:200]
+                    sample_after = raw_transcript_cleaned[:200]
+                    if sample_before != sample_after:
+                        LOGGER.debug(f"Sample before: {sample_before}")
+                        LOGGER.debug(f"Sample after: {sample_after}")
             raw_transcript = raw_transcript_cleaned
 
-            # Apply PII removal to structured dialogue
+            # Apply PII removal to structured dialogue (with multiple passes for better coverage)
             if structured_dialogue:
-                structured_dialogue_before = len(str(structured_dialogue))
+                structured_dialogue_before = str(structured_dialogue)
+                # First pass: standard PII removal
                 structured_dialogue = self._remove_pii_from_dialogue(structured_dialogue)
-                structured_dialogue_after = len(str(structured_dialogue))
+                
+                # Second pass: additional aggressive PII removal on structured dialogue
+                # This handles cases where LLM might have missed PII
+                structured_dialogue = self._aggressive_pii_removal_from_dialogue(structured_dialogue)
+                
+                structured_dialogue_after = str(structured_dialogue)
                 if structured_dialogue_before != structured_dialogue_after:
                     LOGGER.info(f"PII removed from structured dialogue")
+                    # Log sample for debugging
+                    LOGGER.debug(f"Structured dialogue sample before: {structured_dialogue_before[:300]}")
+                    LOGGER.debug(f"Structured dialogue sample after: {structured_dialogue_after[:300]}")
 
             # Validate PII removal
             pii_validation = self._validate_pii_removal(raw_transcript, structured_dialogue)
             if pii_validation['pii_detected']:
-                LOGGER.warning(f"PII validation: {pii_validation['pii_count']} PII items still detected after removal")
-                for pii_type, value, location in pii_validation['pii_items'][:5]:
+                LOGGER.warning(f"⚠️ PII validation: {pii_validation['pii_count']} PII items still detected after removal")
+                for pii_type, value, location in pii_validation['pii_items'][:10]:  # Show first 10
                     LOGGER.warning(f"  - {pii_type}: {value} (in {location})")
+                # Try one more aggressive pass if PII still detected
+                if structured_dialogue and pii_validation['pii_count'] > 0:
+                    LOGGER.info("Attempting additional aggressive PII removal pass...")
+                    structured_dialogue = self._aggressive_pii_removal_from_dialogue(structured_dialogue)
+                    # Re-validate
+                    pii_validation_retry = self._validate_pii_removal(raw_transcript, structured_dialogue)
+                    if pii_validation_retry['pii_detected']:
+                        LOGGER.warning(f"⚠️ PII still detected after retry: {pii_validation_retry['pii_count']} items")
+                    else:
+                        LOGGER.info("✓ Additional PII removal pass successful")
             else:
-                LOGGER.info("PII validation: No PII detected in final output ✓")
+                LOGGER.info("✓ PII validation: No PII detected in final output")
 
             # Validate completeness
             if structured_dialogue:
@@ -432,7 +471,8 @@ class TranscribeAudioUseCase:
                 name_part = matched_text
                 # If pattern has capture groups, extract the name part
                 if match.groups():
-                    name_part = match.group(1) if match.groups() else matched_text
+                    # Use the first capture group if available
+                    name_part = match.group(1) if match.group(1) else matched_text
                 else:
                     # For patterns without capture groups, extract name after prefix
                     if 'Dr' in matched_text or 'Doctor' in matched_text or 'MD' in matched_text:
@@ -444,12 +484,38 @@ class TranscribeAudioUseCase:
                 
                 # Check if this is a medical term (medication, condition, etc.) - should NOT be removed
                 name_lower = name_part.lower().strip()
-                # Check if the matched text contains any medical terms
+                
+                # Expanded medical term check - also check if the word appears in common medical phrases
                 is_medical_term = False
                 for med_term in self._medical_term_whitelist:
                     if med_term.lower() in name_lower or name_lower in med_term.lower():
                         is_medical_term = True
                         break
+                
+                # Additional check: if the matched word is part of a medical phrase, don't remove it
+                # Check context around the match for medical keywords
+                if not is_medical_term:
+                    context_start = max(0, match.start() - 30)
+                    context_end = min(len(cleaned_text), match.end() + 30)
+                    context = cleaned_text[context_start:context_end].lower()
+                    
+                    # Common medical phrases that might contain capitalized words
+                    medical_phrases = [
+                        'medication', 'prescribed', 'taking', 'dosage', 'milligrams', 'mg', 'ml',
+                        'diagnosed with', 'suffering from', 'condition', 'treatment', 'therapy',
+                        'blood pressure', 'heart rate', 'blood test', 'lab results'
+                    ]
+                    
+                    # If context suggests medical content, be more conservative
+                    if any(phrase in context for phrase in medical_phrases):
+                        # Double-check if the matched word could be a medication name
+                        # Common medication name patterns (usually lowercase in speech, but might be capitalized)
+                        common_med_patterns = [r'\b' + re.escape(name_lower) + r'\s+(?:mg|milligrams|ml|milliliters|tablets|capsules)\b']
+                        if not any(re.search(pattern, context, re.IGNORECASE) for pattern in common_med_patterns):
+                            # If it's not clearly a medication, it might be a name - proceed with removal
+                            pass
+                        else:
+                            is_medical_term = True
                 
                 # Only add to matches if it's NOT a medical term
                 if not is_medical_term:
@@ -490,6 +556,56 @@ class TranscribeAudioUseCase:
             
             # Remove PII from the dialogue text
             cleaned_text = self._remove_pii_from_text(text)
+            cleaned_dialogue.append({speaker: cleaned_text})
+        
+        return cleaned_dialogue
+    
+    def _aggressive_pii_removal_from_dialogue(self, dialogue: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Apply additional aggressive PII removal pass to structured dialogue."""
+        if not dialogue:
+            return dialogue
+        
+        cleaned_dialogue = []
+        for turn in dialogue:
+            if not isinstance(turn, dict) or len(turn) != 1:
+                cleaned_dialogue.append(turn)
+                continue
+            
+            speaker = list(turn.keys())[0]
+            text = list(turn.values())[0]
+            
+            # Additional aggressive patterns for common name variations
+            cleaned_text = text
+            
+            # Remove standalone capitalized words that look like names (more aggressive)
+            # Pattern: Capitalized word (3+ chars) that's not at start of sentence and not a medical term
+            # Only apply if it's clearly in a name context (after "I'm", "called", "Dr.", etc.)
+            # Check for common name patterns that might have been missed
+            # Match capitalized words that appear in name-like contexts
+            name_like_patterns = [
+                r'\b([A-Z][a-z]{3,})(?:,?\s+(?:how|what|when|where|why|can|do|are|is|have|will|said|told|asked))',  # Name followed by question/action
+                r'(?:I\'m|I am|name is|called|named)\s+([A-Z][a-z]{3,})\b',  # "I'm Name" or "called Name"
+                r'\bDr\.\s+([A-Z][a-z]{3,})\b',  # "Dr. Name" (more flexible)
+                r'\b([A-Z][a-z]{3,})\s+(?:prescribed|ordered|recommended|suggested)',  # Name before medical action
+            ]
+            
+            for pattern in name_like_patterns:
+                for match in re.finditer(pattern, cleaned_text, re.IGNORECASE):
+                    name_candidate = match.group(1) if match.groups() else match.group(0)
+                    name_lower = name_candidate.lower().strip()
+                    
+                    # Skip if it's a medical term
+                    is_medical = any(
+                        med_term.lower() in name_lower or name_lower in med_term.lower()
+                        for med_term in self._medical_term_whitelist
+                    )
+                    
+                    if not is_medical:
+                        # Replace with [NAME]
+                        cleaned_text = cleaned_text[:match.start()] + '[NAME]' + cleaned_text[match.end():]
+                        LOGGER.debug(f"Aggressive PII removal: removed '{name_candidate}' from dialogue")
+                        break  # Break to avoid multiple replacements of same match
+            
             cleaned_dialogue.append({speaker: cleaned_text})
         
         return cleaned_dialogue

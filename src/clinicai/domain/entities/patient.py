@@ -56,8 +56,10 @@ class Patient:
         if not isinstance(self.age, int) or self.age < 0 or self.age > 120:
             raise InvalidPatientDataError("age", self.age)
         
-        # Validate language
-        if self.language not in ["en", "es"]:
+        # Validate language - accept both "en", "es", and "sp" (normalize "es" to "sp" for consistency)
+        if self.language and self.language.lower() in ["es", "sp"]:
+            self.language = "sp"  # Normalize to "sp" for consistency
+        elif self.language not in ["en", "sp"]:
             raise InvalidPatientDataError("language", f"Invalid language: {self.language}")
 
     def update_contact_info(self, name: str, mobile: str) -> None:
