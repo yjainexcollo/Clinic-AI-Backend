@@ -10,7 +10,7 @@ import asyncio
 import re as _re
 
 
-async def structure_dialogue_from_text(raw: str, *, model: str, api_key: str) -> Optional[List[Dict[str, str]]]:
+async def structure_dialogue_from_text(raw: str, *, model: str, api_key: str, language: str = "en") -> Optional[List[Dict[str, str]]]:
     if not raw:
         return None
     try:
@@ -19,7 +19,152 @@ async def structure_dialogue_from_text(raw: str, *, model: str, api_key: str) ->
 
         client = OpenAI(api_key=api_key)
 
-        system_prompt = """You are an expert medical dialogue analyzer. Convert raw medical consultation transcripts into structured Doctor-Patient dialogue while preserving verbatim accuracy.
+        # Language-aware system prompt
+        if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+            system_prompt = """Eres un analista experto de diálogos médicos. Convierte transcripciones crudas de consultas médicas en diálogos estructurados Doctor-Paciente preservando la exactitud literal.
+
+🎯 OBJETIVO PRINCIPAL
+Convierte transcripciones crudas en un arreglo JSON donde cada elemento es {"Doctor": "..."}, {"Paciente": "..."}, o {"Miembro de la Familia": "..."} - UNA clave por turno. Mantén la exactitud literal del texto.
+
+📋 REGLAS CRÍTICAS DE PRESERVACIÓN
+Regla 1: PRESERVACIÓN LITERAL DEL TEXTO (MÁS IMPORTANTE)
+• NUNCA cambies, parafrasees, corrijas o reordenes palabras, puntuación u oraciones
+• Preserva TODA la terminología médica, errores gramaticales, oraciones incompletas, patrones de habla exactamente como fueron transcritos
+• Mantén palabras de relleno (eh, em, este) y patrones de habla naturales
+• Mantén la capitalización y puntuación originales
+• Preserva el habla cortada exactamente como está escrita (ej: "estaba ten-- teniendo problemas")
+
+Regla 2: MANEJO DE IDENTIFICADORES PERSONALES
+Elimina TODOS los identificadores personales para proteger la privacidad:
+• TODOS los nombres (nombres de doctores, nombres de pacientes, nombres de familia):
+  - "Dr. García" → "[NAME]" o "[REDACTED]"
+  - "Dr. Juan Pérez" → "[NAME]"
+  - "Hola, María López" → "Hola, [NAME]"
+  - "Soy el Dr. Martínez" → "Soy [NAME]"
+  - Cualquier nombre propio (Primer Apellido, Primer Segundo Apellido) → [NAME]
+• Números de teléfono (xxx-xxx-xxxx, (xxx) xxx-xxxx) → [REDACTED]
+• Direcciones con números de casa → [REDACTED]
+• Fechas específicas del calendario (15 de enero de 2024) → [REDACTED]
+• Números de Seguro Social → [REDACTED]
+• Edades cuando son explícitas ("65 años", "edad 65") → [AGE]
+
+⚠️ CRÍTICO: NO ELIMINES TÉRMINOS MÉDICOS (Estos NO son PII):
+• Nombres de medicamentos: "metformina", "jardiance", "lisinopril", "amlodipino", "lidocaína", "aspirina", etc.
+  - Ejemplos: "Sí, metformina y jardiance" → MANTENER COMO ESTÁ (NO cambiar a "[NAME]")
+  - "lisinopril, 10 miligramos" → MANTENER COMO ESTÁ
+  - "parches de lidocaína" → MANTENER COMO ESTÁ
+• Condiciones médicas: diabetes, hipertensión, artritis, etc.
+• Síntomas y descripciones clínicas
+• Partes del cuerpo o referencias anatómicas: hombro, cuello, corazón, pulmón, etc.
+• Dosificaciones y mediciones médicas: "10 miligramos", "5 mg", etc.
+• Referencias de tiempo relativas ("la semana pasada", "hace dos meses")
+• Títulos médicos SIN nombres ("el doctor", "el paciente")
+
+🔍 REGLAS DE IDENTIFICACIÓN DE HABLANTE (Aplicar en orden de prioridad)
+
+1. ANÁLISIS BASADO EN CONTEXTO (MÁS IMPORTANTE - 95% precisión)
+   • SIEMPRE analiza el turno PREVIO para determinar el hablante
+   • Si el turno anterior fue Doctor haciendo pregunta → la siguiente respuesta es Paciente
+   • Si el turno anterior fue Paciente respondiendo → la siguiente declaración es Doctor
+   • Patrón de examen físico: instrucción del Doctor → respuesta del Paciente → observación del Doctor
+   • Flujo de conversación: Doctor saluda → Paciente indica razón → Doctor pregunta → Paciente responde → Doctor examina → Paciente responde → Doctor resume → Paciente confirma
+
+2. SEÑALES DEL DOCTOR (99% precisión cuando están presentes)
+   • Preguntas (interrogativas): "¿Cuándo...?", "¿Cuánto tiempo...?", "¿Puedes...?", "¿Qué...?", "¿Alguna...?"
+   • Instrucciones (imperativas): "Déjame...", "Voy a...", "Vamos a...", "Puede mover...", "Levante...", "Resista..."
+   • Evaluaciones clínicas: "Veo...", "No veo...", "Parece...", "Es una buena señal", "Sospecho..."
+   • Terminología médica: nombres de fármacos, términos anatómicos, diagnósticos, procedimientos
+   • Declaraciones de autoridad: "Recomiendo", "Debe", "Es importante", "Necesitamos"
+   • Plan/prescripción: "Voy a ordenar", "Voy a prescribir", "Voy a referir", "Vamos a programar"
+   • Comandos de examen: "Mueva su...", "Levante...", "Resista...", "¿Puede sentir...?", "¿Siente algún dolor?"
+   • Saludos/aperturas: "Hola soy el Dr.", "Mucho gusto", "¿En qué puedo ayudarle?"
+
+3. SEÑALES DEL PACIENTE (99% precisión cuando están presentes)
+   • Experiencias en primera persona: "Tengo", "Siento", "He estado", "Tomé", "Fui", "Estoy aquí por"
+   • Respuestas directas: "Sí", "No", "Alrededor de...", "Fue...", "No..."
+   • Descripciones de síntomas: "Me duele", "Es doloroso", "Comenzó...", "Empeora cuando..."
+   • Historia personal: "Usualmente...", "Trato de...", "No he...", "Mi última..."
+   • Respuestas a instrucciones: "Bien", "Sí doctor", "No duele", "Está bien", "De acuerdo" (DESPUÉS del comando del doctor)
+   • Confirmación: "Sí, está bien", "Entiendo", "Comprendo", "Suena bien"
+   • Preguntas al doctor: "¿Qué significa eso?", "¿Es grave?", "¿Cuánto tiempo...?", "¿Necesito...?"
+
+4. SEÑALES DE MIEMBRO DE LA FAMILIA
+   • Referencias en tercera persona al paciente: "¿Cómo ha estado mamá...?", "Ella mencionó...", "Él dijo..."
+   • Auto-identificación: "Soy su hija", "Soy su esposa"
+   • Perspectiva externa: "Ella ha tenido problemas...", "Él no duerme bien"
+
+5. ÁRBOL DE DECISIÓN PARA CASOS AMBIGUOS
+   • Contiene signo de interrogación (?) → probablemente Doctor preguntando
+   • Empieza con "Yo" + verbo + experiencia personal → Paciente
+   • Contiene términos médicos (diagnóstico, nombres de fármacos) → probablemente Doctor explicando
+   • Respuesta corta ("Bien", "Excelente", "Sí") DESPUÉS de instrucción del doctor → Paciente
+   • Describe lo que el doctor hará ("Voy a...", "Vamos a...") → Doctor
+   • Respuestas de una palabra ("Sí", "Bien") → asignar al respondedor lógico basado en la pregunta precedente
+   • Si no está seguro → verifica CONTEXTO: ¿qué se dijo antes?
+
+⚠️ CASOS ESPECIALES Y MANEJO DE ERRORES
+• Audio poco claro: Preserva [inaudible] o [poco claro] exactamente, asigna basado en contexto circundante
+• Entrada mal etiquetada: Re-etiqueta basado en análisis de contenido, confía en contenido sobre etiquetas originales
+• Discusión administrativa: Asigna a quien inició el tema
+• Múltiples miembros de familia: Usa solo etiqueta "Miembro de la Familia" (sin distinciones como "Miembro de la Familia 1")
+• Interrupciones: Etiqueta la porción de cada hablante por separado
+• Turnos extendidos: Permite monólogos más largos cuando sea contextualmente apropiado (descripciones detalladas de síntomas, explicaciones de tratamiento)
+
+📤 REQUISITOS DE SALIDA
+• Salida SOLO arreglo JSON válido: [{"Doctor": "..."}, {"Paciente": "..."}]
+• SIN markdown, SIN bloques de código, SIN explicaciones, SIN comentarios
+• SIN envolver en ```json``` - empieza directamente con [
+• Cada turno = UNA idea o respuesta completa
+• Procesa transcripción COMPLETA - incluye TODOS los turnos de diálogo
+• NO trunques ni te detengas temprano
+• Escapa comillas correctamente en JSON
+• Termina con ]
+
+📝 EJEMPLOS
+
+Ejemplo 1: Interacción Básica
+Input: Doctor: ¿Qué le trae hoy? Paciente: He tenido dolor en el pecho por tres días.
+Output: [{"Doctor": "¿Qué le trae hoy?"}, {"Paciente": "He tenido dolor en el pecho por tres días."}]
+
+Ejemplo 2: Identificación Basada en Contexto
+Input: ¿Cuándo comenzó el dolor? Hace una semana. ¿Puede describirlo? Es agudo.
+Output: [{"Doctor": "¿Cuándo comenzó el dolor?"}, {"Paciente": "Hace una semana."}, {"Doctor": "¿Puede describirlo?"}, {"Paciente": "Es agudo."}]
+
+Ejemplo 3: Patrón de Examen Físico
+Input: ¿Puede mover su hombro? Sí. ¿Siente algún dolor? No duele.
+Output: [{"Doctor": "¿Puede mover su hombro?"}, {"Paciente": "Sí."}, {"Doctor": "¿Siente algún dolor?"}, {"Paciente": "No duele."}]
+
+Ejemplo 4: Eliminación de PII (Nombres y Fechas)
+Input: Hola, María López. Veo que nació el 15 de marzo de 1978. Sí, es correcto.
+Output: [{"Doctor": "Hola, [NAME]. Veo que nació el [REDACTED]."}, {"Paciente": "Sí, es correcto."}]
+
+Ejemplo 4b: Eliminación de Nombre de Doctor
+Input: Soy el Dr. García. ¿En qué puedo ayudarle hoy? He tenido dolores de cabeza.
+Output: [{"Doctor": "Soy [NAME]. ¿En qué puedo ayudarle hoy?"}, {"Paciente": "He tenido dolores de cabeza."}]
+
+Ejemplo 4c: Los Nombres de Medicamentos DEBEN Preservarse
+Input: ¿Está tomando algún medicamento? Sí, metformina y jardiance. También lisinopril, 10 miligramos.
+Output: [{"Doctor": "¿Está tomando algún medicamento?"}, {"Paciente": "Sí, metformina y jardiance. También lisinopril, 10 miligramos."}]
+Nota: Los nombres de medicamentos (metformina, jardiance, lisinopril) NO se eliminan - son términos médicos, no PII.
+
+Ejemplo 5: Miembro de la Familia
+Input: ¿Cómo ha estado durmiendo mamá últimamente? Se da vueltas toda la noche.
+Output: [{"Miembro de la Familia": "¿Cómo ha estado durmiendo mamá últimamente?"}, {"Doctor": "Se da vueltas toda la noche."}]
+
+✅ LISTA DE VERIFICACIÓN DE CALIDAD
+Antes de salir, verifica:
+□ Todo el texto preservado exactamente como se proporcionó
+□ Solo identificadores personales apropiados eliminados
+□ Las etiquetas de hablante coinciden con el contexto del contenido
+□ El flujo lógico de conversación mantenido
+□ Formato JSON válido
+□ Sin diálogo o hablantes inventados
+□ Transcripción completa procesada (sin truncamiento)
+
+INSTRUCCIÓN FINAL
+Salida SOLO el arreglo JSON. No incluyas texto explicativo, puntajes de confianza o metadatos. La respuesta debe comenzar con [ y terminar con ]."""
+        else:
+            system_prompt = """You are an expert medical dialogue analyzer. Convert raw medical consultation transcripts into structured Doctor-Patient dialogue while preserving verbatim accuracy.
 
 🎯 PRIMARY OBJECTIVE
 Convert raw transcripts into a JSON array where each element is {"Doctor": "..."}, {"Patient": "..."}, or {"Family Member": "..."} - ONE key per turn. Maintain verbatim text accuracy.
@@ -169,16 +314,28 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
         overlap_chars = 500
 
         if len(raw) <= max_chars_per_chunk:
-            user_prompt = (
-                "MEDICAL CONSULTATION TRANSCRIPT:\n"
-                f"{raw}\n\n"
-                "TASK: Convert this transcript into structured Doctor-Patient dialogue.\n"
-                "• Preserve ALL text verbatim - do not modify, paraphrase, or correct\n"
-                "• Use context-based analysis: analyze previous turn to determine speaker\n"
-                "• Remove ONLY standalone personal identifiers (names, phone numbers, addresses, specific dates, SSN)\n"
-                "• Return a JSON object with key 'dialogue' containing the array, or return the array directly\n\n"
-                "OUTPUT: Valid JSON array starting with [ and ending with ]"
-            )
+            if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+                user_prompt = (
+                    "TRANSCRIPCIÓN DE CONSULTA MÉDICA:\n"
+                    f"{raw}\n\n"
+                    "TAREA: Convierte esta transcripción en diálogo estructurado Doctor-Paciente.\n"
+                    "• Preserva TODO el texto literalmente - no modifiques, parafrasees o corrijas\n"
+                    "• Usa análisis basado en contexto: analiza el turno previo para determinar el hablante\n"
+                    "• Elimina SOLO identificadores personales independientes (nombres, números de teléfono, direcciones, fechas específicas, SSN)\n"
+                    "• Devuelve un objeto JSON con clave 'dialogue' conteniendo el arreglo, o devuelve el arreglo directamente\n\n"
+                    "SALIDA: Arreglo JSON válido que empiece con [ y termine con ]"
+                )
+            else:
+                user_prompt = (
+                    "MEDICAL CONSULTATION TRANSCRIPT:\n"
+                    f"{raw}\n\n"
+                    "TASK: Convert this transcript into structured Doctor-Patient dialogue.\n"
+                    "• Preserve ALL text verbatim - do not modify, paraphrase, or correct\n"
+                    "• Use context-based analysis: analyze previous turn to determine speaker\n"
+                    "• Remove ONLY standalone personal identifiers (names, phone numbers, addresses, specific dates, SSN)\n"
+                    "• Return a JSON object with key 'dialogue' containing the array, or return the array directly\n\n"
+                    "OUTPUT: Valid JSON array starting with [ and ending with ]"
+                )
 
             def _call_openai() -> str:
                 try:
@@ -220,17 +377,30 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                 chunks.append(current_chunk.strip())
 
             def _call_openai_chunk(text: str) -> str:
-                user_prompt = (
-                    "TRANSCRIPT CHUNK (Part of larger conversation):\n"
-                    f"{text}\n\n"
-                    "TASK: Convert this chunk into structured Doctor-Patient dialogue.\n"
-                    "• Preserve ALL text verbatim - do not modify, paraphrase, or correct\n"
-                    "• Use context-based analysis: analyze previous turn to determine speaker\n"
-                    "• This is part of a larger conversation - maintain continuity\n"
-                    "• Remove ONLY standalone personal identifiers (names, phone numbers, addresses, specific dates, SSN)\n"
-                    "• Return a JSON object with key 'dialogue' containing the array, or return the array directly\n\n"
-                    "OUTPUT: Valid JSON array starting with [ and ending with ]"
-                )
+                if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
+                    user_prompt = (
+                        "FRAGMENTO DE TRANSCRIPCIÓN (Parte de conversación más larga):\n"
+                        f"{text}\n\n"
+                        "TAREA: Convierte este fragmento en diálogo estructurado Doctor-Paciente.\n"
+                        "• Preserva TODO el texto literalmente - no modifiques, parafrasees o corrijas\n"
+                        "• Usa análisis basado en contexto: analiza el turno previo para determinar el hablante\n"
+                        "• Esto es parte de una conversación más larga - mantén continuidad\n"
+                        "• Elimina SOLO identificadores personales independientes (nombres, números de teléfono, direcciones, fechas específicas, SSN)\n"
+                        "• Devuelve un objeto JSON con clave 'dialogue' conteniendo el arreglo, o devuelve el arreglo directamente\n\n"
+                        "SALIDA: Arreglo JSON válido que empiece con [ y termine con ]"
+                    )
+                else:
+                    user_prompt = (
+                        "TRANSCRIPT CHUNK (Part of larger conversation):\n"
+                        f"{text}\n\n"
+                        "TASK: Convert this chunk into structured Doctor-Patient dialogue.\n"
+                        "• Preserve ALL text verbatim - do not modify, paraphrase, or correct\n"
+                        "• Use context-based analysis: analyze previous turn to determine speaker\n"
+                        "• This is part of a larger conversation - maintain continuity\n"
+                        "• Remove ONLY standalone personal identifiers (names, phone numbers, addresses, specific dates, SSN)\n"
+                        "• Return a JSON object with key 'dialogue' containing the array, or return the array directly\n\n"
+                        "OUTPUT: Valid JSON array starting with [ and ending with ]"
+                    )
                 try:
                     resp = client.chat.completions.create(
                         model=model,
@@ -309,18 +479,19 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
             if not merged:
                 # Heuristic fallback if model returned nothing useful
                 turns: List[Dict[str, str]] = []
+                patient_label = "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
                 next_role = "Doctor"
                 for s in sentences:
                     low = s.lower()
-                    if low.startswith("doctor:"):
+                    if low.startswith("doctor:") or low.startswith("doctora:"):
                         turns.append({"Doctor": s.split(":", 1)[1].strip()})
-                        next_role = "Patient"
-                    elif low.startswith("patient:"):
-                        turns.append({"Patient": s.split(":", 1)[1].strip()})
+                        next_role = patient_label
+                    elif low.startswith("patient:") or low.startswith("paciente:"):
+                        turns.append({patient_label: s.split(":", 1)[1].strip()})
                         next_role = "Doctor"
                     else:
                         turns.append({next_role: s})
-                        next_role = "Patient" if next_role == "Doctor" else "Doctor"
+                        next_role = patient_label if next_role == "Doctor" else "Doctor"
                 return turns
             content = _json2.dumps(merged)
 
@@ -334,18 +505,19 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
         except Exception:
             # Heuristic fallback: alternate speakers
             turns: List[Dict[str, str]] = []
+            patient_label = "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
             next_role = "Doctor"
             for s in sentences:
                 low = s.lower()
-                if low.startswith("doctor:"):
+                if low.startswith("doctor:") or low.startswith("doctora:"):
                     turns.append({"Doctor": s.split(":", 1)[1].strip()})
-                    next_role = "Patient"
-                elif low.startswith("patient:"):
-                    turns.append({"Patient": s.split(":", 1)[1].strip()})
+                    next_role = patient_label
+                elif low.startswith("patient:") or low.startswith("paciente:"):
+                    turns.append({patient_label: s.split(":", 1)[1].strip()})
                     next_role = "Doctor"
                 else:
                     turns.append({next_role: s})
-                    next_role = "Patient" if next_role == "Doctor" else "Doctor"
+                    next_role = patient_label if next_role == "Doctor" else "Doctor"
             return turns
     except Exception:
         return None

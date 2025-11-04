@@ -240,11 +240,12 @@ class TranscribeAudioUseCase:
                                     recovery_method = "regex_extraction"
 
                     if parsed and isinstance(parsed, list):
-                        # Validate dialogue format
+                        # Validate dialogue format - accept both "Patient" and "Paciente" for Spanish
+                        valid_speakers = ["Doctor", "Patient", "Paciente", "Family Member", "Miembro de la Familia"]
                         if all(
                             isinstance(item, dict)
                             and len(item) == 1
-                            and list(item.keys())[0] in ["Doctor", "Patient"]
+                            and list(item.keys())[0] in valid_speakers
                             for item in parsed
                         ):
                             structured_dialogue = parsed
@@ -278,7 +279,9 @@ class TranscribeAudioUseCase:
                     api_key = settings.openai.api_key
                     
                     LOGGER.info("Using structure_dialogue_from_text for fallback processing")
-                    structured_dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key)
+                    # Get language from patient or use default
+                    fallback_language = getattr(patient, 'language', 'en') or 'en'
+                    structured_dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key, language=fallback_language)
                     
                     if structured_dialogue:
                         LOGGER.info(f"Created structured dialogue with {len(structured_dialogue)} turns using working logic")
