@@ -1,6 +1,7 @@
 """Generate Pre-Visit Summary use case for Step-02 functionality."""
 
 import logging
+from datetime import datetime
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
@@ -137,11 +138,15 @@ class GeneratePreVisitSummaryUseCase:
         # Save the updated visit to repository (critical)
         await self._visit_repository.save(visit)
 
+        # Get the generated_at timestamp from the stored summary (not visit.updated_at)
+        stored_summary = visit.get_pre_visit_summary()
+        generated_at = stored_summary.get("generated_at") if stored_summary else datetime.utcnow().isoformat()
+
         return PreVisitSummaryResponse(
             patient_id=patient.patient_id.value,
             visit_id=visit.visit_id.value,
             summary=summary_result["summary"],
-            generated_at=visit.updated_at.isoformat(),
+            generated_at=generated_at,
             medication_images=summary_result.get("medication_images") if isinstance(summary_result, dict) else None,
             red_flags=summary_result.get("red_flags") if isinstance(summary_result, dict) else None,
         )
