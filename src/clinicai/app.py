@@ -216,12 +216,12 @@ def create_app() -> FastAPI:
     # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Transcription → Audio → Doctor
     app.include_router(health.router)
     app.include_router(patients.router)
-    app.include_router(intake_router.router)
+    app.include_router(intake_router.router, include_in_schema=False)
     app.include_router(workflow.router)
     app.include_router(notes.router)
-    app.include_router(transcription_router.router)
-    app.include_router(audio_router.router)
-    app.include_router(doctor_router.router)
+    app.include_router(transcription_router.router, include_in_schema=False)
+    app.include_router(audio_router.router, include_in_schema=False)
+    app.include_router(doctor_router.router, include_in_schema=False)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)

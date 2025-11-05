@@ -80,7 +80,7 @@ async def transcribe_audio_options():
     return {"message": "OK"}
 
 
-@router.get("/test-cors")
+@router.get("/test-cors", include_in_schema=False)
 async def test_cors():
     """Test endpoint to verify CORS is working."""
     return {"message": "CORS is working", "timestamp": "2024-01-01T00:00:00Z"}
@@ -449,6 +449,7 @@ class VitalsPayload(BaseModel):
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
+    include_in_schema=False
 )
 async def store_vitals(
     http_request: Request,
@@ -525,6 +526,7 @@ async def store_vitals(
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
+    include_in_schema=False
 )
 async def get_vitals(
     patient_id: str,

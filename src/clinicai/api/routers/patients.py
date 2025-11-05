@@ -525,7 +525,7 @@ async def upload_medication_images(
 
 
 # Get intake medication image content (with security validation)
-@router.get("/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content")
+@router.get("/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content", include_in_schema=False)
 async def get_intake_medication_image_content(
     request: Request,
     patient_id: str, 
