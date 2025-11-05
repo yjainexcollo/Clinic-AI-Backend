@@ -330,15 +330,21 @@ class Visit:
     def can_proceed_to_transcription(self) -> bool:
         """Check if visit can proceed to transcription based on workflow type."""
         if self.is_scheduled_workflow():
-            return self.status in ["intake", "pre_visit_summary_generated", "transcription"]
+            # For scheduled: after vitals or if already in transcription
+            return self.status in ["vitals", "vitals_completed", "transcription", "pre_visit_summary_generated"]
         elif self.is_walk_in_workflow():
-            return self.status in ["walk_in_patient", "transcription_pending", "transcription"]
+            # For walk-in: after vitals are completed
+            return self.status in ["vitals_completed", "transcription_pending", "transcription"]
         return False
 
     def can_proceed_to_vitals(self) -> bool:
         """Check if visit can proceed to vitals input."""
-        if self.is_walk_in_workflow():
-            return self.status in ["transcription_completed", "vitals_pending", "vitals"]
+        if self.is_scheduled_workflow():
+            # For scheduled: after pre-visit summary is generated
+            return self.status in ["pre_visit_summary_generated", "vitals", "vitals_pending"]
+        elif self.is_walk_in_workflow():
+            # For walk-in: right after registration (walk_in_patient status)
+            return self.status in ["walk_in_patient", "vitals_pending", "vitals"]
         return False
 
     def can_proceed_to_soap(self) -> bool:
@@ -365,8 +371,18 @@ class Visit:
         steps = []
         if self.status == "intake":
             steps.extend(["intake", "pre_visit_summary"])
-        if self.status in ["intake", "pre_visit_summary_generated", "transcription"]:
+        elif self.status == "pre_visit_summary_generated":
+            # After pre-visit summary, vitals form comes next
+            steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
+        elif self.status in ["vitals", "vitals_pending", "transcription"]:
+            # After vitals (or during transcription), all subsequent steps are available
             steps.extend(["transcription", "soap_generation", "post_visit_summary"])
+        else:
+            # For other statuses, include common steps
+            if self.status in ["soap_generation", "prescription_analysis"]:
+                steps.extend(["soap_generation", "post_visit_summary"])
+            elif self.status not in ["completed"]:
+                steps.extend(["post_visit_summary"])
         return steps
 
     def _get_walk_in_workflow_steps(self) -> List[str]:
@@ -374,15 +390,16 @@ class Visit:
         steps = []
         
         # Sequential workflow based on current status
+        # Walk-in flow: registration -> vitals -> transcription -> soap -> post-visit
         if self.status == "walk_in_patient":
-            steps.append("transcription")
-        elif self.status in ["transcription_pending", "transcription"]:
-            steps.append("transcription")
-        elif self.status == "transcription_completed":
-            steps.append("vitals")
+            steps.append("vitals")  # Vitals form comes first after registration
         elif self.status in ["vitals_pending", "vitals"]:
             steps.append("vitals")
         elif self.status == "vitals_completed":
+            steps.append("transcription")  # Transcription comes after vitals
+        elif self.status in ["transcription_pending", "transcription"]:
+            steps.append("transcription")
+        elif self.status == "transcription_completed":
             steps.append("soap_generation")
         elif self.status in ["soap_pending", "soap_generation"]:
             steps.append("soap_generation")

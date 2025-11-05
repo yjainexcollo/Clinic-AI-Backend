@@ -1254,10 +1254,16 @@ async def store_vitals(
         
         # Update visit status based on workflow type
         if visit.is_walk_in_workflow():
-            visit.complete_vitals()
+            visit.complete_vitals()  # Sets status to "vitals_completed" for walk-in
         elif visit.is_scheduled_workflow():
-            # For scheduled visits, if transcript exists and status isn't already soap_generation, update it
-            if visit.is_transcription_complete():
+            # For scheduled visits: after vitals, allow transcription
+            # If status is pre_visit_summary_generated, keep it or update to transcription status
+            # This allows transcription to proceed after vitals
+            if visit.status == "pre_visit_summary_generated":
+                # Keep status as is - can_proceed_to_transcription will allow it
+                pass
+            elif visit.is_transcription_complete():
+                # If transcript exists, update to soap_generation
                 if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
                     visit.status = "soap_generation"
         
