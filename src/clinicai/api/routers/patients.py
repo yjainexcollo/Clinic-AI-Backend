@@ -318,7 +318,7 @@ async def answer_intake_question(
                 visit_id=visit_id_from_body,
                 answer=(body.get("answer", "").strip()),
             )
-        elif content_type.startswith("multipart/form-data"):
+        elif content_type.startswith("multipart/form-data") or content_type.startswith("application/x-www-form-urlencoded"):
             # Prefer explicitly bound form fields first; fallback to reading the form
             if form_patient_id is None or form_visit_id is None or form_answer is None:
                 form = await request.form()
@@ -363,7 +363,7 @@ async def answer_intake_question(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail={
                     "error": "UNSUPPORTED_MEDIA_TYPE",
-                    "message": "Content-Type must be application/json or multipart/form-data",
+                    "message": "Content-Type must be application/json, multipart/form-data, or application/x-www-form-urlencoded",
                     "details": {"content_type": content_type},
                 },
             )
@@ -381,17 +381,55 @@ async def answer_intake_question(
             message=result.message,
             allows_image_upload=result.allows_image_upload,
         )
+    except HTTPException:
+        # Re-raise HTTPException so FastAPI can handle it properly
+        raise
     except PatientNotFoundError as e:
-        return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "PATIENT_NOT_FOUND",
+                "message": e.message,
+                "details": e.details or {},
+            },
+        )
     except VisitNotFoundError as e:
-        return fail(request, error="VISIT_NOT_FOUND", message=e.message)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "VISIT_NOT_FOUND",
+                "message": e.message,
+                "details": e.details or {},
+            },
+        )
     except IntakeAlreadyCompletedError as e:
-        return fail(request, error="INTAKE_ALREADY_COMPLETED", message=e.message)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "INTAKE_ALREADY_COMPLETED",
+                "message": e.message,
+                "details": e.details or {},
+            },
+        )
     except (QuestionLimitExceededError, DuplicateQuestionError) as e:
-        return fail(request, error=e.error_code, message=e.message, details=e.details)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": e.error_code,
+                "message": e.message,
+                "details": e.details or {},
+            },
+        )
     except Exception as e:
         logger.error("Unhandled error in answer_intake_question", exc_info=True)
-        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred",
+                "details": {},
+            },
+        )
 
 
 @router.patch(
