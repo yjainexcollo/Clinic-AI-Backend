@@ -292,6 +292,40 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        
+        # Try to load secrets from Azure Key Vault if available
+        # This allows secure secret management in production
+        key_vault_secrets = {}
+        try:
+            from .key_vault import get_key_vault_service
+            key_vault = get_key_vault_service()
+            
+            if key_vault and key_vault.is_available:
+                # Load secrets from Key Vault (with fallback to env vars)
+                # Secret names in Key Vault should match these patterns
+                key_vault_secrets = {
+                    "OPENAI_API_KEY": key_vault.get_secret("OPENAI-API-KEY"),
+                    "MONGO_URI": key_vault.get_secret("MONGO-URI"),
+                    "MISTRAL_API_KEY": key_vault.get_secret("MISTRAL-API-KEY"),
+                    "ENCRYPTION_KEY": key_vault.get_secret("ENCRYPTION-KEY"),
+                    "SECURITY_SECRET_KEY": key_vault.get_secret("SECURITY-SECRET-KEY"),
+                    "AZURE_BLOB_CONNECTION_STRING": key_vault.get_secret("AZURE-BLOB-CONNECTION-STRING"),
+                    "AZURE_BLOB_ACCOUNT_NAME": key_vault.get_secret("AZURE-BLOB-ACCOUNT-NAME"),
+                    "AZURE_BLOB_ACCOUNT_KEY": key_vault.get_secret("AZURE-BLOB-ACCOUNT-KEY"),
+                }
+                # Only use Key Vault values if they exist (don't override env vars that are already set)
+                for key, value in key_vault_secrets.items():
+                    if value and not os.getenv(key):
+                        os.environ[key] = value
+                
+                import logging
+                logger = logging.getLogger("clinicai")
+                logger.info("✅ Loaded secrets from Azure Key Vault")
+        except Exception as e:
+            import logging
+            logger = logging.getLogger("clinicai")
+            logger.debug(f"Key Vault integration skipped (using environment variables): {e}")
+        
         # Override sub-settings with environment variables
         self.database = DatabaseSettings()
         self.openai = OpenAISettings()

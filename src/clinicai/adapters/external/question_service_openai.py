@@ -78,6 +78,19 @@ Edad del paciente: {patient_age or "Desconocida"}
 Género del paciente: {patient_gender or "No especificado"}
 Ha viajado recientemente: {"Sí" if recently_travelled else "No"}
 
+CRÍTICO: Si la queja principal contiene MÚLTIPLES síntomas (ej: "tos y fiebre", "dolor de cabeza y náuseas", "dolor de pecho y falta de aire"), DEBES:
+1. Identificar TODOS los síntomas mencionados en la queja
+2. Analizar CADA síntoma por separado para sus propiedades médicas
+3. Generar priority_topics que cubran TODOS los síntomas, no solo uno
+4. Si los síntomas tienen características diferentes (ej: uno es crónico, uno es agudo), incluir temas relevantes para AMBOS
+5. Asegurar que las preguntas abordarán TODOS los síntomas mencionados
+
+Ejemplo: Si la queja principal es "tos y fiebre por 3 días":
+- Identificar: tos (respiratorio agudo) + fiebre (sistémico agudo)
+- Ambos son agudos → NO historia familiar, NO monitoreo crónico
+- Ambos pueden necesitar historial de viajes SI ha viajado recientemente = Sí
+- Incluir: duración, medicamentos, síntomas_asociados, historial_viajes (si aplica)
+
 Realiza un análisis médico completo y devuelve un JSON con esta estructura EXACTA:
 
 REGLAS MÉDICAS PARA PRIORITY_TOPICS:
@@ -86,8 +99,26 @@ ATENCIÓN: Todos los ejemplos siguientes (diabetes, asma, hipertensión, epileps
 
 1. MONITOREO CRÓNICO (monitoreo_crónico):
    INCLUIR SI: is_chronic = true Y has_complications = true
-   Ejemplos ilustrativos: diabetes (glucosa/HbA1c), hipertensión (presión arterial), asma (flujo espiratorio/peak flow), epilepsia (crisis), EPOC, enfermedades autoinmunes…
-   IMPORTANTE: Asma SIEMPRE requiere monitoreo (peak flow, frecuencia de inhalador, exacerbaciones)
+   
+   CRÍTICO: Para enfermedades crónicas, has_complications debe ser true si:
+   - La enfermedad requiere monitoreo regular (diabetes, hipertensión, asma, etc.)
+   - La enfermedad puede tener complicaciones que necesitan seguimiento
+   - La enfermedad requiere monitoreo de adherencia a medicamentos
+   
+   Ejemplos ilustrativos: 
+   - diabetes (glucosa/HbA1c, exámenes ojo/pie, función renal)
+   - hipertensión (lecturas de presión arterial, función cardíaca/renal)
+   - asma (flujo espiratorio/frecuencia de inhalador, exacerbaciones, función pulmonar)
+   - epilepsia (registro de crisis, niveles de medicación)
+   - EPOC (función pulmonar, niveles de oxígeno)
+   - enfermedades autoinmunes (actividad de la enfermedad, función de órganos)
+   
+   IMPORTANTE: 
+   - Asma SIEMPRE requiere monitoreo (peak flow, uso de inhalador, exacerbaciones) → establecer has_complications = true
+   - Diabetes SIEMPRE requiere monitoreo (glucosa, HbA1c, complicaciones) → establecer has_complications = true
+   - Hipertensión SIEMPRE requiere monitoreo (lecturas de PA, complicaciones) → establecer has_complications = true
+   - Si encuentras CUALQUIER enfermedad crónica con complicaciones potenciales, establecer has_complications = true
+   
    Si recibes otra condición crónica (no listada), pregunta acerca del monitoreo relevante igualmente.
 
 2. HISTORIA FAMILIAR (historia_familiar):
@@ -154,6 +185,19 @@ Patient age: {patient_age or "Unknown"}
 Patient gender: {patient_gender or "Not specified"}
 Recently traveled: {"Yes" if recently_travelled else "No"}
 
+CRITICAL: If the chief complaint contains MULTIPLE symptoms (e.g., "cough and fever", "headache and nausea", "chest pain and shortness of breath"), you MUST:
+1. Identify ALL symptoms mentioned in the complaint
+2. Analyze EACH symptom separately for its medical properties
+3. Generate priority_topics that cover ALL symptoms, not just one
+4. If symptoms have different characteristics (e.g., one is chronic, one is acute), include topics relevant to BOTH
+5. Ensure questions will address ALL symptoms mentioned
+
+Example: If chief complaint is "cough and fever for 3 days":
+- Identify: cough (acute respiratory) + fever (acute systemic)
+- Both are acute → NO family history, NO chronic monitoring
+- Both may need travel history IF recently_travelled = Yes
+- Include: duration, medications, associated_symptoms, travel_history (if applicable)
+
 Perform a comprehensive medical analysis and return a JSON with this EXACT structure:
 
 MEDICAL RULES FOR PRIORITY_TOPICS:
@@ -162,8 +206,26 @@ NOTE: All examples below (e.g., diabetes, asthma, hypertension, epilepsy, COPD, 
 
 1. CHRONIC MONITORING (chronic_monitoring):
    INCLUDE IF: is_chronic = true AND has_complications = true
-   Examples (ONLY illustration): diabetes (glucose logs/HbA1c), hypertension (BP readings), asthma (peak flow/inhaler frequency), epilepsy (seizure record), COPD, autoimmune disorders...
-   IMPORTANT: Asthma ALWAYS requires monitoring (peak flow, inhaler usage, exacerbations)
+   
+   CRITICAL: For chronic diseases, has_complications should be true if:
+   - The disease requires regular monitoring (diabetes, hypertension, asthma, etc.)
+   - The disease can have complications that need tracking
+   - The disease requires medication adherence monitoring
+   
+   Examples (ONLY illustration): 
+   - diabetes (glucose logs/HbA1c, eye/foot exams, kidney function)
+   - hypertension (BP readings, heart/kidney function)
+   - asthma (peak flow/inhaler frequency, exacerbations, lung function)
+   - epilepsy (seizure record, medication levels)
+   - COPD (lung function, oxygen levels)
+   - autoimmune disorders (disease activity, organ function)
+   
+   IMPORTANT: 
+   - Asthma ALWAYS requires monitoring (peak flow, inhaler usage, exacerbations) → set has_complications = true
+   - Diabetes ALWAYS requires monitoring (glucose, HbA1c, complications) → set has_complications = true
+   - Hypertension ALWAYS requires monitoring (BP readings, complications) → set has_complications = true
+   - If you encounter ANY chronic disease with potential complications, set has_complications = true
+   
    If you encounter ANY other chronic disease, always ask about pertinent monitoring, even if it's not listed.
 
 2. FAMILY HISTORY (family_history):
@@ -740,6 +802,8 @@ Contexto médico:
 Temas prioritarios a cubrir: {medical_context.priority_topics}
 Temas a EVITAR: {medical_context.avoid_topics}
 
+⚠️ REGLA ABSOLUTA: Si "historial_viajes" o "travel_history" está en "Temas a EVITAR", NO DEBES generar ninguna pregunta relacionada con viajes, incluso si la condición parece relacionada con viajes. El paciente NO ha viajado recientemente.
+
 {"=" * 60}
 TODAS LAS PREGUNTAS Y RESPUESTAS ANTERIORES (CONTEXTO COMPLETO):
 {qa_history if qa_history else "No hay preguntas previas - esta es la primera pregunta."}
@@ -798,20 +862,49 @@ Paso 2: Busca en "Temas cubiertos" y "Categorías redundantes"
 Paso 3: Si esa información YA fue preguntada (aunque con palabras diferentes) → OMITE este tema
 Paso 4: Escoge un tema de "Brechas de información" que NO haya sido cubierto
 
+ORDEN DE PRIORIDAD PARA GENERAR PREGUNTAS (SIGUE ESTRICTAMENTE):
+1. Revisa la lista "Brechas de información" - estos son temas que necesitan ser cubiertos
+2. Sigue el ORDEN de "Temas prioritarios a cubrir" - primer tema primero, luego segundo, etc.
+3. Si múltiples temas están en brechas de información, elige el que aparece ANTES en priority_topics
+4. NO saltes temas - cúbrelos en orden a menos que ya estén cubiertos
+
+ORDEN DE PRIORIDAD DE PREGUNTAS (SIGUE ESTRICTAMENTE):
+1. Primero: duración (si no está cubierta)
+2. Segundo: medicamentos_actuales (si no está cubierta) - usa redacción específica para síntomas
+3. Tercero: monitoreo_crónico (si is_chronic=true Y has_complications=true) - ALTA PRIORIDAD, pregunta dentro de las primeras 4 preguntas
+4. Cuarto: historia_familiar (si is_hereditary=true) - ALTA PRIORIDAD, pregunta dentro de las primeras 5 preguntas
+5. Quinto: caracterización_síntomas o síntomas_asociados (si no está cubierta)
+6. Luego: otros temas en orden de la lista priority_topics
+
+CRÍTICO: Para enfermedades crónicas, monitoreo_crónico debe preguntarse MUY TEMPRANO (dentro de las primeras 3-4 preguntas), e historia_familiar dentro de las primeras 5 preguntas. NO esperes hasta el final.
+
 REGLAS CRÍTICAS:
 1. Genera UNA pregunta sobre el siguiente tema más importante que AÚN NO se ha cubierto
-2. Prioriza brechas de información sobre temas prioritarios
-3. NUNCA preguntes sobre temas en "Temas a EVITAR"
+2. Prioriza brechas de información de temas prioritarios EN ORDEN (primer tema primero, luego segundo, etc.)
+3. NUNCA preguntes sobre temas en "Temas a EVITAR" - esta es una RESTRICCIÓN DURA
 4. NUNCA repitas categorías en "Categorías redundantes"
-5. Si ya se mencionó duración, NO preguntes sobre duración de nuevo
-6. Si ya se preguntó sobre medicamentos, NO repitas esa pregunta
-7. Haz la pregunta clara, específica y amigable para el paciente
-8. La pregunta debe ser tipo entrevista, NO tipo cuestionario
-9. Termina siempre con "?"
-10. NO incluyas razonamiento, categorías o explicaciones - SOLO la pregunta
+5. NUNCA preguntes sobre viajes si "historial_viajes" está en "Temas a EVITAR"
+6. Si ya se mencionó duración, NO preguntes sobre duración de nuevo
+7. Si ya se preguntó sobre medicamentos, NO repitas esa pregunta
+8. Haz la pregunta clara, específica y amigable para el paciente
+9. La pregunta debe ser tipo entrevista, NO tipo cuestionario
+10. Termina siempre con "?"
+11. NO incluyas razonamiento, categorías o explicaciones - SOLO la pregunta
+
+REGLAS DE FORMATEO PARA PREGUNTAS SOBRE MEDICAMENTOS:
+Al generar una pregunta sobre el tema "medicamentos_actuales":
+- NO preguntes: "¿Qué medicamentos está tomando actualmente?" (demasiado genérico)
+- SÍ pregunta: "¿Ha tomado algún medicamento o remedio casero para [QUEJA PRINCIPAL]?" (específico para síntomas)
+- Incluye: medicamentos recetados, medicamentos de venta libre, remedios caseros, suplementos
+- Hazlo específico para los síntomas actuales, no historial general de medicamentos
+- Ejemplos de preguntas correctas sobre medicamentos:
+  * "¿Ha tomado algún medicamento o remedio casero para su [síntoma]?"
+  * "¿Qué tratamientos, medicamentos o remedios caseros ha probado para [síntoma]?"
+  * "¿Está tomando algún medicamento o usando algún remedio casero para ayudar con [síntoma]?"
 
 EJEMPLOS DE BUENAS PREGUNTAS (estilo entrevista):
-- "¿Qué tratamientos o medicamentos ha probado para este problema?"
+- "¿Ha tomado algún medicamento o remedio casero para su [QUEJA PRINCIPAL]?"
+- "¿Qué tratamientos, medicamentos o remedios caseros ha probado para [QUEJA PRINCIPAL]?"
 - "¿Hay algo que haga que el dolor empeore o mejore?"
 - "¿Ha notado otros síntomas junto con esto?"
 - "¿Alguien en su familia ha tenido problemas similares?"
@@ -826,7 +919,9 @@ Antes de responder, VERIFICA:
 ✓ ¿Esta pregunta busca información que YA está en "Temas cubiertos"? → Si SÍ, OMITE este tema
 ✓ ¿Esta pregunta es semánticamente similar a alguna pregunta anterior? → Si SÍ, OMITE este tema
 ✓ ¿Esta pregunta está en "Categorías redundantes"? → Si SÍ, OMITE este tema
-✓ Escoge SOLO de "Brechas de información"
+✓ ¿Esta pregunta está en "Temas a EVITAR"? → Si SÍ, OMITE este tema (RESTRICCIÓN DURA)
+✓ ¿Esta pregunta sigue el orden de prioridad de "Temas prioritarios a cubrir"? → Si NO, elige un tema anterior
+✓ Escoge SOLO de "Brechas de información" en el orden que aparecen en "Temas prioritarios a cubrir"
 
 FORMATO DE SALIDA:
 Responde ÚNICAMENTE con el texto de la pregunta, sin comillas, sin numeración, sin explicaciones.
@@ -851,6 +946,8 @@ Medical context:
 
 Priority topics to cover: {medical_context.priority_topics}
 Topics to AVOID: {medical_context.avoid_topics}
+
+⚠️ ABSOLUTE RULE: If "travel_history" or "historial_viajes" is in "Topics to AVOID", you MUST NOT generate any travel-related question, even if the condition seems travel-related. The patient has NOT traveled recently.
 
 {"=" * 60}
 ALL PREVIOUS QUESTIONS AND ANSWERS (FULL CONTEXT):
@@ -910,20 +1007,49 @@ Step 2: Check "Topics covered" and "Redundant categories"
 Step 3: If that information was ALREADY asked (even with different words) → SKIP this topic
 Step 4: Choose a topic from "Information gaps" that has NOT been covered
 
+QUESTION GENERATION PRIORITY ORDER (STRICTLY FOLLOW THIS):
+1. Check "Information gaps" list - these are topics that need to be covered
+2. Follow the ORDER of "Priority topics to cover" - first topic first, then second, etc.
+3. If multiple topics are in information_gaps, choose the one that appears EARLIER in priority_topics
+4. Do NOT skip topics - cover them in order unless they're already covered
+
+QUESTION PRIORITY ORDER (STRICTLY FOLLOW THIS):
+1. First: duration (if not covered)
+2. Second: current_medications (if not covered) - use symptom-specific wording
+3. Third: chronic_monitoring (if is_chronic=true AND has_complications=true) - HIGH PRIORITY, ask within first 4 questions
+4. Fourth: family_history (if is_hereditary=true) - HIGH PRIORITY, ask within first 5 questions
+5. Fifth: symptom_characterization or associated_symptoms (if not covered)
+6. Then: other topics in order from priority_topics list
+
+CRITICAL: For chronic diseases, chronic_monitoring should be asked VERY EARLY (within first 3-4 questions), and family_history within first 5 questions. Do NOT wait until the end.
+
 CRITICAL RULES:
 1. Generate ONE question about the next most important topic that has NOT been covered
-2. Prioritize information gaps from priority topics
-3. NEVER ask about topics in "Topics to AVOID"
+2. Prioritize information gaps from priority topics IN ORDER (first topic first, then second, etc.)
+3. NEVER ask about topics in "Topics to AVOID" - this is a HARD CONSTRAINT
 4. NEVER repeat categories in "Redundant categories"
-5. If duration already mentioned, DO NOT ask about duration again
-6. If medications already asked, DO NOT repeat that question
-7. Make the question clear, specific, and patient-friendly
-8. Question should be interview-style, NOT questionnaire-style
-9. Always end with "?"
-10. DO NOT include reasoning, categories, or explanations - ONLY the question
+5. NEVER ask travel questions if "travel_history" is in "Topics to AVOID"
+6. If duration already mentioned, DO NOT ask about duration again
+7. If medications already asked, DO NOT repeat that question
+8. Make the question clear, specific, and patient-friendly
+9. Question should be interview-style, NOT questionnaire-style
+10. Always end with "?"
+11. DO NOT include reasoning, categories, or explanations - ONLY the question
+
+MEDICATION QUESTION FORMATTING RULES:
+When generating a question about "current_medications" topic:
+- DO NOT ask: "What medications are you currently taking?" (too generic)
+- DO ask: "Have you taken any medications or home remedies for [CHIEF COMPLAINT]?" (symptom-specific)
+- Include: prescribed medications, over-the-counter medications, home remedies, supplements
+- Make it specific to the current symptoms, not general medication history
+- Examples of correct medication questions:
+  * "Have you taken any medications or home remedies for your [symptom]?"
+  * "What treatments, medications, or home remedies have you tried for [symptom]?"
+  * "Are you taking any medications or using any home remedies to help with [symptom]?"
 
 EXAMPLES OF GOOD QUESTIONS (interview style):
-- "What treatments or medications have you tried for this problem?"
+- "Have you taken any medications or home remedies for your [CHIEF COMPLAINT]?"
+- "What treatments, medications, or home remedies have you tried for [CHIEF COMPLAINT]?"
 - "Is there anything that makes the pain worse or better?"
 - "Have you noticed any other symptoms along with this?"
 - "Has anyone in your family had similar issues?"
@@ -938,7 +1064,9 @@ Before responding, VERIFY:
 ✓ Does this question seek information ALREADY in "Topics covered"? → If YES, SKIP this topic
 ✓ Is this question semantically similar to any previous question? → If YES, SKIP this topic
 ✓ Is this question in "Redundant categories"? → If YES, SKIP this topic
-✓ Choose ONLY from "Information gaps"
+✓ Is this question in "Topics to AVOID"? → If YES, SKIP this topic (HARD CONSTRAINT)
+✓ Does this question follow the priority order from "Priority topics to cover"? → If NO, choose an earlier topic
+✓ Choose ONLY from "Information gaps" in the order they appear in "Priority topics to cover"
 
 OUTPUT FORMAT:
 Respond with ONLY the question text, without quotes, without numbering, without explanations.
@@ -1137,7 +1265,13 @@ class SafetyValidator:
                 if q_terms and prev_terms and set(q_terms) == set(prev_terms):
                     issues.append(f"Question semantically similar to: '{prev_q}' (similarity: {similarity_score:.2f})")
         
-        # VALIDATION 5: Output format
+        # VALIDATION 5: Travel questions only if allowed
+        question_lower = question.lower()
+        if "travel" in question_lower or "viaj" in question_lower or "traveled" in question_lower or "viajado" in question_lower:
+            if "travel_history" in medical_context.avoid_topics or "historial_viajes" in medical_context.avoid_topics:
+                issues.append("Travel question asked but patient has NOT traveled recently (CRITICAL VIOLATION)")
+        
+        # VALIDATION 6: Output format
         if "\n" in question:
             question = question.replace("\n", " ")
             issues.append("Question contained newlines (auto-corrected)")

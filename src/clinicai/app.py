@@ -27,7 +27,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import logging
-# Azure Monitor removed - was causing issues
 import asyncio
 
 
@@ -40,13 +39,30 @@ async def lifespan(app: FastAPI):
     print(f"📊 Environment: {settings.app_env}")
     print(f"🔧 Debug mode: {settings.debug}")
     
-    # Azure Monitor removed - was causing issues
-    # try:
-    #     azure_monitor = get_azure_monitor()
-    #     print("✅ Azure Monitor initialized")
-    # except Exception as e:
-    #     print(f"⚠️  Azure Monitor initialization failed: {e}")
-    #     logging.error(f"Azure Monitor failed to initialize: {e}")
+    # Initialize Azure Application Insights
+    try:
+        app_insights_connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+        if app_insights_connection_string:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+            
+            # Configure Azure Monitor with OpenTelemetry
+            configure_azure_monitor(
+                connection_string=app_insights_connection_string
+            )
+            # Instrument FastAPI app for automatic telemetry
+            FastAPIInstrumentor.instrument_app(app)
+            print("✅ Azure Application Insights initialized")
+            logging.info("Azure Application Insights initialized successfully")
+        else:
+            print("⚠️  APPLICATIONINSIGHTS_CONNECTION_STRING not set, Application Insights disabled")
+            logging.debug("Application Insights not configured (connection string missing)")
+    except ImportError as e:
+        print(f"⚠️  Application Insights packages not installed: {e}")
+        logging.warning(f"Application Insights not available: {e}")
+    except Exception as e:
+        print(f"⚠️  Azure Application Insights initialization failed: {e}")
+        logging.error(f"Azure Application Insights failed to initialize: {e}", exc_info=True)
     
     
     # Initialize database connection (MongoDB + Beanie)
@@ -96,6 +112,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"❌ Database connection failed: {e}")
         raise
+
+    # Initialize Azure Key Vault (if configured)
+    try:
+        from .core.key_vault import get_key_vault_service
+        key_vault = get_key_vault_service()
+        if key_vault and key_vault.is_available:
+            print("✅ Azure Key Vault initialized")
+            logging.info("Azure Key Vault initialized successfully")
+        else:
+            print("⚠️  Azure Key Vault not available (using environment variables)")
+            logging.debug("Azure Key Vault not configured or not accessible")
+    except Exception as e:
+        print(f"⚠️  Azure Key Vault initialization failed: {e}")
+        logging.debug(f"Azure Key Vault initialization skipped: {e}")
 
     # Initialize Azure Blob Storage
     try:
