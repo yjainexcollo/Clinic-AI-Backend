@@ -204,6 +204,36 @@ async def transcribe_audio(
             
             logger.info(f"Patient {internal_patient_id} and visit {visit_id} found. Visit status: {visit.status}")
             
+            # Check if visit is ready for transcription before starting
+            if not visit.can_proceed_to_transcription():
+                if visit.is_scheduled_workflow():
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "error": "VISIT_NOT_READY_FOR_TRANSCRIPTION",
+                            "message": f"Scheduled visit not ready for transcription. Current status: {visit.status}. Please fill vitals first before uploading transcript.",
+                            "details": {"current_status": visit.status, "required_status": "vitals or vitals_completed"}
+                        }
+                    )
+                elif visit.is_walk_in_workflow():
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "error": "VISIT_NOT_READY_FOR_TRANSCRIPTION",
+                            "message": f"Walk-in visit not ready for transcription. Current status: {visit.status}. Please complete vitals first.",
+                            "details": {"current_status": visit.status, "required_status": "vitals_completed"}
+                        }
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "error": "VISIT_NOT_READY_FOR_TRANSCRIPTION",
+                            "message": f"Visit not ready for transcription. Current status: {visit.status}.",
+                            "details": {"current_status": visit.status}
+                        }
+                    )
+            
             # Audio file will be saved in background task where database context is properly initialized
 
             # Start transcription session (no longer using file path)
