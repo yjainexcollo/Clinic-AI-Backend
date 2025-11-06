@@ -66,7 +66,7 @@ logger = logging.getLogger("clinicai")
     "/",
     response_model=ApiResponse[RegisterPatientResponse],
     status_code=status.HTTP_201_CREATED,
-    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
+    tags=["Patient Registration"],
     summary="Register a new patient and start intake session",
     responses={
         201: {"description": "Patient registered successfully"},
@@ -137,7 +137,7 @@ async def register_patient(
     "/consultations/answer",
     response_model=AnswerIntakeResponse,
     status_code=status.HTTP_200_OK,
-    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
+    tags=["Intake + Pre-Visit Summary"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -357,7 +357,7 @@ async def answer_intake_question(
     "/consultations/answer",
     response_model=EditAnswerResponseSchema,
     status_code=status.HTTP_200_OK,
-    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
+    tags=["Intake + Pre-Visit Summary"],
 )
 async def edit_intake_answer(
     http_request: Request,
@@ -399,7 +399,7 @@ async def edit_intake_answer(
 
 
 # Endpoint for medication image uploads (supports both single and multiple images)
-@router.post("/webhook/images", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
+@router.post("/webhook/images", tags=["Intake + Pre-Visit Summary"])
 async def upload_medication_images(
     request: Request,
     patient_id: str = Form(...),
@@ -645,7 +645,7 @@ async def get_intake_medication_image_content(
 
 
 # List uploaded images for a visit
-@router.get("/{patient_id}/visits/{visit_id}/images", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
+@router.get("/{patient_id}/visits/{visit_id}/images", tags=["Intake + Pre-Visit Summary"])
 async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
@@ -676,7 +676,7 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
 
 
 # Delete one uploaded image by id
-@router.delete("/images/{image_id}", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
+@router.delete("/images/{image_id}", tags=["Intake + Pre-Visit Summary"])
 async def delete_medication_image(request: Request, image_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
@@ -751,6 +751,7 @@ async def reset_intake_session(
     "/{patient_id}/visits/{visit_id}/intake/status",
     response_model=ApiResponse[IntakeSummarySchema],
     status_code=status.HTTP_200_OK,
+    tags=["Intake + Pre-Visit Summary"],
     responses={
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -820,7 +821,7 @@ async def get_intake_status(
     "/summary/previsit",
     response_model=PreVisitSummaryResponse,
     status_code=status.HTTP_200_OK,
-    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
+    tags=["Intake + Pre-Visit Summary"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -881,7 +882,7 @@ async def generate_pre_visit_summary(
     "/{patient_id}/visits/{visit_id}/summary",
     response_model=PreVisitSummaryResponse,
     status_code=status.HTTP_200_OK,
-    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
+    tags=["Intake + Pre-Visit Summary"],
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or summary not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},

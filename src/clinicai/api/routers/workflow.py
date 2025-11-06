@@ -16,7 +16,7 @@ from ..deps import PatientRepositoryDep, VisitRepositoryDep
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
-router = APIRouter(prefix="/workflow", tags=["workflow"])
+router = APIRouter(prefix="/workflow")
 logger = logging.getLogger("clinicai")
 
 
@@ -41,6 +41,7 @@ class CreateWalkInVisitResponseSchema(BaseModel):
     "/walk-in/create-visit",
     response_model=ApiResponse[CreateWalkInVisitResponseSchema],
     status_code=status.HTTP_201_CREATED,
+    tags=["Patient Registration"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -98,6 +99,7 @@ async def create_walk_in_visit(
 @router.get(
     "/visit/{visit_id}/available-steps",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
     responses={
         404: {"model": ErrorResponse, "description": "Visit not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -150,6 +152,7 @@ async def get_available_workflow_steps(
 @router.get(
     "/visits/walk-in",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
     responses={
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },

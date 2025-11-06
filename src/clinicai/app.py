@@ -142,6 +142,31 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Customize OpenAPI schema to control tag order
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        from fastapi.openapi.utils import get_openapi
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        # Define tag order: Health, Patient Registration, Intake + Previsit, Vitals and Transcript, Soap, Postvisit
+        openapi_schema["tags"] = [
+            {"name": "health", "description": "Health and readiness checks"},
+            {"name": "Patient Registration", "description": "Patient registration for scheduled and walk-in visits"},
+            {"name": "Intake + Pre-Visit Summary", "description": "Intake form, medication image, and previsit summary"},
+            {"name": "Vitals and Transcript Generation", "description": "Vitals and transcript routes"},
+            {"name": "SOAP Note Generation", "description": "SOAP note generation and retrieval"},
+            {"name": "Post-Visit Summary", "description": "Post-visit summary generation and retrieval"},
+        ]
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+    
+    app.openapi = custom_openapi
+
     # CORS middleware
     # Allow all origins (no credentials) to resolve preflight failures
     allow_methods = settings.cors.allowed_methods or ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
@@ -306,7 +331,7 @@ app = create_app()
 
 
 # Root endpoint
-@app.get("/")
+@app.get("/", tags=["health"])
 async def root():
     """Root endpoint with API information."""
     settings = get_settings()
@@ -353,7 +378,7 @@ async def root():
     }
 
 
-@app.get("/swagger.yaml")
+@app.get("/swagger.yaml", include_in_schema=False)
 async def get_swagger_yaml():
     """Serve the custom Swagger YAML file."""
     swagger_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "swagger.yaml")
