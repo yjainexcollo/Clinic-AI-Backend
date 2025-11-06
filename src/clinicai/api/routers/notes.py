@@ -36,7 +36,7 @@ from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
-router = APIRouter(prefix="/notes", tags=["notes"])
+router = APIRouter(prefix="/notes")
 logger = logging.getLogger("clinicai")
 
 
@@ -74,7 +74,7 @@ class VitalsResponse(BaseModel):
     vitals_id: str
 
 
-@router.options("/transcribe")
+@router.options("/transcribe", include_in_schema=False)
 async def transcribe_audio_options():
     """Handle preflight OPTIONS request for transcribe endpoint."""
     return {"message": "OK"}
@@ -89,6 +89,7 @@ async def test_cors():
 @router.post(
     "/transcribe",
     status_code=status.HTTP_202_ACCEPTED,
+    tags=["Vitals and Transcript Generation"],
     responses={
         202: {"description": "Queued for transcription"},
         400: {"model": ErrorResponse, "description": "Validation error"},
@@ -327,6 +328,7 @@ async def transcribe_audio(
     "/soap/generate",
     response_model=SoapGenerationResponse,
     status_code=status.HTTP_200_OK,
+    tags=["SOAP Note Generation"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -583,6 +585,7 @@ async def get_vitals(
     "/{patient_id}/visits/{visit_id}/transcript",
     response_model=ApiResponse[TranscriptionSessionDTO],
     status_code=status.HTTP_200_OK,
+    tags=["Vitals and Transcript Generation"],
     responses={
         200: {"description": "Transcript returned"},
         404: {"model": ErrorResponse, "description": "Transcript not found"},
@@ -706,6 +709,7 @@ async def get_transcript(request: Request, patient_id: str, visit_id: str, patie
     "/{patient_id}/visits/{visit_id}/soap",
     response_model=ApiResponse[SoapNoteDTO],
     status_code=status.HTTP_200_OK,
+    tags=["SOAP Note Generation"],
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or SOAP note not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -802,6 +806,7 @@ async def get_soap_note(request: Request, patient_id: str, visit_id: str, patien
 @router.post(
     "/{patient_id}/visits/{visit_id}/dialogue/structure",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or transcript not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},

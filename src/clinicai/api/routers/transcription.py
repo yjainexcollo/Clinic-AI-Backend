@@ -330,6 +330,7 @@ class StructureTextRequest(BaseModel):
     "/structure",
     response_model=ApiResponse[Dict[str, List[Dict[str, str]]]],
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def structure_transcript_text(request: Request, payload: StructureTextRequest):
     logger.info(f"Structure endpoint called with adhoc_id: {payload.adhoc_id}, transcript length: {len(payload.transcript) if payload.transcript else 0}")

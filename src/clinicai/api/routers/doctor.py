@@ -7,7 +7,7 @@ from ...adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
-router = APIRouter(prefix="/doctor", tags=["doctor"])
+router = APIRouter(prefix="/doctor")
 
 
 DEFAULT_DOCTOR_ID = "D123"
@@ -46,7 +46,7 @@ def _defaults_for(doctor_id: str) -> DoctorPreferencesResponse:
     )
 
 
-@router.get("/preferences", response_model=ApiResponse[DoctorPreferencesResponse])
+@router.get("/preferences", response_model=ApiResponse[DoctorPreferencesResponse], include_in_schema=False)
 async def get_doctor_preferences(request: Request):
     """Return latest preferences for the default doctor; independent of intake flow."""
     try:
@@ -64,7 +64,7 @@ async def get_doctor_preferences(request: Request):
         return fail(request, error="INTERNAL_ERROR", message="Failed to load preferences")
 
 
-@router.post("/preferences", response_model=ApiResponse[DoctorPreferencesResponse], status_code=status.HTTP_200_OK)
+@router.post("/preferences", response_model=ApiResponse[DoctorPreferencesResponse], status_code=status.HTTP_200_OK, include_in_schema=False)
 async def set_doctor_preferences(request: Request, payload: UpsertPreferencesRequest):
     """Merge and persist doctor preferences; independent of intake flow."""
     try:

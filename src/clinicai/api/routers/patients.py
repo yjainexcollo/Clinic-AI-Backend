@@ -58,7 +58,7 @@ from beanie import PydanticObjectId
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
-router = APIRouter(prefix="/patients", tags=["patients"])
+router = APIRouter(prefix="/patients")
 logger = logging.getLogger("clinicai")
 
 
@@ -66,6 +66,7 @@ logger = logging.getLogger("clinicai")
     "/",
     response_model=ApiResponse[RegisterPatientResponse],
     status_code=status.HTTP_201_CREATED,
+    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
     summary="Register a new patient and start intake session",
     responses={
         201: {"description": "Patient registered successfully"},
@@ -136,6 +137,7 @@ async def register_patient(
     "/consultations/answer",
     response_model=AnswerIntakeResponse,
     status_code=status.HTTP_200_OK,
+    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -355,6 +357,7 @@ async def answer_intake_question(
     "/consultations/answer",
     response_model=EditAnswerResponseSchema,
     status_code=status.HTTP_200_OK,
+    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
 )
 async def edit_intake_answer(
     http_request: Request,
@@ -396,7 +399,7 @@ async def edit_intake_answer(
 
 
 # Endpoint for medication image uploads (supports both single and multiple images)
-@router.post("/webhook/images")
+@router.post("/webhook/images", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
 async def upload_medication_images(
     request: Request,
     patient_id: str = Form(...),
@@ -642,7 +645,7 @@ async def get_intake_medication_image_content(
 
 
 # List uploaded images for a visit
-@router.get("/{patient_id}/visits/{visit_id}/images")
+@router.get("/{patient_id}/visits/{visit_id}/images", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
 async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
@@ -673,7 +676,7 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
 
 
 # Delete one uploaded image by id
-@router.delete("/images/{image_id}")
+@router.delete("/images/{image_id}", tags=["Intake + Pre-Visit Summary in Scheduled Flow"])
 async def delete_medication_image(request: Request, image_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
@@ -693,6 +696,7 @@ async def delete_medication_image(request: Request, image_id: str):
     "/{patient_id}/visits/{visit_id}/intake/reset",
     response_model=ApiResponse[Dict[str, Any]],
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -816,6 +820,7 @@ async def get_intake_status(
     "/summary/previsit",
     response_model=PreVisitSummaryResponse,
     status_code=status.HTTP_200_OK,
+    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -876,6 +881,7 @@ async def generate_pre_visit_summary(
     "/{patient_id}/visits/{visit_id}/summary",
     response_model=PreVisitSummaryResponse,
     status_code=status.HTTP_200_OK,
+    tags=["Intake + Pre-Visit Summary in Scheduled Flow"],
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or summary not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -1052,6 +1058,7 @@ async def get_pre_visit_summary(
     "/summary/postvisit",
     response_model=ApiResponse[PostVisitSummaryResponse],
     status_code=status.HTTP_200_OK,
+    tags=["Post-Visit Summary"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -1126,6 +1133,7 @@ async def generate_post_visit_summary(
     "/{patient_id}/visits/{visit_id}/summary/postvisit",
     response_model=ApiResponse[PostVisitSummaryResponse],
     status_code=status.HTTP_200_OK,
+    tags=["Post-Visit Summary"]
 )
 async def get_post_visit_summary(
     request: Request,
@@ -1191,6 +1199,7 @@ class VitalsPayload(BaseModel):
 @router.post(
     "/{patient_id}/visits/{visit_id}/vitals",
     status_code=status.HTTP_200_OK,
+    tags=["Vitals and Transcript Generation"],
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
@@ -1282,6 +1291,7 @@ async def store_vitals(
 @router.get(
     "/{patient_id}/visits/{visit_id}/vitals",
     status_code=status.HTTP_200_OK,
+    tags=["Vitals and Transcript Generation"],
     responses={
         404: {"model": ErrorResponse, "description": "Patient, visit, or vitals not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},

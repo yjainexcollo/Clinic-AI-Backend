@@ -330,8 +330,9 @@ class Visit:
     def can_proceed_to_transcription(self) -> bool:
         """Check if visit can proceed to transcription based on workflow type."""
         if self.is_scheduled_workflow():
-            # For scheduled: after vitals or if already in transcription
-            return self.status in ["vitals", "vitals_completed", "transcription", "pre_visit_summary_generated"]
+            # For scheduled: after vitals are filled or if already in transcription
+            # Remove "pre_visit_summary_generated" to enforce vitals before transcript
+            return self.status in ["vitals", "vitals_completed", "transcription"]
         elif self.is_walk_in_workflow():
             # For walk-in: after vitals are completed
             return self.status in ["vitals_completed", "transcription_pending", "transcription"]
