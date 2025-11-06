@@ -99,7 +99,7 @@ async def readiness_check(request: Request):
         all_ok = False
     
     status = "ready" if all_ok else "degraded"
-    
+
     return ok(request, data={
         "status": status,
         "timestamp": datetime.utcnow(),

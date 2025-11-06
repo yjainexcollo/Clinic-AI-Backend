@@ -39,31 +39,8 @@ async def lifespan(app: FastAPI):
     print(f"📊 Environment: {settings.app_env}")
     print(f"🔧 Debug mode: {settings.debug}")
     
-    # Initialize Azure Application Insights
-    try:
-        app_insights_connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
-        if app_insights_connection_string:
-            from azure.monitor.opentelemetry import configure_azure_monitor
-            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-            
-            # Configure Azure Monitor with OpenTelemetry
-            configure_azure_monitor(
-                connection_string=app_insights_connection_string
-            )
-            # Instrument FastAPI app for automatic telemetry
-            FastAPIInstrumentor.instrument_app(app)
-            print("✅ Azure Application Insights initialized")
-            logging.info("Azure Application Insights initialized successfully")
-        else:
-            print("⚠️  APPLICATIONINSIGHTS_CONNECTION_STRING not set, Application Insights disabled")
-            logging.debug("Application Insights not configured (connection string missing)")
-    except ImportError as e:
-        print(f"⚠️  Application Insights packages not installed: {e}")
-        logging.warning(f"Application Insights not available: {e}")
-    except Exception as e:
-        print(f"⚠️  Azure Application Insights initialization failed: {e}")
-        logging.error(f"Azure Application Insights failed to initialize: {e}", exc_info=True)
-    
+    # Note: Azure Application Insights is initialized in create_app() before middleware
+    # to ensure proper instrumentation order and request capture
     
     # Initialize database connection (MongoDB + Beanie)
     try:
@@ -171,6 +148,33 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json", # Restore OpenAPI JSON
         lifespan=lifespan,
     )
+
+    # Initialize Azure Application Insights BEFORE middleware
+    # This must happen early to capture all requests and ensure proper instrumentation order
+    try:
+        app_insights_connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+        if app_insights_connection_string:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+            
+            # Configure Azure Monitor with OpenTelemetry
+            configure_azure_monitor(
+                connection_string=app_insights_connection_string
+            )
+            # Instrument FastAPI app for automatic telemetry
+            # This must be done BEFORE adding middleware to ensure all requests are captured
+            FastAPIInstrumentor.instrument_app(app)
+            print("✅ Azure Application Insights initialized (before middleware)")
+            logging.info("Azure Application Insights initialized successfully")
+        else:
+            print("⚠️  APPLICATIONINSIGHTS_CONNECTION_STRING not set, Application Insights disabled")
+            logging.debug("Application Insights not configured (connection string missing)")
+    except ImportError as e:
+        print(f"⚠️  Application Insights packages not installed: {e}")
+        logging.warning(f"Application Insights not available: {e}")
+    except Exception as e:
+        print(f"⚠️  Azure Application Insights initialization failed: {e}")
+        logging.error(f"Azure Application Insights failed to initialize: {e}", exc_info=True)
 
     # Customize OpenAPI schema to control tag order
     def custom_openapi():
