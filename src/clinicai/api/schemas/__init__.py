@@ -16,7 +16,10 @@ from .common import (
 from .patient_registration import (
     RegisterPatientRequest,
     RegisterPatientResponse,
-    PatientSummarySchema
+    PatientSummarySchema,
+    PatientWithVisitsSchema,
+    PatientListResponse,
+    LatestVisitInfo
 )
 
 # Intake schemas
@@ -69,6 +72,9 @@ __all__ = [
     "RegisterPatientRequest",
     "RegisterPatientResponse",
     "PatientSummarySchema",
+    "PatientWithVisitsSchema",
+    "PatientListResponse",
+    "LatestVisitInfo",
     
     # Intake
     "AnswerIntakeRequest",

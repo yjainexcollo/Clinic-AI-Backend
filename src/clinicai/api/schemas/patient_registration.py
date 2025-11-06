@@ -3,7 +3,7 @@ Patient registration schemas.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
 import re
 
@@ -91,3 +91,33 @@ class PatientSummarySchema(BaseModel):
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
         exclude = {"revision_id"}
+
+
+class LatestVisitInfo(BaseModel):
+    """Schema for latest visit information."""
+    
+    visit_id: str = Field(..., description="Visit ID")
+    workflow_type: str = Field(..., description="Workflow type: scheduled or walk_in")
+    status: str = Field(..., description="Visit status")
+    created_at: datetime = Field(..., description="Visit creation date")
+
+
+class PatientWithVisitsSchema(BaseModel):
+    """Schema for patient with aggregated visit information."""
+    
+    patient_id: str = Field(..., description="Patient ID")
+    name: str = Field(..., description="Patient name")
+    mobile: str = Field(..., description="Mobile number")
+    age: int = Field(..., description="Patient age")
+    gender: Optional[str] = Field(None, description="Patient gender")
+    latest_visit: Optional[LatestVisitInfo] = Field(None, description="Latest visit information")
+    total_visits: int = Field(..., description="Total number of visits")
+    scheduled_visits_count: int = Field(..., description="Number of scheduled visits")
+    walk_in_visits_count: int = Field(..., description="Number of walk-in visits")
+
+
+class PatientListResponse(BaseModel):
+    """Response schema for patient list endpoint."""
+    
+    patients: List[PatientWithVisitsSchema] = Field(..., description="List of patients with visit information")
+    pagination: Dict[str, Any] = Field(..., description="Pagination information")

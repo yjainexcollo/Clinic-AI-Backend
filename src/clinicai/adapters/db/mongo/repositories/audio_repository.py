@@ -116,8 +116,10 @@ class AudioRepository:
         audio_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> List[AudioFileMongo]:
-        """List audio files with optional filtering."""
+        """List audio files with optional filtering and sorting."""
         try:
             query = {}
             
@@ -130,12 +132,19 @@ class AudioRepository:
             if audio_type:
                 query["audio_type"] = audio_type
             
+            # Determine sort field and direction
+            sort_direction = -1 if sort_order == "desc" else 1
+            valid_sort_fields = ["created_at", "filename", "file_size", "duration_seconds", "updated_at"]
+            
+            if sort_by not in valid_sort_fields:
+                sort_by = "created_at"
+            
             # Get files without audio_data to reduce memory usage
             files = await AudioFileMongo.find(
                 query,
                 skip=offset,
                 limit=limit,
-                sort=[("created_at", -1)]  # Most recent first
+                sort=[(sort_by, sort_direction)]
             ).to_list()
             
             return files

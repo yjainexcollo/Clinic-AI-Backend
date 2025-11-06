@@ -2,7 +2,7 @@
 Visit repository interface for managing visit data.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from clinicai.domain.entities.visit import Visit
 from clinicai.domain.value_objects.visit_id import VisitId
@@ -62,4 +62,29 @@ class VisitRepository:
 
     async def find_scheduled_visits(self, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find scheduled visits with pagination."""
+        raise NotImplementedError
+
+    async def find_patients_with_visits(
+        self,
+        workflow_type: Optional[VisitWorkflowType] = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: str = "created_at",
+        sort_order: str = "desc"
+    ) -> List[Dict[str, Any]]:
+        """
+        Find patients with aggregated visit information.
+        
+        Returns list of dicts with patient info and visit statistics.
+        Each dict contains:
+        - patient_id: str
+        - name: str
+        - mobile: str
+        - age: int
+        - gender: Optional[str]
+        - latest_visit: dict with visit_id, workflow_type, status, created_at
+        - total_visits: int
+        - scheduled_visits_count: int
+        - walk_in_visits_count: int
+        """
         raise NotImplementedError

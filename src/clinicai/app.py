@@ -153,14 +153,16 @@ def create_app() -> FastAPI:
             description=app.description,
             routes=app.routes,
         )
-        # Define tag order: Health, Patient Registration, Intake + Previsit, Vitals and Transcript, Soap, Postvisit
+        # Define tag order: Health, Patient Registration, Patient Management, Intake + Previsit, Vitals and Transcript, Soap, Postvisit, Audio Management
         openapi_schema["tags"] = [
             {"name": "health", "description": "Health and readiness checks"},
             {"name": "Patient Registration", "description": "Patient registration for scheduled and walk-in visits"},
+            {"name": "Patient Management", "description": "Patient listing and management operations"},
             {"name": "Intake + Pre-Visit Summary", "description": "Intake form, medication image, and previsit summary"},
             {"name": "Vitals and Transcript Generation", "description": "Vitals and transcript routes"},
             {"name": "SOAP Note Generation", "description": "SOAP note generation and retrieval"},
             {"name": "Post-Visit Summary", "description": "Post-visit summary generation and retrieval"},
+            {"name": "Audio Management", "description": "Audio file listing and management operations"},
         ]
         app.openapi_schema = openapi_schema
         return app.openapi_schema
@@ -245,7 +247,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow.router)
     app.include_router(notes.router)
     app.include_router(transcription_router.router, include_in_schema=False)
-    app.include_router(audio_router.router, include_in_schema=False)
+    app.include_router(audio_router.router)
     app.include_router(doctor_router.router, include_in_schema=False)
 
     # Global exception handler for domain errors

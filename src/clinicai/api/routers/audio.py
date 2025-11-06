@@ -16,7 +16,7 @@ from ...adapters.db.mongo.models.patient_m import AudioFileMongo
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
-router = APIRouter(prefix="/audio", tags=["audio"])
+router = APIRouter(prefix="/audio")
 logger = logging.getLogger("clinicai")
 
 
@@ -81,10 +81,53 @@ class AudioDialogueListResponse(BaseModel):
     offset: int
 
 
+class EnhancedAudioFileResponse(BaseModel):
+    """Enhanced response model for audio file with URLs."""
+    audio_id: str
+    filename: str
+    content_type: str
+    file_size: int
+    duration_seconds: Optional[float]
+    patient_id: Optional[str]
+    visit_id: Optional[str]
+    adhoc_id: Optional[str]
+    audio_type: str
+    created_at: str
+    updated_at: str
+    download_url: str
+    stream_url: str
+
+    @classmethod
+    def from_audio_file(cls, audio_file: AudioFileMongo, base_url: str = "", encoded_patient_id: Optional[str] = None) -> "EnhancedAudioFileResponse":
+        """Create enhanced response from AudioFileMongo model."""
+        return cls(
+            audio_id=audio_file.audio_id,
+            filename=audio_file.filename,
+            content_type=audio_file.content_type,
+            file_size=audio_file.file_size,
+            duration_seconds=audio_file.duration_seconds,
+            patient_id=encoded_patient_id if encoded_patient_id else audio_file.patient_id,
+            visit_id=audio_file.visit_id,
+            adhoc_id=audio_file.adhoc_id,
+            audio_type=audio_file.audio_type,
+            created_at=audio_file.created_at.isoformat(),
+            updated_at=audio_file.updated_at.isoformat(),
+            download_url=f"{base_url}/audio/{audio_file.audio_id}/download",
+            stream_url=f"{base_url}/audio/{audio_file.audio_id}/stream",
+        )
+
+
+class EnhancedAudioListResponse(BaseModel):
+    """Enhanced response model for audio file list with pagination."""
+    audio_files: List[EnhancedAudioFileResponse]
+    pagination: Dict[str, Any]
+
+
 @router.get(
     "/",
     response_model=ApiResponse[AudioListResponse],
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def list_audio_files(
     request: Request,
@@ -133,6 +176,7 @@ async def list_audio_files(
     "/dialogue",
     response_model=ApiResponse[AudioDialogueListResponse],
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def list_audio_dialogues(
     request: Request,
@@ -199,9 +243,118 @@ async def list_audio_dialogues(
 
 
 @router.get(
+    "/files",
+    response_model=ApiResponse[EnhancedAudioListResponse],
+    status_code=status.HTTP_200_OK,
+    tags=["Audio Management"],
+    summary="Get all original audio files with sorting",
+    responses={
+        200: {"description": "Audio files retrieved successfully"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_all_audio_files(
+    request: Request,
+    audio_repo: AudioRepositoryDep,
+    limit: int = Query(100, ge=1, le=200, description="Number of files to return"),
+    offset: int = Query(0, ge=0, description="Number of files to skip"),
+    sort_by: str = Query("created_at", description="Sort field: created_at, filename, file_size, duration_seconds"),
+    sort_order: str = Query("desc", description="Sort order: asc or desc"),
+):
+    """
+    Get all original audio files from the database with sorting and pagination.
+    
+    This endpoint:
+    1. Retrieves ALL audio files in the database with metadata
+    2. Supports sorting by created_at, filename, file_size, or duration_seconds
+    3. Returns paginated results with download and stream URLs
+    
+    Query Parameters:
+    - limit: Number of results per page (default: 100, max: 200)
+    - offset: Number of results to skip (default: 0)
+    - sort_by: Sort field - "created_at", "filename", "file_size", or "duration_seconds" (default: "created_at")
+    - sort_order: Sort direction - "asc" or "desc" (default: "desc")
+    """
+    try:
+        logger.info(
+            f"Listing all audio files: sort_by={sort_by}, sort_order={sort_order}, "
+            f"limit={limit}, offset={offset}"
+        )
+        
+        # Validate sort parameters
+        valid_sort_fields = ["created_at", "filename", "file_size", "duration_seconds", "updated_at"]
+        if sort_by not in valid_sort_fields:
+            sort_by = "created_at"
+        if sort_order not in ["asc", "desc"]:
+            sort_order = "desc"
+        
+        # Get all audio files with enhanced sorting (no filters)
+        audio_files = await audio_repo.list_audio_files(
+            patient_id=None,
+            visit_id=None,
+            audio_type=None,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        
+        # Get total count for pagination (all files, no filters)
+        total_count = await audio_repo.get_audio_count()
+        
+        # Get base URL for generating download/stream URLs
+        base_url = str(request.base_url).rstrip("/")
+        
+        # Encode patient IDs if present
+        from ...core.utils.crypto import encode_patient_id
+        
+        # Convert to enhanced response models
+        enhanced_files = []
+        for audio_file in audio_files:
+            # Encode patient_id if present
+            encoded_patient_id = None
+            if audio_file.patient_id:
+                try:
+                    encoded_patient_id = encode_patient_id(audio_file.patient_id)
+                except Exception:
+                    encoded_patient_id = audio_file.patient_id  # Fallback to original
+            
+            # Create enhanced response with encoded patient_id
+            enhanced_file = EnhancedAudioFileResponse.from_audio_file(
+                audio_file, 
+                base_url, 
+                encoded_patient_id=encoded_patient_id
+            )
+            enhanced_files.append(enhanced_file)
+        
+        # Calculate pagination info
+        has_more = len(enhanced_files) == limit and (offset + limit) < total_count
+        
+        return ok(
+            request,
+            data=EnhancedAudioListResponse(
+                audio_files=enhanced_files,
+                pagination={
+                    "limit": limit,
+                    "offset": offset,
+                    "count": len(enhanced_files),
+                    "total": total_count,
+                    "has_more": has_more
+                }
+            ),
+            message="Audio files retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to list all audio files: {e}", exc_info=True)
+        return fail(request, error="LIST_AUDIO_FAILED", message="Failed to list audio files", details=str(e))
+
+
+@router.get(
     "/{audio_id}",
     response_model=ApiResponse[AudioFileResponse],
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def get_audio_metadata(
     audio_id: str,
@@ -231,6 +384,7 @@ async def get_audio_metadata(
 @router.get(
     "/{audio_id}/download",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def download_audio_file(
     audio_id: str,
@@ -279,6 +433,7 @@ async def download_audio_file(
 @router.get(
     "/{audio_id}/stream",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def stream_audio_file(
     audio_id: str,
@@ -326,6 +481,7 @@ async def stream_audio_file(
 @router.delete(
     "/{audio_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    include_in_schema=False,
 )
 async def delete_audio_file(
     audio_id: str,
@@ -355,6 +511,7 @@ async def delete_audio_file(
 @router.get(
     "/stats/summary",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def get_audio_stats(
     audio_repo: AudioRepositoryDep,

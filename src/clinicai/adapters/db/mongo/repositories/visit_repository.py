@@ -3,7 +3,7 @@ MongoDB implementation of VisitRepository.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from clinicai.application.ports.repositories.visit_repo import VisitRepository
 from clinicai.domain.entities.visit import IntakeSession, QuestionAnswer, Visit, TranscriptionSession, SoapNote
@@ -17,6 +17,7 @@ from ..models.patient_m import (
     QuestionAnswerMongo,
     TranscriptionSessionMongo,
     SoapNoteMongo,
+    PatientMongo,
 )
 
 
@@ -166,6 +167,128 @@ class MongoVisitRepository(VisitRepository):
     async def find_scheduled_visits(self, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find scheduled visits with pagination."""
         return await self.find_by_workflow_type(VisitWorkflowType.SCHEDULED, limit, offset)
+
+    async def find_patients_with_visits(
+        self,
+        workflow_type: Optional[VisitWorkflowType] = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: str = "created_at",
+        sort_order: str = "desc"
+    ) -> List[Dict[str, Any]]:
+        """
+        Find patients with aggregated visit information using MongoDB aggregation.
+        """
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from clinicai.core.config import get_settings
+        
+        settings = get_settings()
+        client = AsyncIOMotorClient(settings.database.uri)
+        db = client[settings.database.db_name]
+        visits_collection = db["visits"]
+        
+        # Build match stage for workflow_type filter
+        match_stage = {}
+        if workflow_type:
+            match_stage["workflow_type"] = workflow_type.value
+        
+        # Aggregation pipeline
+        pipeline = [
+            # Match visits by workflow_type if specified
+            {"$match": match_stage} if match_stage else {"$match": {}},
+            
+            # Sort visits by created_at to get latest first
+            {"$sort": {"created_at": -1}},
+            
+            # Group by patient_id to aggregate visit data
+            {
+                "$group": {
+                    "_id": "$patient_id",
+                    "latest_visit": {"$first": "$$ROOT"},
+                    "total_visits": {"$sum": 1},
+                    "scheduled_visits_count": {
+                        "$sum": {"$cond": [{"$eq": ["$workflow_type", "scheduled"]}, 1, 0]}
+                    },
+                    "walk_in_visits_count": {
+                        "$sum": {"$cond": [{"$eq": ["$workflow_type", "walk_in"]}, 1, 0]}
+                    }
+                }
+            },
+            
+            # Lookup patient information
+            {
+                "$lookup": {
+                    "from": "patients",
+                    "localField": "_id",
+                    "foreignField": "patient_id",
+                    "as": "patient"
+                }
+            },
+            
+            # Unwind patient array (should be single patient)
+            {"$unwind": {"path": "$patient", "preserveNullAndEmptyArrays": True}},
+            
+            # Project final structure
+            {
+                "$project": {
+                    "patient_id": "$_id",
+                    "name": "$patient.name",
+                    "mobile": "$patient.mobile",
+                    "age": "$patient.age",
+                    "gender": "$patient.gender",
+                    "latest_visit": {
+                        "visit_id": "$latest_visit.visit_id",
+                        "workflow_type": "$latest_visit.workflow_type",
+                        "status": "$latest_visit.status",
+                        "created_at": "$latest_visit.created_at"
+                    },
+                    "total_visits": 1,
+                    "scheduled_visits_count": 1,
+                    "walk_in_visits_count": 1
+                }
+            }
+        ]
+        
+        # Add sorting
+        sort_direction = -1 if sort_order == "desc" else 1
+        if sort_by == "name":
+            pipeline.append({"$sort": {"name": sort_direction}})
+        elif sort_by == "created_at":
+            pipeline.append({"$sort": {"latest_visit.created_at": sort_direction}})
+        else:
+            pipeline.append({"$sort": {"latest_visit.created_at": sort_direction}})
+        
+        # Add pagination
+        pipeline.extend([
+            {"$skip": offset},
+            {"$limit": limit}
+        ])
+        
+        # Execute aggregation
+        cursor = visits_collection.aggregate(pipeline)
+        results = await cursor.to_list(length=limit)
+        
+        # Format results
+        formatted_results = []
+        for result in results:
+            latest_visit = result.get("latest_visit")
+            # MongoDB aggregation returns datetime objects directly, but ensure it's a dict
+            if latest_visit and not isinstance(latest_visit, dict):
+                latest_visit = None
+            
+            formatted_results.append({
+                "patient_id": result.get("patient_id", ""),
+                "name": result.get("name", "Unknown"),
+                "mobile": result.get("mobile", ""),
+                "age": result.get("age", 0),
+                "gender": result.get("gender"),
+                "latest_visit": latest_visit,
+                "total_visits": result.get("total_visits", 0),
+                "scheduled_visits_count": result.get("scheduled_visits_count", 0),
+                "walk_in_visits_count": result.get("walk_in_visits_count", 0)
+            })
+        
+        return formatted_results
 
     async def _domain_to_mongo(self, visit: Visit) -> VisitMongo:
         """Convert domain entity to MongoDB model."""
