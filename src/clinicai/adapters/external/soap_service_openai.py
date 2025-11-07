@@ -18,19 +18,31 @@ class OpenAISoapService(SoapService):
 
     def __init__(self):
         self._settings = get_settings()
-        # Load API key from settings or env (with optional .env fallback)
-        api_key = self._settings.openai.api_key or os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            try:
-                from dotenv import load_dotenv  # type: ignore
-                load_dotenv(override=False)
-                api_key = os.getenv("OPENAI_API_KEY", "")
-            except Exception:
-                pass
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is not set. Please set the OPENAI_API_KEY environment variable or add it to your .env file.")
         
-        # Use Helicone client for AI observability
+        # Check for Azure OpenAI first (preferred), then fall back to OpenAI
+        azure_openai_configured = (
+            self._settings.azure_openai.endpoint and 
+            self._settings.azure_openai.api_key
+        )
+        
+        api_key = None
+        if not azure_openai_configured:
+            # Fall back to standard OpenAI
+            api_key = self._settings.openai.api_key or os.getenv("OPENAI_API_KEY", "")
+            if not api_key:
+                try:
+                    from dotenv import load_dotenv  # type: ignore
+                    load_dotenv(override=False)
+                    api_key = os.getenv("OPENAI_API_KEY", "")
+                except Exception:
+                    pass
+            if not api_key:
+                raise ValueError(
+                    "Neither Azure OpenAI nor OpenAI API key is configured. "
+                    "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, or set OPENAI_API_KEY"
+                )
+        
+        # Use Helicone client for AI observability (will use Azure OpenAI if configured, else OpenAI)
         self._client = create_helicone_client()
         # Optional: log model and presence of key (masked)
         try:
@@ -38,7 +50,7 @@ class OpenAISoapService(SoapService):
                 "[SoapService] Initialized",
                 extra={
                     "model": self._settings.soap.model,
-                    "has_key": bool(api_key),
+                    "has_key": bool(api_key) or azure_openai_configured,
                 },
             )
         except Exception:

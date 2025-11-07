@@ -1,53 +1,63 @@
 """
-Helicone-integrated OpenAI client for AI observability
+Azure OpenAI client with Helicone support for AI observability.
 Tracks all prompts, responses, tokens, latency, and costs
 """
 import os
 import time
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI
 from typing import Optional, Dict, Any, List
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 
 
-class HeliconeOpenAIClient:
+class AzureOpenAIClient:
     """
-    OpenAI client with Helicone monitoring and comprehensive tracking
+    Azure OpenAI client with Helicone monitoring and comprehensive tracking
     """
     
     def __init__(
         self,
+        endpoint: str,
         api_key: str,
+        api_version: str,
+        deployment_name: str,
+        whisper_deployment_name: Optional[str] = None,
         helicone_api_key: Optional[str] = None,
         environment: str = "production",
         enable_cache: bool = False
     ):
+        self.deployment_name = deployment_name
+        self.whisper_deployment_name = whisper_deployment_name or "whisper"
         self.helicone_enabled = helicone_api_key is not None
         self.environment = environment
         
+        # Build headers for Helicone
+        default_headers = {}
         if self.helicone_enabled:
-            # Use Helicone proxy for all OpenAI calls
-            self.client = AsyncOpenAI(
-                api_key=api_key,
-                base_url="https://oai.hconeai.com/v1",
-                default_headers={
-                    "Helicone-Auth": f"Bearer {helicone_api_key}",
-                    "Helicone-Property-Environment": environment,
-                    "Helicone-Property-App": "clinic-ai",
-                    "Helicone-Cache-Enabled": "true" if enable_cache else "false",
-                }
-            )
-            logger.info("✅ Helicone AI observability enabled")
-        else:
-            self.client = AsyncOpenAI(api_key=api_key)
+            default_headers = {
+                "Helicone-Auth": f"Bearer {helicone_api_key}",
+                "Helicone-Property-Environment": environment,
+                "Helicone-Property-App": "clinic-ai",
+                "Helicone-Cache-Enabled": "true" if enable_cache else "false",
+            }
+            logger.info("✅ Azure OpenAI with Helicone AI observability enabled")
+        
+        # Initialize Azure OpenAI client
+        self.client = AsyncAzureOpenAI(
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            default_headers=default_headers if default_headers else None
+        )
+        
+        if not self.helicone_enabled:
             logger.warning("⚠️  Helicone disabled - no AI observability")
     
     async def chat_completion(
         self,
-        model: str,
         messages: List[Dict[str, str]],
+        model: Optional[str] = None,  # Ignored for Azure OpenAI, uses deployment_name
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         user_id: Optional[str] = None,
@@ -62,7 +72,7 @@ class HeliconeOpenAIClient:
         
         Returns:
             tuple: (response, metrics)
-                - response: OpenAI response object
+                - response: Azure OpenAI response object
                 - metrics: Dict with latency, tokens, cost
         """
         start_time = time.time()
@@ -88,13 +98,13 @@ class HeliconeOpenAIClient:
                     extra_headers[f"Helicone-Property-{key}"] = str(value)
             
             # Default properties
-            extra_headers["Helicone-Property-Model"] = model
+            extra_headers["Helicone-Property-Model"] = self.deployment_name
             extra_headers["Helicone-Property-Temperature"] = str(temperature)
         
         try:
-            # Make API call
+            # Make API call - Azure OpenAI uses deployment_name instead of model
             response = await self.client.chat.completions.create(
-                model=model,
+                model=self.deployment_name,  # Use deployment name, not model name
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -104,26 +114,25 @@ class HeliconeOpenAIClient:
             
             # Calculate metrics
             latency = time.time() - start_time
-            metrics = self._calculate_metrics(response, latency, model)
+            metrics = self._calculate_metrics(response, latency)
             
             # Log metrics
             logger.info(
-                f"AI_CALL: model={model} prompt_name={prompt_name} "
+                f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
                 f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
-                f"cost=${metrics['estimated_cost']:.4f} patient={patient_id}"
+                f"patient={patient_id}"
             )
             
             return response, metrics
             
         except Exception as e:
             latency = time.time() - start_time
-            logger.error(f"OpenAI API error: {e} (latency: {latency:.2f}s)")
+            logger.error(f"Azure OpenAI API error: {e} (latency: {latency:.2f}s)")
             raise
     
     async def transcription(
         self,
         file,
-        model: str = "whisper-1",
         language: Optional[str] = None,
         user_id: Optional[str] = None,
         patient_id: Optional[str] = None,
@@ -147,12 +156,13 @@ class HeliconeOpenAIClient:
             if session_id:
                 extra_headers["Helicone-Session-Id"] = session_id
             
-            extra_headers["Helicone-Property-Model"] = model
+            extra_headers["Helicone-Property-Model"] = self.whisper_deployment_name
             extra_headers["Helicone-Property-Type"] = "transcription"
         
         try:
+            # Azure OpenAI Whisper API - use whisper deployment name, not chat deployment
             response = await self.client.audio.transcriptions.create(
-                model=model,
+                model=self.whisper_deployment_name,  # Use whisper deployment for transcription
                 file=file,
                 language=language,
                 extra_headers=extra_headers if extra_headers else None,
@@ -162,13 +172,13 @@ class HeliconeOpenAIClient:
             latency = time.time() - start_time
             metrics = {
                 "latency_ms": round(latency * 1000, 2),
-                "model": model,
+                "deployment": self.whisper_deployment_name,
                 "type": "transcription",
                 "text_length": len(response.text) if hasattr(response, 'text') else 0
             }
             
             logger.info(
-                f"AI_TRANSCRIPTION: model={model} latency={metrics['latency_ms']}ms "
+                f"AI_TRANSCRIPTION: deployment={self.whisper_deployment_name} latency={metrics['latency_ms']}ms "
                 f"text_length={metrics['text_length']} patient={patient_id}"
             )
             
@@ -179,67 +189,43 @@ class HeliconeOpenAIClient:
             logger.error(f"Transcription error: {e} (latency: {latency:.2f}s)")
             raise
     
-    def _calculate_metrics(self, response, latency: float, model: str) -> Dict[str, Any]:
+    def _calculate_metrics(self, response, latency: float) -> Dict[str, Any]:
         """Calculate comprehensive metrics for AI call"""
         usage = response.usage if hasattr(response, 'usage') else None
         
         metrics = {
             "latency_ms": round(latency * 1000, 2),
-            "model": model,
+            "deployment": self.deployment_name,
             "prompt_tokens": usage.prompt_tokens if usage else 0,
             "completion_tokens": usage.completion_tokens if usage else 0,
             "total_tokens": usage.total_tokens if usage else 0,
-            "estimated_cost": self._estimate_cost(model, usage) if usage else 0.0,
             "finish_reason": response.choices[0].finish_reason if response.choices else None
         }
         
         return metrics
-    
-    def _estimate_cost(self, model: str, usage) -> float:
-        """Estimate cost based on model and token usage"""
-        # Pricing as of 2024 (update as needed)
-        pricing = {
-            "gpt-4": {"prompt": 0.03, "completion": 0.06},
-            "gpt-4-32k": {"prompt": 0.06, "completion": 0.12},
-            "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
-            "gpt-4o": {"prompt": 0.005, "completion": 0.015},
-            "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},
-            "gpt-3.5-turbo": {"prompt": 0.0005, "completion": 0.0015},
-        }
-        
-        model_pricing = pricing.get(model, {"prompt": 0.001, "completion": 0.002})
-        
-        prompt_cost = (usage.prompt_tokens / 1000) * model_pricing["prompt"]
-        completion_cost = (usage.completion_tokens / 1000) * model_pricing["completion"]
-        
-        return prompt_cost + completion_cost
 
 
 # Factory function
-def create_helicone_client(enable_cache: bool = False):
-    """
-    Create AI client - prefers Azure OpenAI if configured, falls back to OpenAI.
-    
-    Returns:
-        AzureOpenAIClient if Azure OpenAI is configured, else HeliconeOpenAIClient
-    """
+def create_azure_openai_client(enable_cache: bool = False) -> AzureOpenAIClient:
+    """Create Azure OpenAI client with Helicone support"""
     from .config import get_settings
     
     settings = get_settings()
-    
-    # Prefer Azure OpenAI if configured
-    if settings.azure_openai.endpoint and settings.azure_openai.api_key:
-        try:
-            from .azure_openai_client import create_azure_openai_client
-            return create_azure_openai_client(enable_cache=enable_cache)
-        except Exception as e:
-            logger.warning(f"Failed to create Azure OpenAI client, falling back to OpenAI: {e}")
-    
-    # Fallback to standard OpenAI with Helicone
     helicone_key = os.environ.get("HELICONE_API_KEY")
     
-    return HeliconeOpenAIClient(
-        api_key=settings.openai.api_key,
+    if not settings.azure_openai.endpoint or not settings.azure_openai.api_key:
+        raise ValueError(
+            "Azure OpenAI endpoint and API key must be configured. "
+            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY environment variables "
+            "or add them to Azure Key Vault."
+        )
+    
+    return AzureOpenAIClient(
+        endpoint=settings.azure_openai.endpoint,
+        api_key=settings.azure_openai.api_key,
+        api_version=settings.azure_openai.api_version,
+        deployment_name=settings.azure_openai.deployment_name,
+        whisper_deployment_name=settings.azure_openai.whisper_deployment_name,
         helicone_api_key=helicone_key,
         environment=settings.app_env,
         enable_cache=enable_cache

@@ -90,13 +90,34 @@ async def readiness_check(request: Request):
     else:
         checks["application_insights"] = "not_configured"
     
-    # Check OpenAI (basic check - just verify key exists)
+    # Check Azure OpenAI (preferred) or standard OpenAI
     settings = get_settings()
-    if settings.openai.api_key:
-        checks["openai"] = "configured"
+    azure_openai_configured = (
+        settings.azure_openai.endpoint and 
+        settings.azure_openai.api_key
+    )
+    
+    if azure_openai_configured:
+        # Check Azure OpenAI configuration
+        try:
+            # Verify deployment names are configured
+            if settings.azure_openai.deployment_name and settings.azure_openai.whisper_deployment_name:
+                checks["azure_openai"] = "configured"
+                checks["azure_openai_chat_deployment"] = settings.azure_openai.deployment_name
+                checks["azure_openai_whisper_deployment"] = settings.azure_openai.whisper_deployment_name
+            else:
+                checks["azure_openai"] = "partially_configured"
+                all_ok = False
+        except Exception as e:
+            checks["azure_openai"] = f"error: {str(e)[:50]}"
+            all_ok = False
     else:
-        checks["openai"] = "not_configured"
-        all_ok = False
+        # Fall back to standard OpenAI check
+        if settings.openai.api_key:
+            checks["openai"] = "configured"
+        else:
+            checks["openai"] = "not_configured"
+            all_ok = False
     
     status = "ready" if all_ok else "degraded"
 
@@ -115,3 +136,68 @@ async def liveness_check(request: Request):
     Returns whether the service is alive.
     """
     return ok(request, data={"status": "alive", "timestamp": datetime.utcnow()}, message="OK")
+
+
+@router.get("/audit", response_model=ApiResponse[dict])
+async def audit_health_check(request: Request):
+    """
+    HIPAA audit log system health check endpoint.
+
+    Tests audit log write capability and integrity verification.
+    Returns the health status of the HIPAA audit logging system.
+    """
+    from ...core.hipaa_audit import get_audit_logger
+    
+    try:
+        audit_logger = get_audit_logger()
+        
+        # Check if audit logger is initialized (use hasattr to avoid AttributeError)
+        if not hasattr(audit_logger, '_initialized') or not audit_logger._initialized:
+            return ok(request, data={
+                "status": "unhealthy",
+                "error": "Audit logger not initialized",
+                "timestamp": datetime.utcnow()
+            }, message="Audit log system not initialized")
+        
+        # Test audit log write
+        test_audit_id = await audit_logger.log_phi_access(
+            user_id="health_check",
+            action="GET",
+            resource_type="health_check",
+            resource_id="test",
+            patient_id=None,
+            ip_address="127.0.0.1",
+            user_agent="health-check",
+            phi_fields=[],
+            phi_accessed=False,
+            success=True,
+            details={"purpose": "health_check"}
+        )
+        
+        # Verify integrity
+        integrity_ok = await audit_logger.verify_audit_integrity(test_audit_id)
+        
+        # Get audit trail to verify read capability
+        audit_trail = await audit_logger.get_audit_trail(
+            user_id="health_check",
+            limit=1
+        )
+        
+        read_ok = len(audit_trail) > 0
+        
+        status = "healthy" if (integrity_ok and read_ok) else "degraded"
+        
+        return ok(request, data={
+            "status": status,
+            "integrity_check": integrity_ok,
+            "read_check": read_ok,
+            "test_audit_id": test_audit_id,
+            "timestamp": datetime.utcnow()
+        }, message="OK" if status == "healthy" else "Audit log system degraded")
+        
+    except Exception as e:
+        return ok(request, data={
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow()
+        }, message="Audit log system unavailable")

@@ -262,6 +262,28 @@ class AzureBlobSettings(BaseSettings):
         return v
 
 
+class AzureOpenAISettings(BaseSettings):
+    """Azure OpenAI configuration settings."""
+    
+    model_config = SettingsConfigDict(env_prefix="AZURE_OPENAI_")
+    
+    endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
+    api_key: str = Field(default="", description="Azure OpenAI API key")
+    api_version: str = Field(default="2024-12-01-preview", description="Azure OpenAI API version")
+    deployment_name: str = Field(default="gpt-4o-mini", description="Azure OpenAI chat deployment name")
+    whisper_deployment_name: str = Field(default="whisper", description="Azure OpenAI Whisper deployment name for transcription")
+    
+    @validator("endpoint")
+    def validate_endpoint(cls, v: str) -> str:
+        """Validate Azure OpenAI endpoint format."""
+        if v and not (v.startswith("https://") and ".openai.azure.com" in v):
+            # Allow empty string for optional use
+            if v == "":
+                return v
+            raise ValueError("Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com/")
+        return v
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -289,6 +311,7 @@ class Settings(BaseSettings):
     mistral: MistralSettings = Field(default_factory=MistralSettings)
     file_storage: FileStorageSettings = Field(default_factory=FileStorageSettings)
     azure_blob: AzureBlobSettings = Field(default_factory=AzureBlobSettings)
+    azure_openai: AzureOpenAISettings = Field(default_factory=AzureOpenAISettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -312,6 +335,12 @@ class Settings(BaseSettings):
                     "AZURE_BLOB_CONNECTION_STRING": key_vault.get_secret("AZURE-BLOB-CONNECTION-STRING"),
                     "AZURE_BLOB_ACCOUNT_NAME": key_vault.get_secret("AZURE-BLOB-ACCOUNT-NAME"),
                     "AZURE_BLOB_ACCOUNT_KEY": key_vault.get_secret("AZURE-BLOB-ACCOUNT-KEY"),
+                    # Azure OpenAI secrets
+                    "AZURE_OPENAI_ENDPOINT": key_vault.get_secret("AZURE-OPENAI-ENDPOINT"),
+                    "AZURE_OPENAI_API_KEY": key_vault.get_secret("AZURE-OPENAI-API-KEY"),
+                    "AZURE_OPENAI_API_VERSION": key_vault.get_secret("AZURE-OPENAI-API-VERSION"),
+                    "AZURE_OPENAI_DEPLOYMENT_NAME": key_vault.get_secret("AZURE-OPENAI-DEPLOYMENT-NAME"),
+                    "AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME": key_vault.get_secret("AZURE-OPENAI-WHISPER-DEPLOYMENT-NAME"),
                 }
                 # Only use Key Vault values if they exist (don't override env vars that are already set)
                 for key, value in key_vault_secrets.items():
