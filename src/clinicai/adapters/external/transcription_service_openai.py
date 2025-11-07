@@ -16,22 +16,25 @@ class OpenAITranscriptionService(TranscriptionService):
     def __init__(self) -> None:
         self._settings = get_settings()
         
-        # Check for Azure OpenAI first (preferred), then fall back to OpenAI
+        # Require Azure OpenAI - no fallback to standard OpenAI
         azure_openai_configured = (
             self._settings.azure_openai.endpoint and 
             self._settings.azure_openai.api_key
         )
         
         if not azure_openai_configured:
-            # Fall back to standard OpenAI
-            api_key = self._settings.openai.api_key or os.getenv("OPENAI_API_KEY", "")
-            if not api_key:
-                raise ValueError(
-                    "Neither Azure OpenAI nor OpenAI API key is configured. "
-                    "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, or set OPENAI_API_KEY"
-                )
+            raise ValueError(
+                "Azure OpenAI is required. Please configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
+                "Fallback to standard OpenAI is disabled for data security."
+            )
         
-        # Use Helicone client for AI observability (will use Azure OpenAI if configured, else OpenAI)
+        # Verify Whisper deployment name is configured
+        if not self._settings.azure_openai.whisper_deployment_name:
+            raise ValueError(
+                "Azure OpenAI Whisper deployment name is required. Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
+            )
+        
+        # Use Azure OpenAI client (no fallback)
         self._client = create_helicone_client()
 
     async def transcribe_audio(

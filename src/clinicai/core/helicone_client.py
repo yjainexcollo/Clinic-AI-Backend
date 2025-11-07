@@ -218,30 +218,32 @@ class HeliconeOpenAIClient:
 # Factory function
 def create_helicone_client(enable_cache: bool = False):
     """
-    Create AI client - prefers Azure OpenAI if configured, falls back to OpenAI.
+    Create AI client - requires Azure OpenAI (no fallback to standard OpenAI).
     
     Returns:
-        AzureOpenAIClient if Azure OpenAI is configured, else HeliconeOpenAIClient
+        AzureOpenAIClient (Azure OpenAI is required)
+    
+    Raises:
+        ValueError: If Azure OpenAI is not configured
     """
     from .config import get_settings
     
     settings = get_settings()
     
-    # Prefer Azure OpenAI if configured
-    if settings.azure_openai.endpoint and settings.azure_openai.api_key:
-        try:
-            from .azure_openai_client import create_azure_openai_client
-            return create_azure_openai_client(enable_cache=enable_cache)
-        except Exception as e:
-            logger.warning(f"Failed to create Azure OpenAI client, falling back to OpenAI: {e}")
+    # Require Azure OpenAI - no fallback
+    if not (settings.azure_openai.endpoint and settings.azure_openai.api_key):
+        raise ValueError(
+            "Azure OpenAI is required. Please configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
+            "Fallback to standard OpenAI is disabled for data security."
+        )
     
-    # Fallback to standard OpenAI with Helicone
-    helicone_key = os.environ.get("HELICONE_API_KEY")
-    
-    return HeliconeOpenAIClient(
-        api_key=settings.openai.api_key,
-        helicone_api_key=helicone_key,
-        environment=settings.app_env,
-        enable_cache=enable_cache
-    )
+    try:
+        from .azure_openai_client import create_azure_openai_client
+        return create_azure_openai_client(enable_cache=enable_cache)
+    except Exception as e:
+        logger.error(f"Failed to create Azure OpenAI client: {e}")
+        raise ValueError(
+            f"Failed to initialize Azure OpenAI client: {e}. "
+            "Please verify your Azure OpenAI configuration."
+        ) from e
 

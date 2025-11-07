@@ -42,16 +42,16 @@ class OpenAISettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="OPENAI_")
 
-    api_key: str = Field(default="", description="OpenAI API key")
-    model: str = Field(default="gpt-4o", description="Default OpenAI model")
-    max_tokens: int = Field(default=16000, description="Maximum tokens for responses")
+    api_key: str = Field(default="", description="OpenAI API key (not used when Azure OpenAI is configured)")
+    model: str = Field(default="gpt-4o-mini", description="Model name for token calculations (defaults to match Azure OpenAI deployment)")
+    max_tokens: int = Field(default=4000, description="Maximum tokens for responses")
     temperature: float = Field(
-        default=0.7, description="Temperature for model responses"
+        default=0.3, description="Temperature for model responses"
     )
 
     @validator("api_key")
     def validate_api_key(cls, v: str) -> str:
-        """Validate OpenAI API key format."""
+        """Validate OpenAI API key format (optional - not used when Azure OpenAI is configured)."""
         if v and not v.startswith("sk-"):
             raise ValueError("OpenAI API key must start with 'sk-'")
         return v
@@ -269,7 +269,7 @@ class AzureOpenAISettings(BaseSettings):
     
     endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
     api_key: str = Field(default="", description="Azure OpenAI API key")
-    api_version: str = Field(default="2024-12-01-preview", description="Azure OpenAI API version")
+    api_version: str = Field(default="2024-07-18", description="Azure OpenAI API version")
     deployment_name: str = Field(default="gpt-4o-mini", description="Azure OpenAI chat deployment name")
     whisper_deployment_name: str = Field(default="whisper", description="Azure OpenAI Whisper deployment name for transcription")
     

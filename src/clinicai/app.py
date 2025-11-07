@@ -127,6 +127,67 @@ async def lifespan(app: FastAPI):
         # Don't fail startup, but log the error
         logging.error(f"HIPAA Audit Logger failed to initialize: {e}")
 
+    # Validate Azure OpenAI configuration
+    try:
+        azure_openai_configured = (
+            settings.azure_openai.endpoint and 
+            settings.azure_openai.api_key
+        )
+        
+        if azure_openai_configured:
+            # Validate endpoint format
+            if not settings.azure_openai.endpoint.startswith("https://") or ".openai.azure.com" not in settings.azure_openai.endpoint:
+                raise ValueError(
+                    f"Invalid Azure OpenAI endpoint format: {settings.azure_openai.endpoint}. "
+                    "Must be: https://xxx.openai.azure.com/"
+                )
+            
+            # Validate deployment names are configured
+            if not settings.azure_openai.deployment_name:
+                raise ValueError(
+                    "Azure OpenAI chat deployment name is required. "
+                    "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
+                )
+            
+            if not settings.azure_openai.whisper_deployment_name:
+                raise ValueError(
+                    "Azure OpenAI Whisper deployment name is required. "
+                    "Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
+                )
+            
+            # Validate API key is not empty
+            if not settings.azure_openai.api_key or len(settings.azure_openai.api_key.strip()) == 0:
+                raise ValueError(
+                    "Azure OpenAI API key is required. "
+                    "Please set AZURE_OPENAI_API_KEY."
+                )
+            
+            print(f"✅ Azure OpenAI configuration validated")
+            print(f"   Endpoint: {settings.azure_openai.endpoint}")
+            print(f"   API Version: {settings.azure_openai.api_version}")
+            print(f"   Chat Deployment: {settings.azure_openai.deployment_name}")
+            print(f"   Whisper Deployment: {settings.azure_openai.whisper_deployment_name}")
+            logging.info(
+                f"Azure OpenAI validated - endpoint={settings.azure_openai.endpoint}, "
+                f"chat_deployment={settings.azure_openai.deployment_name}, "
+                f"whisper_deployment={settings.azure_openai.whisper_deployment_name}"
+            )
+        else:
+            # Azure OpenAI is required - fail startup if not configured
+            raise ValueError(
+                "Azure OpenAI is required but not configured. "
+                "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
+                "Fallback to standard OpenAI is disabled for data security."
+            )
+    except ValueError as e:
+        print(f"❌ Azure OpenAI validation failed: {e}")
+        logging.error(f"Azure OpenAI validation failed: {e}")
+        raise  # Fail startup if Azure OpenAI is misconfigured
+    except Exception as e:
+        print(f"⚠️  Azure OpenAI validation error: {e}")
+        logging.warning(f"Azure OpenAI validation error: {e}")
+        # Don't fail startup for unexpected errors, but log them
+
     # Whisper warm-up disabled to reduce startup memory footprint
 
     yield

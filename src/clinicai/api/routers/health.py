@@ -90,7 +90,7 @@ async def readiness_check(request: Request):
     else:
         checks["application_insights"] = "not_configured"
     
-    # Check Azure OpenAI (preferred) or standard OpenAI
+    # Check Azure OpenAI (required - no fallback)
     settings = get_settings()
     azure_openai_configured = (
         settings.azure_openai.endpoint and 
@@ -105,6 +105,7 @@ async def readiness_check(request: Request):
                 checks["azure_openai"] = "configured"
                 checks["azure_openai_chat_deployment"] = settings.azure_openai.deployment_name
                 checks["azure_openai_whisper_deployment"] = settings.azure_openai.whisper_deployment_name
+                checks["azure_openai_api_version"] = settings.azure_openai.api_version
             else:
                 checks["azure_openai"] = "partially_configured"
                 all_ok = False
@@ -112,12 +113,9 @@ async def readiness_check(request: Request):
             checks["azure_openai"] = f"error: {str(e)[:50]}"
             all_ok = False
     else:
-        # Fall back to standard OpenAI check
-        if settings.openai.api_key:
-            checks["openai"] = "configured"
-        else:
-            checks["openai"] = "not_configured"
-            all_ok = False
+        # Azure OpenAI is required - no fallback
+        checks["azure_openai"] = "not_configured"
+        all_ok = False
     
     status = "ready" if all_ok else "degraded"
 
