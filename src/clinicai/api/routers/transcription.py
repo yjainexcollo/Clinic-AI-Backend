@@ -35,8 +35,8 @@ async def _process_transcript_with_llm(
     
     try:
         settings = get_settings()
-        from openai import OpenAI
         from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
+        from ...core.azure_openai_client import create_azure_openai_client
         
         # Create a minimal use case instance to reuse the robust processing method
         # The processing method doesn't use repositories, so we create minimal mock objects
@@ -51,7 +51,9 @@ async def _process_transcript_with_llm(
             transcription_service=MockRepo()  # type: ignore
         )
         
-        client = OpenAI(api_key=settings.openai.api_key)
+        # Use Azure OpenAI client
+        azure_client = create_azure_openai_client(enable_cache=False)
+        client = azure_client.client
         
         # Use the same robust processing method as visit-based transcription
         logger.info(f"Using _process_transcript_with_chunking (same as visit-based) for {len(raw_transcript)} chars")
@@ -65,11 +67,13 @@ async def _process_transcript_with_llm(
         
         if not structured_content or structured_content.strip() == "":
             logger.warning("LLM processing returned empty content, trying fallback")
-            # Fallback to structure_dialogue_from_text
+            # Fallback to structure_dialogue_from_text with Azure OpenAI
             dialogue = await structure_dialogue_from_text(
                 raw_transcript,
-                model=settings.openai.model,
-                api_key=settings.openai.api_key
+                model=settings.azure_openai.deployment_name,
+                azure_endpoint=settings.azure_openai.endpoint,
+                azure_api_key=settings.azure_openai.api_key,
+                language=language
             )
             if dialogue and isinstance(dialogue, list):
                 logger.info(f"Fallback processing returned {len(dialogue)} dialogue turns")
@@ -146,10 +150,13 @@ async def _process_transcript_with_llm(
         
         # Final fallback
         logger.warning("All parsing strategies failed, trying structure_dialogue_from_text as last resort")
+        settings = get_settings()
         dialogue = await structure_dialogue_from_text(
             raw_transcript,
-            model=settings.openai.model,
-            api_key=settings.openai.api_key
+            model=settings.azure_openai.deployment_name,
+            azure_endpoint=settings.azure_openai.endpoint,
+            azure_api_key=settings.azure_openai.api_key,
+            language=language
         )
         if dialogue and isinstance(dialogue, list):
             logger.info(f"Fallback structure_dialogue_from_text returned {len(dialogue)} dialogue turns")
@@ -163,8 +170,10 @@ async def _process_transcript_with_llm(
             settings = get_settings()
             dialogue = await structure_dialogue_from_text(
                 raw_transcript,
-                model=settings.openai.model,
-                api_key=settings.openai.api_key
+                model=settings.azure_openai.deployment_name,
+                azure_endpoint=settings.azure_openai.endpoint,
+                azure_api_key=settings.azure_openai.api_key,
+                language=language
             )
             if dialogue and isinstance(dialogue, list):
                 logger.info(f"Exception fallback returned {len(dialogue)} dialogue turns")
@@ -339,11 +348,15 @@ async def structure_transcript_text(request: Request, payload: StructureTextRequ
         return fail(request, error="EMPTY_TRANSCRIPT", message="Transcript is empty")
 
     settings = get_settings()
-    model = payload.model or settings.openai.model
-    api_key = settings.openai.api_key
+    model = payload.model or settings.azure_openai.deployment_name
 
-    logger.info(f"Calling structure_dialogue_from_text with model: {model}")
-    dialogue = await structure_dialogue_from_text(payload.transcript, model=model, api_key=api_key)
+    logger.info(f"Calling structure_dialogue_from_text with deployment: {model}")
+    dialogue = await structure_dialogue_from_text(
+        payload.transcript, 
+        model=model,
+        azure_endpoint=settings.azure_openai.endpoint,
+        azure_api_key=settings.azure_openai.api_key
+    )
     logger.info(f"Structure dialogue result: {type(dialogue)}, length: {len(dialogue) if isinstance(dialogue, list) else 'N/A'}")
 
     # Normalize dialogue to a list (empty list if None)

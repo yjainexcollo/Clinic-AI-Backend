@@ -162,10 +162,39 @@ async def lifespan(app: FastAPI):
                     "Please set AZURE_OPENAI_API_KEY."
                 )
             
+            # Validate deployment actually exists by making a test call
+            print(f"🔍 Validating Azure OpenAI deployments...")
+            print(f"   Endpoint: {settings.azure_openai.endpoint}")
+            print(f"   API Version: {settings.azure_openai.api_version}")
+            print(f"   Deployment: {settings.azure_openai.deployment_name}")
+            from .core.azure_openai_client import validate_azure_openai_deployment
+            
+            # Validate chat deployment (will try multiple API versions automatically)
+            is_valid, error_msg = await validate_azure_openai_deployment(
+                endpoint=settings.azure_openai.endpoint,
+                api_key=settings.azure_openai.api_key,
+                api_version=settings.azure_openai.api_version,
+                deployment_name=settings.azure_openai.deployment_name,
+                timeout=10.0,
+                try_alternative_versions=True
+            )
+            
+            if not is_valid:
+                print(f"❌ Deployment validation failed:")
+                print(f"   {error_msg}")
+                raise ValueError(
+                    f"Azure OpenAI chat deployment validation failed: {error_msg}"
+                )
+            
+            # If validation succeeded but with a different API version, show a warning
+            if error_msg and "API version" in error_msg:
+                print(f"⚠️  {error_msg}")
+                logging.warning(error_msg)
+            
             print(f"✅ Azure OpenAI configuration validated")
             print(f"   Endpoint: {settings.azure_openai.endpoint}")
             print(f"   API Version: {settings.azure_openai.api_version}")
-            print(f"   Chat Deployment: {settings.azure_openai.deployment_name}")
+            print(f"   Chat Deployment: {settings.azure_openai.deployment_name} ✓")
             print(f"   Whisper Deployment: {settings.azure_openai.whisper_deployment_name}")
             logging.info(
                 f"Azure OpenAI validated - endpoint={settings.azure_openai.endpoint}, "

@@ -260,7 +260,7 @@ class AzureBlobSettings(BaseSettings):
         if v and not v.startswith("DefaultEndpointsProtocol="):
             raise ValueError("Invalid Azure Storage connection string format")
         return v
-
+    
 
 class AzureOpenAISettings(BaseSettings):
     """Azure OpenAI configuration settings."""
@@ -269,18 +269,23 @@ class AzureOpenAISettings(BaseSettings):
     
     endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
     api_key: str = Field(default="", description="Azure OpenAI API key")
-    api_version: str = Field(default="2024-07-18", description="Azure OpenAI API version")
+    api_version: str = Field(default="2024-12-01-preview", description="Azure OpenAI API version (try '2024-12-01-preview', '2024-08-01-preview', or '2024-07-18')")
     deployment_name: str = Field(default="gpt-4o-mini", description="Azure OpenAI chat deployment name")
     whisper_deployment_name: str = Field(default="whisper", description="Azure OpenAI Whisper deployment name for transcription")
     
     @validator("endpoint")
     def validate_endpoint(cls, v: str) -> str:
-        """Validate Azure OpenAI endpoint format."""
+        """Validate and normalize Azure OpenAI endpoint format."""
         if v and not (v.startswith("https://") and ".openai.azure.com" in v):
             # Allow empty string for optional use
             if v == "":
                 return v
-            raise ValueError("Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com/")
+            raise ValueError("Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com")
+        
+        # Normalize endpoint: remove trailing slash (Azure OpenAI SDK doesn't expect it)
+        if v and v.endswith("/"):
+            v = v.rstrip("/")
+        
         return v
 
 

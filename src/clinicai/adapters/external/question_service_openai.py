@@ -220,8 +220,8 @@ CRITICAL SAFETY RULES (do not violate):
 Return ONLY the JSON, no additional text."""
 
         try:
+            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
-                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -575,8 +575,8 @@ KEEP information_gaps with at least 2-3 topics until the patient has answered at
 Return ONLY the JSON, no additional text."""
 
         try:
+            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
-                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -947,8 +947,8 @@ Example of correct response: What medications are you currently taking?
 Generate THE NEXT most important question now:"""
 
         try:
+            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
-                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -1289,9 +1289,8 @@ class OpenAIQuestionService(QuestionService):
             if self._debug_prompts:
                 logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
 
-            # Use Helicone client with tracking
+            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             resp, metrics = await self._client.chat_completion(
-                model=self._settings.openai.model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -1629,7 +1628,7 @@ class OpenAIQuestionService(QuestionService):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=min(2000, self._settings.openai.max_tokens),
+                max_tokens=min(2000, self._settings.openai.max_tokens),  # Use max_tokens from settings
                 temperature=0.3,
             )
             cleaned = self._clean_summary_markdown(response)

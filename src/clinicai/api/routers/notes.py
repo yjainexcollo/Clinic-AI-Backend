@@ -10,8 +10,6 @@ import os
 import asyncio
 from datetime import datetime
 
-from openai import OpenAI  # type: ignore
-
 from ...application.dto.patient_dto import (
     AudioTranscriptionRequest,
     AudioTranscriptionResponse,
@@ -514,15 +512,10 @@ async def store_vitals(
         visit.store_vitals(payload.vitals)
         
         # Update visit status appropriately after storing vitals
-        if visit.is_walk_in_workflow():
-            visit.complete_vitals()  # Sets status to "vitals_completed" for walk-in
-        elif visit.is_scheduled_workflow():
-            # For scheduled visits: after vitals, allow transcription
-            # If status is pre_visit_summary_generated, keep it - transcription can proceed
-            if visit.status == "pre_visit_summary_generated":
-                # Keep status as is - can_proceed_to_transcription will allow it
-                pass
-            elif visit.is_transcription_complete():
+        visit.complete_vitals()  # Handles both walk-in and scheduled workflows
+        
+        # Additional status updates for scheduled visits with existing transcripts
+        if visit.is_scheduled_workflow() and visit.is_transcription_complete():
                 # If transcript exists, update to soap_generation
                 if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
                     visit.status = "soap_generation"
@@ -894,11 +887,15 @@ async def structure_dialogue(request: Request, patient_id: str, visit_id: str, p
         from ...application.utils.structure_dialogue import structure_dialogue_from_text
 
         settings = get_settings()
-        model = settings.openai.model
-        api_key = settings.openai.api_key
+        model = settings.azure_openai.deployment_name
 
-        logger.info(f"Calling structure_dialogue_from_text with model: {model}")
-        dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key)
+        logger.info(f"Calling structure_dialogue_from_text with deployment: {model}")
+        dialogue = await structure_dialogue_from_text(
+            raw_transcript, 
+            model=model,
+            azure_endpoint=settings.azure_openai.endpoint,
+            azure_api_key=settings.azure_openai.api_key
+        )
         logger.info(f"Structure dialogue result: {type(dialogue)}, length: {len(dialogue) if isinstance(dialogue, list) else 'N/A'}")
 
         # Normalize dialogue to a list (empty list if None)

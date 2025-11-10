@@ -1,5 +1,7 @@
 """Transcribe audio use case for Step-03 functionality."""
 
+from __future__ import annotations
+
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
@@ -9,7 +11,7 @@ from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.transcription_service import TranscriptionService
 from ...core.config import get_settings
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 import asyncio
 import logging
 import json
@@ -17,7 +19,8 @@ import re
 import time
 from datetime import datetime
 
-from openai import OpenAI  # type: ignore
+if TYPE_CHECKING:
+    from openai import AsyncAzureOpenAI  # type: ignore
 
 # Module-level logger to avoid UnboundLocalError from function-level assignments
 LOGGER = logging.getLogger("clinicai")
@@ -177,7 +180,11 @@ class TranscribeAudioUseCase:
             # Post-process with LLM to clean PII and structure Doctor/Patient dialogue
             LOGGER.info("Starting LLM processing for transcript cleaning and structuring")
             settings = get_settings()
-            client = OpenAI(api_key=settings.openai.api_key)
+            # Use Azure OpenAI client instead of standard OpenAI
+            from ...core.azure_openai_client import create_azure_openai_client
+            azure_client = create_azure_openai_client(enable_cache=False)
+            # Use the underlying AsyncAzureOpenAI client which has the same interface
+            client = azure_client.client
 
             # Process transcript with improved chunking strategy
             # Always use chunking - it handles both single chunks and multi-chunk processing automatically
@@ -275,13 +282,22 @@ class TranscribeAudioUseCase:
                     from ...application.utils.structure_dialogue import structure_dialogue_from_text
                     
                     settings = get_settings()
-                    model = settings.openai.model
-                    api_key = settings.openai.api_key
+                    # Use Azure OpenAI deployment name instead of model
+                    model = settings.azure_openai.deployment_name
+                    # Pass Azure OpenAI settings instead of API key
+                    azure_endpoint = settings.azure_openai.endpoint
+                    azure_api_key = settings.azure_openai.api_key
                     
                     LOGGER.info("Using structure_dialogue_from_text for fallback processing")
                     # Get language from patient or use default
                     fallback_language = getattr(patient, 'language', 'en') or 'en'
-                    structured_dialogue = await structure_dialogue_from_text(raw_transcript, model=model, api_key=api_key, language=fallback_language)
+                    structured_dialogue = await structure_dialogue_from_text(
+                        raw_transcript, 
+                        model=model, 
+                        azure_endpoint=azure_endpoint,
+                        azure_api_key=azure_api_key,
+                        language=fallback_language
+                    )
                     
                     if structured_dialogue:
                         LOGGER.info(f"Created structured dialogue with {len(structured_dialogue)} turns using working logic")
@@ -643,7 +659,7 @@ class TranscribeAudioUseCase:
 
     async def _retry_chunk_processing(
         self,
-        client: OpenAI,
+        client: AsyncAzureOpenAI,
         system_prompt: str,
         user_prompt: str,
         settings,
@@ -653,35 +669,53 @@ class TranscribeAudioUseCase:
         max_delay: float = 5.0
     ) -> Tuple[str, bool]:
         """Retry chunk processing with exponential backoff."""
+        last_error = None
         for attempt in range(max_retries):
             try:
                 result = await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
                 if result and result.strip():
+                    logger.info(f"✓ Chunk processing succeeded on attempt {attempt + 1}/{max_retries}")
                     return result, True
                 else:
                     logger.warning(f"Chunk processing returned empty result (attempt {attempt + 1}/{max_retries})")
+                    last_error = "Empty result from LLM"
             except Exception as e:
+                last_error = str(e)
                 error_str = str(e).lower()
+                
+                # Check for specific error types
+                is_rate_limit = any(keyword in error_str for keyword in ['rate limit', '429', 'too many requests', 'quota'])
+                is_timeout = any(keyword in error_str for keyword in ['timeout', 'timed out', '504'])
+                is_connection = any(keyword in error_str for keyword in ['connection', 'network', 'dns'])
+                is_service_error = any(keyword in error_str for keyword in ['service unavailable', '503', '502', '500', 'internal server'])
+                
                 # Only retry on transient errors
-                if any(keyword in error_str for keyword in ['timeout', 'rate limit', 'connection', 'service unavailable']):
-                    logger.warning(f"Transient error on attempt {attempt + 1}/{max_retries}: {e}")
+                is_transient = is_rate_limit or is_timeout or is_connection or is_service_error
+                
+                if is_transient:
+                    error_type = "rate limit" if is_rate_limit else ("timeout" if is_timeout else ("connection" if is_connection else "service error"))
+                    logger.warning(f"Transient {error_type} error on attempt {attempt + 1}/{max_retries}: {e}")
                     if attempt < max_retries - 1:
                         delay = min(base_delay * (2 ** attempt), max_delay)
                         logger.info(f"Retrying in {delay} seconds...")
                         await asyncio.sleep(delay)
                         continue
                 else:
-                    # Non-transient error, don't retry
-                    logger.error(f"Non-transient error, not retrying: {e}")
+                    # Non-transient error, log and return
+                    logger.error(f"Non-transient error on attempt {attempt + 1}/{max_retries}: {e}")
+                    logger.error(f"Error type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    # Don't retry on non-transient errors
                     return "", False
             
-            # If we get here, it's a retryable error on last attempt
+            # If we get here, it's an empty result - retry if not last attempt
             if attempt < max_retries - 1:
                 delay = min(base_delay * (2 ** attempt), max_delay)
-                logger.info(f"Retrying in {delay} seconds...")
+                logger.info(f"Retrying in {delay} seconds due to empty result...")
                 await asyncio.sleep(delay)
         
-        logger.error(f"Failed to process chunk after {max_retries} attempts")
+        logger.error(f"Failed to process chunk after {max_retries} attempts. Last error: {last_error}")
         return "", False
 
     def _validate_completeness(
@@ -784,7 +818,7 @@ class TranscribeAudioUseCase:
 
     async def _process_transcript_with_chunking(
         self, 
-        client: OpenAI, 
+        client: AsyncAzureOpenAI, 
         raw_transcript: str, 
         settings, 
         logger,
@@ -930,9 +964,9 @@ class TranscribeAudioUseCase:
                 "[{\"Doctor\": \"Hi, I'm [NAME]. How can I help you today?\"}, {\"Patient\": \"I'm here for my physical exam and medication refills.\"}, {\"Doctor\": \"When were you diagnosed with diabetes?\"}, {\"Patient\": \"About five years ago.\"}, {\"Doctor\": \"Can you move your shoulder up and down?\"}, {\"Patient\": \"Yes.\"}, {\"Doctor\": \"Do you feel any pain?\"}, {\"Patient\": \"No pain.\"}]"
             )
         
-        # Calculate optimal chunk size based on model context
+        # Calculate optimal chunk size based on deployment context
         # Increased chunk size for better processing of long transcripts
-        max_chars_per_chunk = 3000 if settings.openai.model.startswith('gpt-4') else 2500
+        max_chars_per_chunk = 3000 if settings.azure_openai.deployment_name.startswith('gpt-4') else 2500
         overlap_chars = 300  # Increased overlap to preserve context better
         
         # Split into sentences for better chunking
@@ -1041,8 +1075,15 @@ class TranscribeAudioUseCase:
             logger.info(f"Chunk {i+1}/{len(chunks)} processing time: {chunk_processing_time:.2f}s")
             
             if not success or not chunk_result:
-                logger.warning(f"Chunk {i+1} processing failed after retries, using fallback")
-                chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed after retries]"}])
+                logger.warning(f"Chunk {i+1} processing failed after retries, attempting fallback extraction from raw chunk")
+                # Try to extract dialogue from raw chunk using simple heuristics
+                fallback_dialogue = self._extract_dialogue_fallback(chunk, logger, language)
+                if fallback_dialogue:
+                    chunk_results.append(fallback_dialogue)
+                    logger.info(f"✓ Chunk {i+1} fallback extraction successful: {len(fallback_dialogue)} turns")
+                else:
+                    logger.error(f"Chunk {i+1} fallback extraction also failed, using error placeholder")
+                    chunk_results.append([{"Doctor": f"[Chunk {i+1} processing failed - unable to extract dialogue]"}])
                 continue
             
             # Enhanced error recovery and parsing
@@ -1131,7 +1172,7 @@ class TranscribeAudioUseCase:
     
     async def _process_single_chunk(
         self, 
-        client: OpenAI, 
+        client: AsyncAzureOpenAI, 
         system_prompt: str, 
         user_prompt: str, 
         settings, 
@@ -1139,22 +1180,23 @@ class TranscribeAudioUseCase:
     ) -> str:
         """Process a single chunk of transcript."""
         
-        def _call_openai() -> str:
+        async def _call_openai() -> str:
             try:
                 # Use appropriate max_tokens for chunk processing - increased to prevent truncation
-                max_tokens = 4000 if settings.openai.model.startswith('gpt-4') else 3000
+                max_tokens = 4000 if settings.azure_openai.deployment_name.startswith('gpt-4') else 3000
                 
                 
                 logger.info(f"=== STARTING LLM CALL ===")
-                logger.info(f"Model: {settings.openai.model}")
+                logger.info(f"Deployment: {settings.azure_openai.deployment_name}")
                 logger.info(f"Max tokens: {max_tokens}")
-                logger.info(f"API Key present: {bool(settings.openai.api_key)}")
+                logger.info(f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}")
                 logger.info(f"System prompt length: {len(system_prompt)} characters")
                 logger.info(f"User prompt length: {len(user_prompt)} characters")
                 logger.info(f"User prompt preview: {user_prompt[:300]}...")
                 
-                resp = client.chat.completions.create(
-                    model=settings.openai.model,
+                # Use Azure OpenAI deployment name instead of model
+                resp = await client.chat.completions.create(
+                    model=settings.azure_openai.deployment_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -1185,15 +1227,74 @@ class TranscribeAudioUseCase:
                 
                 logger.error(f"=== LLM CALL FAILED ===")
                 logger.error(f"Error: {str(e)}")
-                logger.error(f"Model: {settings.openai.model}")
-                logger.error(f"API Key present: {bool(settings.openai.api_key)}")
-                logger.error(f"API Key preview: {settings.openai.api_key[:10]}..." if settings.openai.api_key else "No API key")
+                logger.error(f"Deployment: {settings.azure_openai.deployment_name}")
+                logger.error(f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}")
+                logger.error(f"Endpoint: {settings.azure_openai.endpoint}")
                 import traceback
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 logger.error(f"=== END ERROR ===")
                 return ""
         
-        return await asyncio.to_thread(_call_openai)
+        return await _call_openai()
+    
+    def _extract_dialogue_fallback(self, raw_chunk: str, logger, language: str = "en") -> Optional[List[Dict[str, str]]]:
+        """Fallback method to extract dialogue from raw chunk when LLM processing fails."""
+        if not raw_chunk or not raw_chunk.strip():
+            return None
+        
+        try:
+            # Simple heuristic-based extraction
+            # Split by sentences and alternate between Doctor and Patient based on patterns
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_chunk) if s.strip()]
+            
+            if not sentences:
+                return None
+            
+            dialogue = []
+            patient_label = "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
+            next_speaker = "Doctor"
+            
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                
+                # Doctor signals
+                is_doctor = (
+                    sentence.endswith('?') or  # Questions
+                    sentence.startswith(('Let me', 'I\'ll', 'We\'ll', 'I\'m going to', 'Déjame', 'Voy a', 'Vamos a')) or
+                    any(word in sentence_lower for word in ['recommend', 'prescribe', 'order', 'examine', 'check', 
+                                                             'recomiendo', 'prescribir', 'ordenar', 'examinar', 'revisar']) or
+                    any(pattern in sentence_lower for pattern in ['can you', 'do you', 'have you', '¿puedes', '¿tienes'])
+                )
+                
+                # Patient signals
+                is_patient = (
+                    sentence.startswith(('I', 'I\'ve', 'I\'m', 'I have', 'Yo', 'Tengo', 'He estado')) or
+                    any(word in sentence_lower for word in ['yes', 'no', 'okay', 'sí', 'no', 'bien']) or
+                    any(pattern in sentence_lower for pattern in ['it hurts', 'i feel', 'me duele', 'siento'])
+                )
+                
+                # Determine speaker
+                if is_doctor and not is_patient:
+                    speaker = "Doctor"
+                    next_speaker = patient_label
+                elif is_patient and not is_doctor:
+                    speaker = patient_label
+                    next_speaker = "Doctor"
+                else:
+                    # Use context-based assignment
+                    speaker = next_speaker
+                    next_speaker = patient_label if next_speaker == "Doctor" else "Doctor"
+                
+                dialogue.append({speaker: sentence})
+            
+            if dialogue:
+                logger.info(f"Fallback extraction created {len(dialogue)} dialogue turns from {len(sentences)} sentences")
+                return dialogue
+            
+        except Exception as e:
+            logger.error(f"Fallback extraction error: {e}")
+        
+        return None
     
     def _merge_chunk_results(self, chunk_results: list, logger) -> list:
         """Merge chunk results and remove overlapping content with enhanced detection."""
@@ -1307,7 +1408,7 @@ class TranscribeAudioUseCase:
     
     async def _process_transcript_simple(
         self, 
-        client: OpenAI, 
+        client: AsyncAzureOpenAI, 
         raw_transcript: str, 
         settings, 
         logger,

@@ -40,10 +40,10 @@ class OpenAIActionPlanService(ActionPlanService):
                 system_prompt = self._get_english_system_prompt()
                 user_prompt = self._get_english_user_prompt(transcript, structured_dialogue)
 
-            # Call OpenAI API with Helicone tracking
+            # Call Azure OpenAI API with Helicone tracking
             # Note: patient_id is not needed for adhoc flows - it's optional and defaults to None
+            # Use Azure OpenAI deployment name instead of model
             response, metrics = await self.client.chat_completion(
-                model=self.settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}

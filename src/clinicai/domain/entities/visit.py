@@ -330,8 +330,10 @@ class Visit:
     def can_proceed_to_transcription(self) -> bool:
         """Check if visit can proceed to transcription based on workflow type."""
         if self.is_scheduled_workflow():
-            # For scheduled: after vitals are filled or if already in transcription
-            # Remove "pre_visit_summary_generated" to enforce vitals before transcript
+            # For scheduled: after vitals are filled (status can be pre_visit_summary_generated with vitals stored) or if already in transcription
+            # Allow pre_visit_summary_generated if vitals are stored (vitals can be filled at this stage)
+            if self.status == "pre_visit_summary_generated" and self.vitals:
+                return True
             return self.status in ["vitals", "vitals_completed", "transcription"]
         elif self.is_walk_in_workflow():
             # For walk-in: after vitals are completed
@@ -454,6 +456,11 @@ class Visit:
         """Complete the vitals input process."""
         if self.is_walk_in_workflow():
             self.status = "vitals_completed"
+        elif self.is_scheduled_workflow():
+            # For scheduled visits: update status to allow transcription
+            if self.status == "pre_visit_summary_generated":
+                self.status = "vitals_completed"
+            # If already in transcription or later stages, don't change status
         self.updated_at = datetime.utcnow()
 
     def start_soap_generation(self) -> None:
