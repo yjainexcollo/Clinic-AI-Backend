@@ -82,13 +82,6 @@ class OpenAIError(ExternalServiceError):
         super().__init__("OpenAI", message, details)
 
 
-class MistralError(ExternalServiceError):
-    """Raised when there's a Mistral API error."""
-
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__("Mistral", message, details)
-
-
 class DeepgramError(ExternalServiceError):
     """Raised when there's a Deepgram API error."""
 

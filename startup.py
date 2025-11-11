@@ -7,9 +7,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Force OpenAI Whisper API usage for Azure free tier
-# This prevents the "No module named 'whisper'" error
-os.environ["TRANSCRIPTION_SERVICE"] = "openai"
+# Let .env file control transcription service (defaults to azure_speech)
+# No hardcoding - respect environment configuration
 
 # Add the src directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +18,7 @@ sys.path.insert(0, src_path)
 logger.info(f"Python path: {sys.path}")
 logger.info(f"Current directory: {current_dir}")
 logger.info(f"Source path: {src_path}")
-logger.info(f"TRANSCRIPTION_SERVICE forced to: {os.environ.get('TRANSCRIPTION_SERVICE')}")
+logger.info(f"TRANSCRIPTION_SERVICE: {os.environ.get('TRANSCRIPTION_SERVICE', 'azure_speech')}")
 
 if __name__ == "__main__":
     try:

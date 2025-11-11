@@ -19,7 +19,7 @@ from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
 from clinicai.adapters.db.mongo.repositories.patient_repository import MongoPatientRepository
 from clinicai.adapters.db.mongo.repositories.visit_repository import MongoVisitRepository
 from clinicai.adapters.db.mongo.repositories.audio_repository import AudioRepository
-from clinicai.adapters.external.transcription_service_openai import OpenAITranscriptionService
+from clinicai.api.deps import get_transcription_service
 from clinicai.application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from clinicai.application.dto.patient_dto import AudioTranscriptionRequest
 from clinicai.core.config import get_settings
@@ -37,7 +37,7 @@ class TranscriptionWorker:
         self.patient_repo = MongoPatientRepository()
         self.visit_repo = MongoVisitRepository()
         self.audio_repo = AudioRepository()
-        self.transcription_service = OpenAITranscriptionService()
+        self.transcription_service = get_transcription_service()  # Uses same service selection as API
         self.settings = get_settings()
         
         # Worker configuration

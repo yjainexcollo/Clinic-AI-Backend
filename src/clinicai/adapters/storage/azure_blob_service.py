@@ -236,18 +236,44 @@ class AzureBlobStorageService:
             if expires_in_hours is None:
                 expires_in_hours = self.settings.default_expiry_hours
             
+            # Extract account_key and account_name from connection_string if not provided directly
+            account_key = self.settings.account_key
+            account_name = self.settings.account_name
+            
+            if not account_key and self.settings.connection_string:
+                # Parse connection string to extract account_key
+                # Format: DefaultEndpointsProtocol=https;AccountName=xxx;AccountKey=xxx;EndpointSuffix=core.windows.net
+                conn_parts = self.settings.connection_string.split(';')
+                for part in conn_parts:
+                    if part.startswith('AccountKey='):
+                        account_key = part.split('=', 1)[1]
+                    elif part.startswith('AccountName=') and not account_name:
+                        account_name = part.split('=', 1)[1]
+            
+            if not account_key:
+                raise ValueError(
+                    "Azure Blob Storage account_key is required for generating signed URLs. "
+                    "Either set AZURE_BLOB_ACCOUNT_KEY or ensure AZURE_BLOB_CONNECTION_STRING contains AccountKey."
+                )
+            
+            if not account_name:
+                raise ValueError(
+                    "Azure Blob Storage account_name is required for generating signed URLs. "
+                    "Either set AZURE_BLOB_ACCOUNT_NAME or ensure AZURE_BLOB_CONNECTION_STRING contains AccountName."
+                )
+            
             # Generate SAS token
             sas_token = generate_blob_sas(
-                account_name=self.settings.account_name,
+                account_name=account_name,
                 container_name=self.settings.container_name,
                 blob_name=blob_path,
-                account_key=self.settings.account_key,
+                account_key=account_key,
                 permission=BlobSasPermissions(read=True) if permissions == "r" else BlobSasPermissions(read=True, write=True),
                 expiry=datetime.utcnow() + timedelta(hours=expires_in_hours)
             )
             
             # Generate signed URL
-            blob_url = f"https://{self.settings.account_name}.blob.core.windows.net/{self.settings.container_name}/{blob_path}"
+            blob_url = f"https://{account_name}.blob.core.windows.net/{self.settings.container_name}/{blob_path}"
             signed_url = f"{blob_url}?{sas_token}"
             
             logger.info(f"✅ Generated signed URL for: {blob_path}")

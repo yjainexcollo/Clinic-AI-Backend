@@ -22,166 +22,7 @@ router = APIRouter(prefix="/transcription", tags=["transcription"])
 logger = logging.getLogger("clinicai")
 
 
-async def _process_transcript_with_llm(
-    raw_transcript: str,
-    language: str = "en"
-) -> Optional[List[Dict[str, str]]]:
-    """
-    Process raw transcript with LLM to create structured dialogue.
-    Uses the SAME robust processing logic as visit-based transcription.
-    """
-    if not raw_transcript or not raw_transcript.strip():
-        return None
-    
-    try:
-        settings = get_settings()
-        from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
-        from ...core.azure_openai_client import create_azure_openai_client
-        
-        # Create a minimal use case instance to reuse the robust processing method
-        # The processing method doesn't use repositories, so we create minimal mock objects
-        class MockRepo:
-            """Minimal mock repository that won't be used by processing methods."""
-            pass
-        
-        # Create use case instance with mock repos (only processing method will be used)
-        use_case = TranscribeAudioUseCase(
-            patient_repository=MockRepo(),  # type: ignore
-            visit_repository=MockRepo(),  # type: ignore
-            transcription_service=MockRepo()  # type: ignore
-        )
-        
-        # Use Azure OpenAI client
-        azure_client = create_azure_openai_client(enable_cache=False)
-        client = azure_client.client
-        
-        # Use the same robust processing method as visit-based transcription
-        logger.info(f"Using _process_transcript_with_chunking (same as visit-based) for {len(raw_transcript)} chars")
-        structured_content = await use_case._process_transcript_with_chunking(
-            client=client,
-            raw_transcript=raw_transcript,
-            settings=settings,
-            logger=logger,
-            language=language
-        )
-        
-        if not structured_content or structured_content.strip() == "":
-            logger.warning("LLM processing returned empty content, trying fallback")
-            # Fallback to structure_dialogue_from_text with Azure OpenAI
-            dialogue = await structure_dialogue_from_text(
-                raw_transcript,
-                model=settings.azure_openai.deployment_name,
-                azure_endpoint=settings.azure_openai.endpoint,
-                azure_api_key=settings.azure_openai.api_key,
-                language=language
-            )
-            if dialogue and isinstance(dialogue, list):
-                logger.info(f"Fallback processing returned {len(dialogue)} dialogue turns")
-                return dialogue
-            return None
-        
-        # Parse the structured content (same logic as visit-based)
-        cleaned_content = structured_content.strip()
-        
-        # If content doesn't start with [ or {, try to find the JSON part
-        if not cleaned_content.startswith(("{", "[")):
-            start_idx = cleaned_content.find("[")
-            if start_idx == -1:
-                start_idx = cleaned_content.find("{")
-            if start_idx != -1:
-                cleaned_content = cleaned_content[start_idx:]
-        
-        parsed = None
-        recovery_method = None
-        
-        # Strategy 1: Try standard JSON parsing
-        try:
-            parsed = json.loads(cleaned_content)
-            recovery_method = "standard_json"
-        except json.JSONDecodeError:
-            # Strategy 2: Try to recover partial JSON using use case method
-            try:
-                recovered = use_case._recover_partial_json(cleaned_content, logger)
-                if recovered:
-                    parsed = recovered
-                    recovery_method = "partial_recovery"
-                else:
-                    # Strategy 3: Try to fix truncated JSON arrays
-                    if cleaned_content.startswith("[") and not cleaned_content.endswith("]"):
-                        logger.warning("JSON appears truncated, attempting to fix...")
-                        last_complete_idx = cleaned_content.rfind("},")
-                        if last_complete_idx != -1:
-                            cleaned_content = cleaned_content[: last_complete_idx + 1] + "]"
-                        else:
-                            cleaned_content = cleaned_content + "]"
-                        try:
-                            parsed = json.loads(cleaned_content)
-                            recovery_method = "truncation_fix"
-                        except json.JSONDecodeError:
-                            parsed = None
-                    
-                    # Strategy 4: Extract valid objects using regex
-                    if not parsed:
-                        recovered = use_case._recover_partial_json(structured_content, logger)
-                        if recovered:
-                            parsed = recovered
-                            recovery_method = "regex_extraction"
-            except Exception as recovery_error:
-                logger.warning(f"Error in recovery methods: {recovery_error}")
-        
-        if parsed and isinstance(parsed, list):
-            # Validate dialogue format (same as visit-based)
-            if all(
-                isinstance(item, dict)
-                and len(item) == 1
-                and list(item.keys())[0] in ["Doctor", "Patient", "Paciente"]  # Support Spanish
-                for item in parsed
-            ):
-                logger.info(
-                    f"Successfully parsed structured dialogue with {len(parsed)} turns (recovery method: {recovery_method})"
-                )
-                return parsed
-            else:
-                logger.warning(f"Parsed content is not valid dialogue format. Type: {type(parsed)}, Content: {cleaned_content[:200]}...")
-        else:
-            logger.warning("Failed to parse structured content. Recovery methods exhausted.")
-            if parsed is not None:
-                logger.warning(f"Parsed type: {type(parsed)}, Content: {str(parsed)[:200]}...")
-        
-        # Final fallback
-        logger.warning("All parsing strategies failed, trying structure_dialogue_from_text as last resort")
-        settings = get_settings()
-        dialogue = await structure_dialogue_from_text(
-            raw_transcript,
-            model=settings.azure_openai.deployment_name,
-            azure_endpoint=settings.azure_openai.endpoint,
-            azure_api_key=settings.azure_openai.api_key,
-            language=language
-        )
-        if dialogue and isinstance(dialogue, list):
-            logger.info(f"Fallback structure_dialogue_from_text returned {len(dialogue)} dialogue turns")
-            return dialogue
-        
-        return None
-    except Exception as e:
-        logger.error(f"Error processing transcript with LLM: {e}", exc_info=True)
-        # Last resort fallback
-        try:
-            settings = get_settings()
-            dialogue = await structure_dialogue_from_text(
-                raw_transcript,
-                model=settings.azure_openai.deployment_name,
-                azure_endpoint=settings.azure_openai.endpoint,
-                azure_api_key=settings.azure_openai.api_key,
-                language=language
-            )
-            if dialogue and isinstance(dialogue, list):
-                logger.info(f"Exception fallback returned {len(dialogue)} dialogue turns")
-                return dialogue
-        except Exception as fallback_error:
-            logger.error(f"Fallback also failed: {fallback_error}", exc_info=True)
-        return None
-
+# LLM processing removed - Azure Speech Service provides structured dialogue directly with speaker diarization
 
 class AdhocTranscriptionResponse(BaseModel):
     transcript: str
@@ -204,12 +45,30 @@ async def transcribe_audio_adhoc(
     request: Request,
     transcription_service: TranscriptionServiceDep,
     audio_repo: AudioRepositoryDep,
-    audio_file: UploadFile = File(...),
-    language: str = Form("en"),
+    audio_file: Optional[UploadFile] = File(None),
+    language: Optional[str] = Form("en"),
 ):
-    logger.info(f"Adhoc transcription request: filename={audio_file.filename}, content_type={audio_file.content_type}, language={language}")
+    """Transcribe audio file (adhoc - not tied to a visit)."""
+    logger.info(f"=== Adhoc transcription request received ===")
+    logger.info(f"  Content-Type: {request.headers.get('content-type', 'not set')}")
+    logger.info(f"  Filename: {audio_file.filename if audio_file else 'None'}")
     
-    if not audio_file.filename:
+    # Handle case where file might not be in the expected field name
+    if audio_file is None or not audio_file.filename:
+        try:
+            form = await request.form()
+            # Try common field names
+            for field_name in ["audio_file", "file", "audio", "file_upload", "upload"]:
+                if field_name in form:
+                    file_item = form[field_name]
+                    if isinstance(file_item, UploadFile):
+                        audio_file = file_item
+                        logger.info(f"Found audio file in field: {field_name}")
+                        break
+        except Exception as e:
+            logger.warning(f"Failed to parse form data: {e}")
+    
+    if audio_file is None or not audio_file.filename:
         logger.error("No audio file filename provided")
         return fail(request, error="NO_AUDIO_FILE", message="No audio file provided")
 
@@ -234,10 +93,31 @@ async def transcribe_audio_adhoc(
         await audio_file.seek(0)
         
         # Create temp file for transcription
-        suffix = f".{(audio_file.filename or 'audio').split('.')[-1]}"
+        # Extract file extension properly (handle filenames with or without extensions)
+        filename = audio_file.filename or 'audio'
+        if '.' in filename:
+            file_ext = filename.split('.')[-1].lower()
+            # Normalize common extensions
+            # MPEG/MPG audio files are typically MP3 format, so convert to .mp3 for Azure Speech Service
+            if file_ext in ['mpeg', 'mpg']:
+                file_ext = 'mp3'  # Convert to .mp3 since Azure Speech Service accepts .mp3 but not .mpeg
+            suffix = f".{file_ext}"
+        else:
+            # No extension - try to infer from content type
+            content_type = audio_file.content_type or ""
+            if 'mp3' in content_type or 'mpeg' in content_type:
+                suffix = ".mp3"
+            elif 'wav' in content_type:
+                suffix = ".wav"
+            elif 'm4a' in content_type or 'mp4' in content_type:
+                suffix = ".m4a"
+            else:
+                suffix = ".mp3"  # Default fallback
+        logger.info(f"Creating temp file with suffix: {suffix} (from filename: {filename})")
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file_path = temp_file.name
             temp_file.write(audio_data)
+            logger.info(f"Temp file created: {temp_file_path}")
 
         # Validate and transcribe
         try:
@@ -247,34 +127,58 @@ async def transcribe_audio_adhoc(
             if not meta.get("is_valid"):
                 logger.error(f"Audio validation failed: {meta}")
                 return fail(request, error="INVALID_AUDIO", message=meta.get("error") or "Invalid audio")
-        except HTTPException:
+        except HTTPException as e:
             raise
         except Exception as e:
             logger.warning(f"Audio validation error: {e}")
 
+        logger.info(f"Starting transcription for file: {temp_file_path}, language: {language}")
         result = await transcription_service.transcribe_audio(temp_file_path, language=language)
         
         raw_transcript = result.get("transcript") or ""
-        logger.info(f"Whisper transcription completed. Transcript length: {len(raw_transcript)} characters")
+        logger.info(f"=== Transcription completed. Transcript length: {len(raw_transcript)} characters ===")
         
         if not raw_transcript or raw_transcript.strip() == "":
-            return fail(request, error="EMPTY_TRANSCRIPT", message="Whisper transcription returned empty transcript")
+            logger.error("=== ERROR: Empty transcript returned - stopping before database save ===")
+            return fail(request, error="EMPTY_TRANSCRIPT", message="Transcription returned empty transcript")
 
-        # Automatically process transcript with LLM to create structured dialogue (like visit-based)
-        logger.info("Starting LLM processing for transcript cleaning and structuring (visit-based flow)")
-        logger.info(f"Raw transcript preview: {raw_transcript[:200]}...")
-        structured_dialogue = await _process_transcript_with_llm(raw_transcript, language=language)
+        # Azure Speech Service provides structured dialogue with speaker diarization
+        pre_structured_dialogue = result.get("structured_dialogue")
+        speaker_info = result.get("speaker_labels", {})
+        
+        if not pre_structured_dialogue or not isinstance(pre_structured_dialogue, list):
+            logger.error(f"=== ERROR: No structured dialogue - stopping before database save ===")
+            logger.error(f"  pre_structured_dialogue type: {type(pre_structured_dialogue)}, value: {pre_structured_dialogue}")
+            return fail(
+                request, 
+                error="NO_STRUCTURED_DIALOGUE", 
+                message="Azure Speech Service did not provide structured dialogue. Ensure speaker diarization is enabled."
+            )
+        
+        # Map speakers from Azure Speech Service to Doctor/Patient
+        logger.info(f"Using pre-structured dialogue from Azure Speech Service ({len(pre_structured_dialogue)} turns)")
+        from ...application.utils.speaker_mapping import map_speakers_to_doctor_patient
+        structured_dialogue = map_speakers_to_doctor_patient(
+            pre_structured_dialogue,
+            speaker_info=speaker_info,
+            language=language
+        )
+        logger.info(f"Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns")
         
         if structured_dialogue:
-            logger.info(f"✅ Successfully created structured dialogue with {len(structured_dialogue)} turns")
+            logger.info(f"✅ Successfully mapped structured dialogue with {len(structured_dialogue)} turns")
         else:
-            logger.error("❌ LLM processing did not return structured dialogue - this should not happen with visit-based flow!")
-            logger.error("Check logs above for processing errors. Continuing with raw transcript only.")
+            logger.error("❌ Failed to map structured dialogue from Azure Speech Service")
+            return fail(request, error="DIALOGUE_MAPPING_FAILED", message="Failed to map speakers to Doctor/Patient")
 
         # Save audio file to database
+        logger.info(f"=== Starting database save operations ===")
+        logger.info(f"Audio data size: {len(audio_data)} bytes")
+        logger.info(f"Filename: {audio_file.filename}")
+        logger.info(f"Content type: {audio_file.content_type}")
         audio_file_record = None
         try:
-            logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
+            logger.info(f"Calling audio_repo.create_audio_file()...")
             audio_file_record = await audio_repo.create_audio_file(
                 audio_data=audio_data,
                 filename=audio_file.filename or "unknown_audio",
@@ -282,15 +186,24 @@ async def transcribe_audio_adhoc(
                 audio_type="adhoc",
                 duration_seconds=result.get("duration"),
             )
-            logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
+            logger.info(f"✅ Audio file saved to database: {audio_file_record.audio_id}")
+            logger.info(f"   Audio ID: {audio_file_record.audio_id}")
+            logger.info(f"   Filename: {audio_file_record.filename}")
+            logger.info(f"   File size: {audio_file_record.file_size} bytes")
         except Exception as e:
-            logger.error(f"Failed to save audio file to database: {e}")
             import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
-            # Continue without failing the transcription
+            error_traceback = traceback.format_exc()
+            logger.error(f"❌ Failed to save audio file to database: {e}")
+            logger.error(f"Full traceback: {error_traceback}")
+            # Don't fail the request, but log prominently so we can debug
 
         # Persist ad-hoc transcript with structured dialogue
+        logger.info(f"=== Attempting to save adhoc transcript to database ===")
+        logger.info(f"Transcript length: {len(raw_transcript)} characters")
+        logger.info(f"Structured dialogue turns: {len(structured_dialogue)}")
+        adhoc_id = None
         try:
+            logger.info(f"Creating AdhocTranscriptMongo document...")
             doc = AdhocTranscriptMongo(
                 transcript=raw_transcript,
                 structured_dialogue=structured_dialogue,  # Save structured dialogue automatically
@@ -302,25 +215,48 @@ async def transcribe_audio_adhoc(
                 filename=audio_file.filename or None,
                 audio_file_path=None,  # No longer using file paths
             )
+            logger.info(f"Calling doc.insert()...")
             await doc.insert()
-            result["adhoc_id"] = str(doc.id)
+            adhoc_id = str(doc.id)
+            result["adhoc_id"] = adhoc_id
+            logger.info(f"✅ Adhoc transcript saved to database: {adhoc_id}")
+            logger.info(f"   MongoDB ID: {doc.id}")
+            logger.info(f"   Filename: {doc.filename}")
             
             # Link audio file to adhoc transcript if we have both
             if audio_file_record:
-                await audio_repo.link_audio_to_adhoc(audio_file_record.audio_id, str(doc.id))
-                logger.info(f"Linked audio file {audio_file_record.audio_id} to adhoc transcript {doc.id}")
+                logger.info(f"Linking audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}...")
+                link_success = await audio_repo.link_audio_to_adhoc(audio_file_record.audio_id, adhoc_id)
+                if link_success:
+                    logger.info(f"✅ Linked audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
+                else:
+                    logger.warning(f"⚠️ Failed to link audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
+            else:
+                logger.warning(f"⚠️ No audio_file_record to link to adhoc transcript")
                 
         except Exception as e:
-            logger.error(f"Failed to persist adhoc transcript: {e}")
-            pass
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"❌ Failed to persist adhoc transcript: {e}")
+            logger.error(f"Full traceback: {error_traceback}")
+            # Don't fail the request, but log prominently so we can debug
 
         # Return response with both raw transcript and structured dialogue
+        logger.info(f"=== Preparing response. Audio saved: {audio_file_record is not None}, Adhoc saved: {adhoc_id is not None} ===")
         response_data = {
             **result,
             "filename": audio_file.filename or None,
             "structured_dialogue": structured_dialogue,  # Include structured dialogue in response
         }
+        logger.info(f"=== Returning successful response ===")
         return ok(request, data=AdhocTranscriptionResponse(**response_data))
+    except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        logger.error(f"=== UNEXPECTED ERROR in transcribe_audio_adhoc ===")
+        logger.error(f"Error: {e}")
+        logger.error(f"Full traceback: {error_traceback}")
+        raise
     finally:
         try:
             if temp_file_path and os.path.exists(temp_file_path):

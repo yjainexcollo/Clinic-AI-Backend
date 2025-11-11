@@ -72,17 +72,28 @@ def get_transcription_service() -> TranscriptionService:
         from clinicai.core.config import get_settings
         settings = get_settings()
         
-        # Check if we should use local Whisper or OpenAI Whisper API
-        transcription_service_type = os.getenv("TRANSCRIPTION_SERVICE", "openai").lower()
+        # Check which transcription service to use
+        transcription_service_type = os.getenv("TRANSCRIPTION_SERVICE", "azure_speech").lower()
         
-        if transcription_service_type == "local":
-            print("Using local Whisper transcription service")
-            # Lazy import to avoid importing whisper if not needed
-            from clinicai.adapters.external.transcription_service_whisper import WhisperTranscriptionService
-            _TRANSCRIPTION_SERVICE_SINGLETON = WhisperTranscriptionService()
+        if transcription_service_type == "azure_speech":
+            print("Using Azure Speech Service transcription (batch with speaker diarization)")
+            try:
+                from clinicai.adapters.external.transcription_service_azure_speech import AzureSpeechTranscriptionService
+                _TRANSCRIPTION_SERVICE_SINGLETON = AzureSpeechTranscriptionService()
+            except ImportError as e:
+                print(f"⚠️  Azure Speech Service not available: {e}")
+                raise ValueError(
+                    "Azure Speech Service is required. Please install required packages and configure "
+                    "AZURE_SPEECH_SUBSCRIPTION_KEY and AZURE_SPEECH_REGION."
+                )
+            except ValueError as e:
+                print(f"⚠️  Azure Speech Service configuration error: {e}")
+                raise
         else:
-            print("Using OpenAI Whisper API transcription service")
-            _TRANSCRIPTION_SERVICE_SINGLETON = OpenAITranscriptionService()
+            raise ValueError(
+                f"Invalid TRANSCRIPTION_SERVICE: {transcription_service_type}. "
+                "Only 'azure_speech' is supported. Please set TRANSCRIPTION_SERVICE=azure_speech"
+            )
     
     return _TRANSCRIPTION_SERVICE_SINGLETON
 

@@ -150,7 +150,6 @@ class ServiceNames:
 
     # External services
     OPENAI_CLIENT = "openai_client"
-    MISTRAL_CLIENT = "mistral_client"
     DEEPGRAM_CLIENT = "deepgram_client"
 
     # Cache services

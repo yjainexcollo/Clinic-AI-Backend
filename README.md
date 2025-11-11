@@ -9,7 +9,7 @@ A comprehensive medical consultation platform that provides AI-powered patient i
 - **Intelligent Intake**: AI-powered adaptive questioning system with doctor-configurable preferences
 - **Audio Transcription**: Convert consultation audio to text using OpenAI Whisper (local or API)
 - **SOAP Notes**: Generate structured medical notes from transcripts using OpenAI
-- **Prescription Analysis**: Extract structured data from prescription images using Mistral AI
+- **Prescription Analysis**: Extract structured data from prescription images using Azure OpenAI
 - **Multi-language Support**: English and Spanish language support throughout the platform
 - **Doctor Preferences**: Configurable intake session parameters and question categories
 
@@ -57,7 +57,7 @@ This backend follows **Clean Architecture** principles with clear separation of 
 │  │   Adapters      │  │   External      │  │   Database   │ │
 │  │   (MongoDB,     │  │   Services      │  │   (Beanie    │ │
 │  │    OpenAI,      │  │   (OpenAI,      │  │    ODM)      │ │
-│  │    Mistral)     │  │    Mistral)     │  │              │ │
+│  │    Azure)       │  │    Azure)       │  │              │ │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -83,7 +83,7 @@ This backend follows **Clean Architecture** principles with clear separation of 
 
 ### AI & External Services
 - **OpenAI**: Question generation, SOAP notes, post-visit summaries, and transcription
-- **Mistral AI**: Prescription image analysis and OCR
+- **Azure OpenAI**: Prescription image analysis and OCR
 - **Whisper**: Audio transcription (local or OpenAI API)
 
 ### Development & Deployment
@@ -145,7 +145,6 @@ backend/
 - Docker & Docker Compose
 - MongoDB (local or cloud)
 - OpenAI API key
-- Mistral API key (optional, for prescription analysis)
 
 ### Environment Setup
 
@@ -167,8 +166,7 @@ backend/
    MONGODB_URL=mongodb://localhost:27017/clinicai
    
    # Optional
-   MISTRAL_API_KEY=your_mistral_api_key
-   TRANSCRIPTION_SERVICE=openai  # or "local" for Whisper
+   TRANSCRIPTION_SERVICE=azure_speech  # Azure Speech Service with speaker diarization
    ```
 
 ### Local Development
@@ -296,7 +294,6 @@ curl -X POST "http://localhost:8000/notes/transcribe" \
 |----------|-------------|---------|----------|
 | `OPENAI_API_KEY` | OpenAI API key for AI services | - | Yes |
 | `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017/clinicai` | Yes |
-| `MISTRAL_API_KEY` | Mistral API key for prescription analysis | - | No |
 | `TRANSCRIPTION_SERVICE` | Transcription service type (`openai` or `local`) | `openai` | No |
 | `CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000"]` | No |
 | `LOG_LEVEL` | Logging level | `INFO` | No |
@@ -308,14 +305,6 @@ curl -X POST "http://localhost:8000/notes/transcribe" \
 OPENAI_MODEL = "gpt-4"  # Model for text generation
 OPENAI_TEMPERATURE = 0.3  # Response creativity
 OPENAI_MAX_TOKENS = 2000  # Maximum response length
-```
-
-#### Mistral Settings
-```python
-MISTRAL_VISION_MODEL = "pixtral-12b-2409"  # Vision model for OCR
-MISTRAL_CHAT_MODEL = "mistral-large-latest"  # Chat model for parsing
-MISTRAL_MAX_TOKENS = 2000
-MISTRAL_TEMPERATURE = 0.1
 ```
 
 #### Whisper Settings
@@ -514,7 +503,7 @@ For support and questions:
 - Initial release with core functionality
 - Patient management and intake system
 - Audio transcription and SOAP note generation
-- Prescription analysis with Mistral AI
+- Prescription analysis with Azure OpenAI
 - Multi-language support (English/Spanish)
 - Comprehensive API documentation
 

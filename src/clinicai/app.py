@@ -174,11 +174,7 @@ async def lifespan(app: FastAPI):
                     "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
                 )
             
-            if not settings.azure_openai.whisper_deployment_name:
-                raise ValueError(
-                    "Azure OpenAI Whisper deployment name is required. "
-                    "Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
-                )
+            # Azure OpenAI Whisper deployment not required - using Azure Speech Service for transcription
             
             # Validate API key is not empty
             if not settings.azure_openai.api_key or len(settings.azure_openai.api_key.strip()) == 0:
@@ -220,11 +216,11 @@ async def lifespan(app: FastAPI):
             print(f"   Endpoint: {settings.azure_openai.endpoint}")
             print(f"   API Version: {settings.azure_openai.api_version}")
             print(f"   Chat Deployment: {settings.azure_openai.deployment_name} ✓")
-            print(f"   Whisper Deployment: {settings.azure_openai.whisper_deployment_name}")
+            print(f"   Transcription Service: Azure Speech Service (batch with speaker diarization)")
             logging.info(
                 f"Azure OpenAI validated - endpoint={settings.azure_openai.endpoint}, "
                 f"chat_deployment={settings.azure_openai.deployment_name}, "
-                f"whisper_deployment={settings.azure_openai.whisper_deployment_name}"
+                f"transcription_service=azure_speech"
             )
         else:
             # Azure OpenAI is required - fail startup if not configured
@@ -242,7 +238,7 @@ async def lifespan(app: FastAPI):
         logging.warning(f"Azure OpenAI validation error: {e}")
         # Don't fail startup for unexpected errors, but log them
 
-    # Whisper warm-up disabled to reduce startup memory footprint
+    # Azure Speech Service transcription - no warm-up needed
 
     yield
 
@@ -446,14 +442,30 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def pydantic_error_handler(request: Request, exc: RequestValidationError):
         req_id = getattr(request.state, "request_id", None)
-        logging.error(f"ValidationError: {exc.errors()} | request_id={req_id}")
+        error_details = exc.errors()
+        # Log full validation error details for debugging
+        print(f"❌ ValidationError on {request.method} {request.url.path}")
+        print(f"   Error details: {error_details}")
+        print(f"   Request headers: {dict(request.headers)}")
+        print(f"   Content-type: {request.headers.get('content-type', 'not set')}")
+        logging.error(f"ValidationError on {request.method} {request.url.path}: {error_details} | request_id={req_id}")
+        logging.error(f"Request headers: {dict(request.headers)}")
+        logging.error(f"Request content-type: {request.headers.get('content-type', 'not set')}")
+        
+        # Create user-friendly error message
+        error_messages = []
+        for error in error_details:
+            loc = " -> ".join(str(x) for x in error.get("loc", []))
+            msg = error.get("msg", "Validation error")
+            error_messages.append(f"{loc}: {msg}")
+        
         return JSONResponse(
             status_code=422,
             content=ErrorResponse(
                 error="INVALID_INPUT",
-                message="Input validation failed.",
+                message=f"Input validation failed: {'; '.join(error_messages)}",
                 request_id=req_id or "",
-                details={"errors": exc.errors()}
+                details={"errors": error_details, "path": request.url.path}
             ).dict()
         )
 

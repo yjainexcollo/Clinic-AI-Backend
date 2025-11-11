@@ -132,28 +132,6 @@ class LoggingSettings(BaseSettings):
         return v.upper()
 
 
-class WhisperSettings(BaseSettings):
-    """Whisper transcription configuration settings."""
-
-    model_config = SettingsConfigDict(env_prefix="WHISPER_")
-
-    model: str = Field(default="base", description="Whisper model size")
-    language: str = Field(default="en", description="Audio language")
-    medical_context: bool = Field(default=True, description="Enable medical context processing")
-    cache_dir: Optional[str] = Field(
-        default=None,
-        description="Directory to cache Whisper model weights (set to persistent disk on Render)"
-    )
-
-    @validator("model")
-    def validate_model(cls, v: str) -> str:
-        """Validate Whisper model."""
-        valid_models = ["tiny", "base", "small", "medium", "large"]
-        if v not in valid_models:
-            raise ValueError(f"Whisper model must be one of: {valid_models}")
-        return v
-
-
 class AudioSettings(BaseSettings):
     """Audio file processing configuration settings."""
 
@@ -193,31 +171,7 @@ class SoapSettings(BaseSettings):
         return v
 
 
-class MistralSettings(BaseSettings):
-    """Mistral AI configuration settings."""
 
-    model_config = SettingsConfigDict(env_prefix="MISTRAL_")
-
-    api_key: str = Field(default="", description="Mistral API key")
-    vision_model: str = Field(default="pixtral-12b-2409", description="Vision model for image analysis")
-    chat_model: str = Field(default="mistral-large-latest", description="Chat model for text parsing")
-    max_tokens: int = Field(default=2000, description="Maximum tokens for responses")
-    temperature: float = Field(default=0.1, description="Temperature for model responses")
-
-    @validator("api_key")
-    def validate_api_key(cls, v: str) -> str:
-        """Validate Mistral API key format."""
-        # Mistral API keys are alphanumeric strings, no specific prefix required
-        if v and len(v) < 10:
-            raise ValueError("Mistral API key appears to be too short")
-        return v
-
-    @validator("temperature")
-    def validate_temperature(cls, v: float) -> float:
-        """Validate temperature."""
-        if not 0.0 <= v <= 2.0:
-            raise ValueError("Temperature must be between 0.0 and 2.0")
-        return v
 
 
 class FileStorageSettings(BaseSettings):
@@ -303,6 +257,35 @@ class AzureQueueSettings(BaseSettings):
         return v
 
 
+class AzureSpeechSettings(BaseSettings):
+    """Azure Speech Service configuration settings."""
+    
+    model_config = SettingsConfigDict(env_prefix="AZURE_SPEECH_")
+    
+    subscription_key: str = Field(default="", description="Azure Speech Service subscription key")
+    region: str = Field(default="", description="Azure Speech Service region (e.g., 'eastus', 'westus2')")
+    endpoint: str = Field(default="", description="Azure Speech Service endpoint (optional, auto-generated if not provided)")
+    enable_speaker_diarization: bool = Field(default=True, description="Enable speaker diarization (identifies different speakers)")
+    max_speakers: int = Field(default=2, description="Maximum number of speakers to identify (default: 2 for Doctor/Patient)")
+    transcription_mode: str = Field(default="batch", description="Transcription mode: 'batch' (recommended) or 'realtime'")
+    batch_polling_interval: int = Field(default=5, description="Polling interval in seconds for batch transcription status")
+    batch_max_wait_time: int = Field(default=1800, description="Maximum wait time in seconds for batch transcription (30 min)")
+    
+    @validator("region")
+    def validate_region(cls, v: str) -> str:
+        """Validate Azure region format."""
+        if v and not v.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("Invalid Azure region format")
+        return v
+    
+    @validator("transcription_mode")
+    def validate_transcription_mode(cls, v: str) -> str:
+        """Validate transcription mode."""
+        if v.lower() not in ["batch", "realtime"]:
+            raise ValueError("Transcription mode must be 'batch' or 'realtime'")
+        return v.lower()
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -324,14 +307,13 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     cors: CORSSettings = Field(default_factory=CORSSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
-    whisper: WhisperSettings = Field(default_factory=WhisperSettings)
     audio: AudioSettings = Field(default_factory=AudioSettings)
     soap: SoapSettings = Field(default_factory=SoapSettings)
-    mistral: MistralSettings = Field(default_factory=MistralSettings)
     file_storage: FileStorageSettings = Field(default_factory=FileStorageSettings)
     azure_blob: AzureBlobSettings = Field(default_factory=AzureBlobSettings)
     azure_openai: AzureOpenAISettings = Field(default_factory=AzureOpenAISettings)
     azure_queue: AzureQueueSettings = Field(default_factory=AzureQueueSettings)
+    azure_speech: AzureSpeechSettings = Field(default_factory=AzureSpeechSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -349,7 +331,6 @@ class Settings(BaseSettings):
                 key_vault_secrets = {
                     "OPENAI_API_KEY": key_vault.get_secret("OPENAI-API-KEY"),
                     "MONGO_URI": key_vault.get_secret("MONGO-URI"),
-                    "MISTRAL_API_KEY": key_vault.get_secret("MISTRAL-API-KEY"),
                     "ENCRYPTION_KEY": key_vault.get_secret("ENCRYPTION-KEY"),
                     "SECURITY_SECRET_KEY": key_vault.get_secret("SECURITY-SECRET-KEY"),
                     "AZURE_BLOB_CONNECTION_STRING": key_vault.get_secret("AZURE-BLOB-CONNECTION-STRING"),
@@ -381,12 +362,11 @@ class Settings(BaseSettings):
         self.security = SecuritySettings()
         self.cors = CORSSettings()
         self.logging = LoggingSettings()
-        self.whisper = WhisperSettings()
         self.audio = AudioSettings()
         self.soap = SoapSettings()
-        self.mistral = MistralSettings()
         self.file_storage = FileStorageSettings()
         self.azure_queue = AzureQueueSettings()
+        self.azure_speech = AzureSpeechSettings()
 
     @validator("app_env")
     def validate_app_env(cls, v: str) -> str:

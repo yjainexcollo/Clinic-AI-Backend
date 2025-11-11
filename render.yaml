@@ -14,8 +14,6 @@ services:
         value: tiny
       - key: OPENAI_API_KEY
         sync: false
-      - key: MISTRAL_API_KEY
-        sync: false
       - key: MONGO_URI
         value: mongodb+srv://clinicai:clinicai@cluster0.7j6rzof.mongodb.net/
       - key: MONGO_DB_NAME

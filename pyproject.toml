@@ -39,7 +39,6 @@ dependencies = [
     "beanie>=1.23.0",
     "redis>=5.0.0",
     "openai>=1.3.0",
-    "mistralai>=0.0.10",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.6",
@@ -113,7 +112,7 @@ profile = "black"
 multi_line_output = 3
 line_length = 88
 known_first_party = ["clinicai"]
-known_third_party = ["fastapi", "pydantic", "motor", "beanie", "redis", "openai", "mistralai"]
+known_third_party = ["fastapi", "pydantic", "motor", "beanie", "redis", "openai"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -136,7 +135,6 @@ module = [
     "beanie.*",
     "redis.*",
     "openai.*",
-    "mistralai.*",
 ]
 ignore_missing_imports = true
 
