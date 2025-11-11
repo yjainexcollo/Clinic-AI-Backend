@@ -31,6 +31,12 @@ from ...core.utils.crypto import decode_patient_id
 from ..schemas import ErrorResponse
 from ...core.config import get_settings
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
+try:
+    from ...adapters.queue.azure_queue_service import get_azure_queue_service
+    QUEUE_SERVICE_AVAILABLE = True
+except ImportError:
+    QUEUE_SERVICE_AVAILABLE = False
+    logger.warning("Azure Queue Storage not available. Install azure-storage-queue package.")
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
@@ -232,114 +238,70 @@ async def transcribe_audio(
                         }
                     )
             
-            # Audio file will be saved in background task where database context is properly initialized
+            # Save audio file to database first (before queuing)
+            logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
+            audio_file_record = await audio_repo.create_audio_file(
+                audio_data=audio_data,
+                filename=audio_file.filename or "unknown_audio",
+                content_type=audio_file.content_type or "audio/mpeg",
+                patient_id=internal_patient_id,
+                visit_id=visit_id,
+                audio_type="visit",
+            )
+            logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
 
-            # Start transcription session (no longer using file path)
+            # Start transcription session
             visit.start_transcription(None)  # No file path needed
             await visit_repo.save(visit)
             logger.info(f"Started transcription session for patient {internal_patient_id}, visit {visit_id}")
             
+            # Enqueue transcription job to Azure Queue
+            if not QUEUE_SERVICE_AVAILABLE:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "error": "QUEUE_SERVICE_UNAVAILABLE",
+                        "message": "Azure Queue Storage service is not available. Please install azure-storage-queue package.",
+                        "details": {}
+                    }
+                )
+            
+            queue_service = get_azure_queue_service()
+            await queue_service.ensure_queue_exists()  # Ensure queue exists
+            
+            message_id = queue_service.enqueue_transcription_job(
+                patient_id=internal_patient_id,
+                visit_id=visit_id,
+                audio_file_id=audio_file_record.audio_id,
+                language=language
+            )
+            
+            logger.info(f"Transcription job enqueued: message_id={message_id}")
+            
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"Failed to start transcription session: {e}. Continuing with background processing...")
-
-        async def _run_background():
+            logger.error(f"Failed to queue transcription: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": "QUEUE_ERROR", "message": f"Failed to queue transcription: {str(e)}", "details": {}},
+            )
+        finally:
+            # Clean up temp file
             try:
-                logger.info(f"Starting background transcription for patient {internal_patient_id}, visit {visit_id}")
-                
-                # Save audio file to database in background task where database context is properly initialized
-                audio_file_record = None
-                try:
-                    logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
-                    audio_file_record = await audio_repo.create_audio_file(
-                        audio_data=audio_data,
-                        filename=audio_file.filename or "unknown_audio",
-                        content_type=audio_file.content_type or "audio/mpeg",
-                        patient_id=internal_patient_id,
-                        visit_id=visit_id,
-                        audio_type="visit",
-                    )
-                    logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
-                except Exception as e:
-                    logger.error(f"Failed to save audio file to database: {e}")
-                    import traceback
-                    logger.error(f"Full traceback: {traceback.format_exc()}")
-                    # Continue without failing the transcription
-                
-                # Get audio data from database if we have an audio file record
-                if audio_file_record:
-                    logger.info(f"Using audio data from database: {audio_file_record.audio_id}")
-                    # Create a temporary file with the audio data for transcription
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{audio_file_record.filename.split('.')[-1]}") as temp_audio_file:
-                        temp_audio_file.write(audio_data)
-                        temp_audio_path = temp_audio_file.name
-                    
-                    req = AudioTranscriptionRequest(
-                        patient_id=internal_patient_id,
-                        visit_id=visit_id,
-                        audio_file_path=temp_audio_path,
-                        language=language,
-                    )
-                else:
-                    # Fallback to temp file if no database record
-                    logger.info(f"Using temp file path: {temp_file_path}")
-                    req = AudioTranscriptionRequest(
-                        patient_id=internal_patient_id,
-                        visit_id=visit_id,
-                        audio_file_path=temp_file_path,
-                        language=language,
-                    )
-                
-                use_case = TranscribeAudioUseCase(patient_repo, visit_repo, transcription_service)
-                
-                logger.info("Executing transcription use case...")
-                result = await use_case.execute(req)
-                logger.info(f"Transcription completed successfully for patient {internal_patient_id}: {result}")
-                
-                # Update audio file with duration if we have the result
-                if audio_file_record and result.audio_duration:
-                    await audio_repo.update_audio_metadata(
-                        audio_file_record.audio_id,
-                        duration_seconds=result.audio_duration
-                    )
-                    logger.info(f"Updated audio file duration: {result.audio_duration} seconds")
-                
-            except Exception as e:
-                logger.error(f"Background transcription failed for patient {internal_patient_id}, visit {visit_id}: {e}", exc_info=True)
-                # Mark transcription as failed in the database
-                try:
-                    from clinicai.domain.value_objects.patient_id import PatientId
-                    patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
-                    if patient:
-                        from ...domain.value_objects.visit_id import VisitId
-                        visit_id_obj = VisitId(visit_id)
-                        visit = await visit_repo.find_by_patient_and_visit_id(
-                            internal_patient_id, visit_id_obj
-                        )
-                        if visit and visit.transcription_session:
-                            visit.fail_transcription(str(e))
-                            await visit_repo.save(visit)
-                            logger.info(f"Marked transcription as failed for patient {internal_patient_id}")
-                except Exception as db_error:
-                    logger.error(f"Failed to mark transcription as failed in database: {db_error}")
-            finally:
-                try:
-                    # Clean up temp files
-                    if temp_file_path and os.path.exists(temp_file_path):
-                        os.unlink(temp_file_path)
-                        logger.info(f"Cleaned up temp file: {temp_file_path}")
-                    # Clean up any additional temp files created in background
-                    if 'temp_audio_path' in locals() and os.path.exists(temp_audio_path):
-                        os.unlink(temp_audio_path)
-                        logger.info(f"Cleaned up background temp file: {temp_audio_path}")
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to clean up temp files: {cleanup_error}")
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                    logger.info(f"Cleaned up temp file: {temp_file_path}")
+            except Exception as cleanup_error:
+                logger.error(f"Failed to clean up temp file: {cleanup_error}")
 
-        # Schedule background processing
-        asyncio.create_task(_run_background())
-
-        return {"status": "queued", "patient_id": internal_patient_id, "visit_id": visit_id}
+        return {
+            "status": "queued",
+            "patient_id": internal_patient_id,
+            "visit_id": visit_id,
+            "message_id": message_id,
+            "message": "Transcription queued successfully. Poll /notes/transcribe/status/{patient_id}/{visit_id} for status."
+        }
 
     except HTTPException:
         # Reraise HTTPException directly
@@ -350,6 +312,81 @@ async def transcribe_audio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "INTERNAL_ERROR", "message": str(e), "details": {}},
         )
+
+
+@router.get(
+    "/transcribe/status/{patient_id}/{visit_id}",
+    status_code=status.HTTP_200_OK,
+    tags=["Vitals and Transcript Generation"],
+    responses={
+        200: {"description": "Transcription status retrieved successfully"},
+        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_transcription_status(
+    request: Request,
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
+):
+    """Get transcription status for polling."""
+    try:
+        # Decode patient ID
+        if '_' in patient_id:
+            parts = patient_id.split('_', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                internal_patient_id = patient_id
+            else:
+                try:
+                    internal_patient_id = decode_patient_id(patient_id)
+                except Exception:
+                    internal_patient_id = patient_id
+        else:
+            try:
+                internal_patient_id = decode_patient_id(patient_id)
+            except Exception:
+                internal_patient_id = patient_id
+        
+        from ...domain.value_objects.visit_id import VisitId
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(
+            internal_patient_id, visit_id_obj
+        )
+        
+        if not visit:
+            return fail(request, error="VISIT_NOT_FOUND", message="Visit not found")
+        
+        if not visit.transcription_session:
+            return ok(request, data={
+                "status": "pending",
+                "message": "Transcription not started"
+            })
+        
+        transcription_status = visit.transcription_session.transcription_status
+        status_info = {
+            "status": transcription_status,  # pending, processing, completed, failed
+            "progress": "unknown"
+        }
+        
+        if transcription_status == "completed":
+            status_info["transcript_available"] = True
+            status_info["word_count"] = visit.transcription_session.word_count
+            status_info["duration"] = visit.transcription_session.audio_duration_seconds
+            status_info["message"] = "Transcription completed successfully"
+        elif transcription_status == "processing":
+            status_info["message"] = "Transcription in progress"
+        elif transcription_status == "failed":
+            status_info["error"] = visit.transcription_session.error_message
+            status_info["message"] = f"Transcription failed: {visit.transcription_session.error_message}"
+        else:
+            status_info["message"] = f"Transcription status: {transcription_status}"
+        
+        return ok(request, data=status_info)
+    except Exception as e:
+        logger.error(f"Error getting transcription status: {e}", exc_info=True)
+        return fail(request, error="INTERNAL_ERROR", message=str(e))
 
 
 @router.post(
@@ -516,9 +553,9 @@ async def store_vitals(
         
         # Additional status updates for scheduled visits with existing transcripts
         if visit.is_scheduled_workflow() and visit.is_transcription_complete():
-                # If transcript exists, update to soap_generation
-                if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
-                    visit.status = "soap_generation"
+            # If transcript exists, update to soap_generation
+            if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
+                visit.status = "soap_generation"
         
         await visit_repo.save(visit)
         return {"success": True, "message": "Vitals stored", "vitals_id": f"{payload.visit_id}:vitals"}

@@ -1346,9 +1346,9 @@ async def store_vitals(
         
         # Additional status updates for scheduled visits with existing transcripts
         if visit.is_scheduled_workflow() and visit.is_transcription_complete():
-                # If transcript exists, update to soap_generation
-                if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
-                    visit.status = "soap_generation"
+            # If transcript exists, update to soap_generation
+            if visit.status not in ["soap_generation", "prescription_analysis", "completed"]:
+                visit.status = "soap_generation"
         
         # Persist visit (not patient)
         await visit_repo.save(visit)

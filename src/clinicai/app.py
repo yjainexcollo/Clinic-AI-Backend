@@ -114,6 +114,31 @@ async def lifespan(app: FastAPI):
         print(f"⚠️  Azure Blob Storage initialization failed: {e}")
         logging.error(f"Azure Blob Storage failed to initialize: {e}")
 
+    # Initialize Azure Queue Storage and start worker (if enabled)
+    worker_task = None
+    try:
+        try:
+            from .adapters.queue.azure_queue_service import get_azure_queue_service
+            queue_service = get_azure_queue_service()
+            await queue_service.ensure_queue_exists()
+            print("✅ Azure Queue Storage initialized")
+            
+            # Start transcription worker if enabled (set ENABLE_TRANSCRIPTION_WORKER=true)
+            if os.getenv("ENABLE_TRANSCRIPTION_WORKER", "false").lower() == "true":
+                from .workers.transcription_worker import TranscriptionWorker
+                worker = TranscriptionWorker()
+                worker_task = asyncio.create_task(worker.run())
+                print("✅ Transcription worker started")
+                logging.info("Transcription worker started as background task")
+            else:
+                print("ℹ️  Transcription worker disabled (set ENABLE_TRANSCRIPTION_WORKER=true to enable)")
+        except ImportError:
+            print("⚠️  Azure Queue Storage not available (azure-storage-queue package not installed)")
+            logging.warning("Azure Queue Storage not available - install azure-storage-queue package")
+    except Exception as e:
+        print(f"⚠️  Azure Queue Storage initialization failed: {e}")
+        logging.error(f"Azure Queue Storage failed to initialize: {e}")
+
     # Initialize HIPAA audit logger
     try:
         audit_logger = get_audit_logger()
@@ -223,6 +248,16 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("🛑 Shutting down Clinic-AI Intake Assistant")
+    
+    # Stop transcription worker if running
+    if worker_task:
+        print("🛑 Stopping transcription worker...")
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+        print("✅ Transcription worker stopped")
 
 
 def create_app() -> FastAPI:
