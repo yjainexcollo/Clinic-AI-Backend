@@ -118,7 +118,11 @@ async def transcribe_audio(
     # Set IDs in request state for HIPAA audit middleware
     request.state.audit_patient_id = patient_id
     request.state.audit_visit_id = visit_id
-    
+    # Visible console breadcrumbs
+    print("🔵 === Visit transcription request received ===")
+    print(f"🔵 patient_id={patient_id}, visit_id={visit_id}, language={language}")
+    print(f"🔵 Content-Type: {request.headers.get('content-type', 'not set')}")
+    print(f"🔵 Filename: {audio_file.filename if audio_file else 'None'}")
     logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}, language: {language}")
 
     if not audio_file.filename:
@@ -170,6 +174,7 @@ async def transcribe_audio(
     audio_data = b""
     audio_file_record = None  # Initialize outside try block for background task access
     try:
+        print("🔵 Writing upload to temp file (streaming 1MB chunks)...")
         ext = (audio_file.filename or 'audio').split('.')[-1]
         # Normalize common MPEG container cases
         if ext.lower() in {"mpeg", "mpg"}:
@@ -183,6 +188,8 @@ async def transcribe_audio(
                     break
                 temp_file.write(chunk)
                 audio_data += chunk
+        print(f"🔵 Temp file created: {temp_file_path}")
+        print(f"🔵 Total bytes read: {len(audio_data)}")
 
         # Mark visit as queued if possible (best-effort via use case during processing)
         try:
@@ -249,11 +256,13 @@ async def transcribe_audio(
                 audio_type="visit",
             )
             logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
+            print(f"✅ Audio file saved to database: {audio_file_record.audio_id}")
 
             # Start transcription session
             visit.start_transcription(None)  # No file path needed
             await visit_repo.save(visit)
             logger.info(f"Started transcription session for patient {internal_patient_id}, visit {visit_id}")
+            print(f"🔵 Visit transcription status set to started for {internal_patient_id}/{visit_id}")
             
             # Enqueue transcription job to Azure Queue
             if not QUEUE_SERVICE_AVAILABLE:
@@ -277,6 +286,7 @@ async def transcribe_audio(
             )
             
             logger.info(f"Transcription job enqueued: message_id={message_id}")
+            print(f"✅ Transcription job enqueued: message_id={message_id}")
             
         except HTTPException:
             raise
@@ -292,8 +302,10 @@ async def transcribe_audio(
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
                     logger.info(f"Cleaned up temp file: {temp_file_path}")
+                    print(f"🔵 Cleaned up temp file: {temp_file_path}")
             except Exception as cleanup_error:
                 logger.error(f"Failed to clean up temp file: {cleanup_error}")
+                print(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
         return {
             "status": "queued",
@@ -711,12 +723,14 @@ async def get_transcript(request: Request, patient_id: str, visit_id: str, patie
             raise VisitNotFoundError(visit_id)
 
         # If transcript not ready, or transcription is in-progress, advertise processing with Retry-After
+        # Status values: "pending" (not started), "processing" (in progress), "completed" (done), "failed" (error)
+        transcription_status = getattr(visit.transcription_session, "transcription_status", "").lower() if visit.transcription_session else "pending"
         if (
             not visit.transcription_session
             or not getattr(visit.transcription_session, "transcript", None)
-            or getattr(visit.transcription_session, "transcription_status", "").lower() in {"queued", "processing", "in_progress"}
+            or transcription_status in {"pending", "processing"}
         ):
-            headers = {"Retry-After": "5"}
+            headers = {"Retry-After": "60"}  # 1 minute polling interval
             return FastAPIResponse(content=b"", status_code=status.HTTP_202_ACCEPTED, headers=headers)
 
         # Get the transcription session

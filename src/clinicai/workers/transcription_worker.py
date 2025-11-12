@@ -87,6 +87,8 @@ class TranscriptionWorker:
         retry_count = job_data.get("retry_count", 0)
         
         logger.info(f"Processing transcription job: patient={patient_id}, visit={visit_id}, audio_file={audio_file_id}")
+        print("🔵 === Worker: Processing transcription job ===")
+        print(f"🔵 patient_id={patient_id}, visit_id={visit_id}, audio_file_id={audio_file_id}, language={language}, retry={retry_count}")
         
         temp_file_path = None
         visibility_task = None
@@ -96,6 +98,7 @@ class TranscriptionWorker:
             audio_data = await self.get_audio_data(audio_file_id)
             if not audio_data:
                 raise ValueError(f"Failed to retrieve audio data for {audio_file_id}")
+            print(f"🔵 Worker: downloaded audio data size = {len(audio_data)} bytes")
             
             # Get audio file metadata to determine extension
             audio_file = await self.audio_repo.get_audio_file_by_id(audio_file_id)
@@ -107,9 +110,11 @@ class TranscriptionWorker:
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as temp_file:
                 temp_file.write(audio_data)
                 temp_file_path = temp_file.name
+            print(f"🔵 Worker: temp file created at {temp_file_path}")
             
             # Extend message visibility periodically during processing
             async def extend_visibility():
+                nonlocal pop_receipt
                 while True:
                     await asyncio.sleep(300)  # Every 5 minutes
                     try:
@@ -119,7 +124,6 @@ class TranscriptionWorker:
                             visibility_timeout=self.settings.azure_queue.visibility_timeout
                         )
                         logger.debug(f"Extended message visibility: {message_id}")
-                        nonlocal pop_receipt
                         pop_receipt = new_pop_receipt
                     except Exception as e:
                         logger.warning(f"Failed to extend visibility: {e}")
@@ -145,8 +149,10 @@ class TranscriptionWorker:
                 
                 # Process transcription (this can take 10+ minutes)
                 logger.info(f"Starting transcription processing for {patient_id}/{visit_id}")
+                print(f"🔵 Worker: starting transcription for {patient_id}/{visit_id}")
                 result = await use_case.execute(request)
                 logger.info(f"✅ Transcription completed: {result}")
+                print(f"✅ Worker: transcription completed. duration={result.audio_duration}, words={result.word_count}")
                 
                 # Update audio file with duration if we have the result
                 if result.audio_duration:
@@ -155,10 +161,12 @@ class TranscriptionWorker:
                         duration_seconds=result.audio_duration
                     )
                     logger.info(f"Updated audio file duration: {result.audio_duration} seconds")
+                    print(f"🔵 Worker: updated audio duration to {result.audio_duration} seconds")
                 
                 # Delete message from queue (job completed successfully)
                 self.queue_service.delete_message(message_id, pop_receipt)
                 logger.info(f"✅ Job completed and removed from queue: {message_id}")
+                print(f"✅ Worker: job removed from queue: {message_id}")
                 
             finally:
                 # Cancel visibility extension task
@@ -170,14 +178,28 @@ class TranscriptionWorker:
                         pass
                     
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"❌ Transcription job failed: {e}", exc_info=True)
+            logger.error(f"Full error traceback:\n{error_details}")
+            print(f"❌ Worker: transcription job failed: {str(e)}")
+            print(f"❌ Full error traceback:\n{error_details}")
             
             # Cancel visibility task if running
             if visibility_task:
                 visibility_task.cancel()
             
-            # Handle retries
-            if retry_count < self.settings.azure_queue.max_retry_attempts:
+            # Check if this is a permanent error that shouldn't be retried
+            from clinicai.domain.errors import VisitNotFoundError
+            is_permanent_error = isinstance(e, VisitNotFoundError)
+            
+            if is_permanent_error:
+                # Permanent error - delete message immediately (no retries)
+                logger.warning(f"Permanent error detected ({type(e).__name__}), not retrying: {str(e)}")
+                self.queue_service.delete_message(message_id, pop_receipt)
+                logger.error(f"❌ Job failed with permanent error, removed from queue")
+            # Handle retries for transient errors
+            elif retry_count < self.settings.azure_queue.max_retry_attempts:
                 # Re-enqueue with incremented retry count
                 job_data["retry_count"] = retry_count + 1
                 self.queue_service.enqueue_transcription_job(

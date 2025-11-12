@@ -121,15 +121,27 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 raise ValueError("No transcription results returned from Azure Speech Service")
             
             # Log first result structure for debugging
+            print("🔵 === Azure Speech Service Results Debug ===")
+            print(f"🔵 Number of result files: {len(results)}")
             if results:
+                print(f"🔵 First result keys: {list(results[0].keys())}")
                 logger.info(f"First result keys: {list(results[0].keys())}")
                 if "recognizedPhrases" in results[0]:
+                    print(f"🔵 Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
                     logger.info(f"Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
+                    if results[0]['recognizedPhrases']:
+                        print(f"🔵 First phrase keys: {list(results[0]['recognizedPhrases'][0].keys())}")
+                        print(f"🔵 First phrase sample: {str(results[0]['recognizedPhrases'][0])[:200]}")
                 if "combinedRecognizedPhrases" in results[0]:
+                    print(f"🔵 Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
                     logger.info(f"Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
             
             # Process results to extract transcript and speaker information
             transcript_text, structured_dialogue, speaker_info = self._process_transcription_results(results)
+            print("🔵 === Processing Complete ===")
+            print(f"🔵 Transcript length: {len(transcript_text)} characters")
+            print(f"🔵 Structured dialogue turns: {len(structured_dialogue)}")
+            print(f"🔵 Speaker info: {speaker_info}")
             logger.info(f"Processed transcript: {len(transcript_text)} characters, {len(structured_dialogue)} dialogue turns")
             
             # Clean up transcription job
@@ -199,6 +211,14 @@ class AzureSpeechTranscriptionService(TranscriptionService):
     async def _create_transcription_job(self, blob_url: str, locale: str) -> str:
         """Create a batch transcription job."""
         url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
+        
+        # Verify diarization settings
+        if self._settings.azure_speech.enable_speaker_diarization:
+            logger.info(f"✅ Speaker diarization enabled: max_speakers={self._settings.azure_speech.max_speakers}")
+            print(f"🔵 Diarization config: enabled=True, max_speakers={self._settings.azure_speech.max_speakers}")
+        else:
+            logger.warning("⚠️ Speaker diarization is DISABLED in settings!")
+            print("⚠️ WARNING: Speaker diarization is disabled!")
         
         # Configure transcription properties
         properties = {
@@ -340,14 +360,18 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         # Combine all result files
         all_segments = []
         for i, result in enumerate(results):
+            print(f"🔵 Processing result {i+1}/{len(results)}")
             logger.info(f"Processing result {i+1}/{len(results)}")
             if "recognizedPhrases" in result:
                 phrases = result["recognizedPhrases"]
+                print(f"🔵 Found {len(phrases)} recognized phrases in result {i+1}")
                 logger.info(f"Found {len(phrases)} recognized phrases in result {i+1}")
                 all_segments.extend(phrases)
             else:
+                print(f"⚠️ Result {i+1} does not contain 'recognizedPhrases' key. Keys: {list(result.keys())}")
                 logger.warning(f"Result {i+1} does not contain 'recognizedPhrases' key. Keys: {list(result.keys())}")
         
+        print(f"🔵 Total segments collected: {len(all_segments)}")
         logger.info(f"Total segments collected: {len(all_segments)}")
         
         # Sort by offset (time)
@@ -371,6 +395,11 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         speaker_info = {}
         
         logger.info(f"Processing {len(all_segments)} segments")
+        
+        # Diagnostic: Check speaker distribution
+        speaker_ids_found = set()
+        segments_with_speaker = 0
+        segments_without_speaker = 0
         
         for i, segment in enumerate(all_segments):
             # Try different possible field names for text
@@ -398,8 +427,18 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 text = ""
             
             if not text:
+                if i < 3:
+                    print(f"⚠️ Segment {i+1} has no text. Keys: {list(segment.keys())}")
+                    if "nBest" in segment:
+                        print(f"   nBest type: {type(segment['nBest'])}, length: {len(segment['nBest']) if isinstance(segment['nBest'], list) else 'N/A'}")
+                        if isinstance(segment['nBest'], list) and len(segment['nBest']) > 0:
+                            print(f"   nBest[0] keys: {list(segment['nBest'][0].keys()) if isinstance(segment['nBest'][0], dict) else 'Not a dict'}")
+                            print(f"   nBest[0] data: {str(segment['nBest'][0])[:300]}")
                 logger.warning(f"Segment {i+1} has no text. Keys: {list(segment.keys())}")
                 continue
+            else:
+                if i < 3:
+                    print(f"✅ Segment {i+1} has text: {text[:100]}...")
             
             # Get speaker ID if diarization is enabled
             # Speaker ID can be in different places depending on the result structure
@@ -408,6 +447,17 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             # If using nBest format, get speaker from first best
             if speaker_id is None and "nBest" in segment and len(segment["nBest"]) > 0:
                 speaker_id = segment["nBest"][0].get("speaker", None)
+            
+            # Diagnostic tracking
+            if speaker_id is not None:
+                speaker_ids_found.add(speaker_id)
+                segments_with_speaker += 1
+            else:
+                segments_without_speaker += 1
+                if i < 5:  # Log first few segments without speaker
+                    logger.warning(f"Segment {i+1} has no speaker ID. Segment keys: {list(segment.keys())}")
+                    if "nBest" in segment and isinstance(segment.get("nBest"), list) and len(segment.get("nBest", [])) > 0:
+                        logger.warning(f"  nBest[0] keys: {list(segment['nBest'][0].keys()) if isinstance(segment['nBest'][0], dict) else 'N/A'}")
             
             # Build transcript
             transcript_parts.append(text)
@@ -438,6 +488,22 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 })
         
         full_transcript = " ".join(transcript_parts)
+        
+        # Log speaker diagnostics
+        logger.info(f"🔵 Speaker diarization diagnostics:")
+        logger.info(f"   - Unique speakers detected: {len(speaker_ids_found)} ({sorted(speaker_ids_found)})")
+        logger.info(f"   - Segments with speaker ID: {segments_with_speaker}")
+        logger.info(f"   - Segments without speaker ID: {segments_without_speaker}")
+        print(f"🔵 Speaker diarization: {len(speaker_ids_found)} speakers found ({sorted(speaker_ids_found)})")
+        if len(speaker_ids_found) == 1:
+            logger.warning("⚠️ Only one speaker detected. This may indicate:")
+            logger.warning("   1. Audio actually has only one speaker")
+            logger.warning("   2. Speaker diarization not working properly")
+            logger.warning("   3. Audio quality issues preventing speaker separation")
+            print(f"⚠️ Warning: Only one speaker detected in audio")
+        elif len(speaker_ids_found) == 0:
+            logger.warning("⚠️ No speakers detected - diarization may not be enabled or working")
+            print(f"⚠️ Warning: No speakers detected in audio")
         
         return full_transcript, structured_dialogue, speaker_info
     

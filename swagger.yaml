@@ -490,6 +490,32 @@ paths:
         '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '422': {description: Invalid audio file or visit status, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  /notes/transcribe/status/{patient_id}/{visit_id}:
+    get:
+      tags: [Notes]
+      summary: Get transcription status
+      description: Get the current status of a transcription job. Poll this endpoint to check if transcription is complete.
+      operationId: get_transcription_status
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Patient ID (opaque token or internal ID)
+        - name: visit_id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Visit ID
+      responses:
+        '200':
+          description: Transcription status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_TranscriptionStatusResponse'
+        '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/soap/generate:
     post:
       tags: [Notes]
@@ -517,24 +543,32 @@ paths:
     get:
       tags: [Notes]
       summary: Get transcript
-      description: Get transcript for a visit.
+      description: "Get transcript for a visit. Returns 202 Accepted with Retry-After header if transcription is still in progress (status: pending or processing)."
       operationId: get_transcript
       parameters:
         - name: patient_id
           in: path
           required: true
           schema: {type: string}
+          description: Patient ID (opaque token or internal ID)
         - name: visit_id
           in: path
           required: true
           schema: {type: string}
+          description: Visit ID
       responses:
         '200':
-          description: Transcript returned
+          description: Transcript returned (transcription completed)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse_TranscriptionSessionDTO'
+        '202':
+          description: Transcription in progress. Poll again after the Retry-After delay (seconds).
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Number of seconds to wait before polling again
         '404': {description: Transcript not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '422': {description: Invalid input, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/{patient_id}/visits/{visit_id}/soap:
@@ -635,7 +669,12 @@ paths:
   /transcription:
     post:
       tags: [Transcription]
-      summary: Adhoc transcription
+      summary: "Adhoc transcription (Azure\u00A0Speech Service with speaker diarization)"
+      description: |
+        Upload an audio file for batch transcription using Azure Speech Service with built-in speaker diarization.
+        - Preferred form field name: `audio_file` (server also accepts `file`, `audio`, `file_upload`, `upload`).
+        - Optional `language` form field (default: `en`).
+        - Supported upload content types: `audio/*`, `video/mpeg`, `video/webm`, `video/mp4`, or `application/octet-stream`.
       operationId: transcribe_audio_adhoc
       requestBody:
         required: true
@@ -643,10 +682,16 @@ paths:
           multipart/form-data:
               schema:
                 type: object
-              required: [audio_file]
+                required:
+                  - audio_file
                 properties:
-                audio_file: {type: string, format: binary}
-                language: {type: string, default: en}
+                  audio_file:
+                    type: string
+                    format: binary
+                    description: "Audio file to transcribe (.mp3, .wav, .m4a, .flac, .ogg, .webm). The uploaded part may use content-type `audio/*`, `video/mpeg`, `video/webm`, `video/mp4`, or `application/octet-stream`."
+                  language:
+                    type: string
+                  example: en
       responses:
         '200':
           description: Transcription result
@@ -654,24 +699,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse_AdhocTranscriptionResponse'
-        '400': {description: No audio file or validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '422': {description: Invalid file type, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-        '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /transcription/structure:
-    post:
-      tags: [Transcription]
-      summary: Structure transcript text
-      operationId: structure_transcript_text
-      requestBody:
-        required: true
+        '400':
+          description: NO_AUDIO_FILE or INVALID_AUDIO
           content:
             application/json:
               schema:
-              $ref: '#/components/schemas/StructureTextRequest'
-      responses:
-        '200': {description: Structured dialogue returned, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse_Dict'}}}}
-        '400': {description: Empty transcript, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: EMPTY_TRANSCRIPT or NO_STRUCTURED_DIALOGUE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+  # (Deprecated) Previously used for LLM-based dialogue structuring. Now omitted from docs.
   /transcription/adhoc/action-plan:
     post:
       tags: [Transcription]
@@ -1222,7 +1263,10 @@ components:
       properties:
         audio_file_path: {type: string, nullable: true}
         transcript: {type: string, nullable: true}
-        transcription_status: {type: string}
+        transcription_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          description: "Transcription status. Values: pending (not started), processing (in progress), completed (done), failed (error)"
         started_at: {type: string, nullable: true}
         completed_at: {type: string, nullable: true}
         error_message: {type: string, nullable: true}
@@ -1232,6 +1276,43 @@ components:
               type: array
           items: {type: object, additionalProperties: true}
           nullable: true
+    TranscriptionStatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          description: "Transcription status. Values: pending (not started), processing (in progress), completed (done), failed (error)"
+        progress:
+          type: string
+          description: Progress indicator (currently 'unknown' for processing status)
+        message:
+          type: string
+          description: Human-readable status message
+        transcript_available:
+          type: boolean
+          description: Whether transcript is available (only present when status is 'completed')
+        word_count:
+          type: integer
+          description: Number of words in transcript (only present when status is 'completed')
+        duration:
+          type: number
+          description: Audio duration in seconds (only present when status is 'completed')
+        error:
+          type: string
+          nullable: true
+          description: Error message (only present when status is 'failed')
+    ApiResponse_TranscriptionStatusResponse:
+      type: object
+      required: [success, message, timestamp, request_id]
+      properties:
+        success: {type: boolean, example: true}
+        message: {type: string, example: Success}
+        timestamp: {type: string, format: date-time}
+        request_id: {type: string, format: uuid}
+        data:
+          $ref: '#/components/schemas/TranscriptionStatusResponse'
     ApiResponse_TranscriptionSessionDTO:
       type: object
       required: [success, message, timestamp, request_id]
@@ -1457,9 +1538,21 @@ components:
           $ref: '#/components/schemas/NextQuestionResponse'
     AdhocTranscriptionResponse:
       type: object
-      required: [transcript]
+      required: [transcript, structured_dialogue]
       properties:
         transcript: {type: string}
+        structured_dialogue:
+          type: array
+          description: "Array of speaker-attributed dialogue turns (e.g., Doctor/Patient)."
+          items:
+            type: object
+            additionalProperties:
+              type: string
+        speaker_labels:
+          type: object
+          description: "Per-speaker aggregates (e.g., total_segments, total_words) keyed by speaker id"
+          additionalProperties:
+            type: object
         language: {type: string, nullable: true}
         confidence: {type: number, nullable: true}
         duration: {type: number, nullable: true}

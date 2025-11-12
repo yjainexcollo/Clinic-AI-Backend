@@ -49,6 +49,9 @@ async def transcribe_audio_adhoc(
     language: Optional[str] = Form("en"),
 ):
     """Transcribe audio file (adhoc - not tied to a visit)."""
+    print("🔵 === Adhoc transcription request received ===")
+    print(f"🔵 Content-Type: {request.headers.get('content-type', 'not set')}")
+    print(f"🔵 Filename: {audio_file.filename if audio_file else 'None'}")
     logger.info(f"=== Adhoc transcription request received ===")
     logger.info(f"  Content-Type: {request.headers.get('content-type', 'not set')}")
     logger.info(f"  Filename: {audio_file.filename if audio_file else 'None'}")
@@ -87,9 +90,12 @@ async def transcribe_audio_adhoc(
     audio_data = b""
     try:
         # First, read all the audio data
+        print("🔵 Reading audio file data...")
         audio_data = await audio_file.read()
+        print(f"🔵 Read {len(audio_data)} bytes of audio data")
         
         # Reset file pointer for transcription service
+        print("🔵 Resetting file pointer...")
         await audio_file.seek(0)
         
         # Create temp file for transcription
@@ -113,40 +119,54 @@ async def transcribe_audio_adhoc(
                 suffix = ".m4a"
             else:
                 suffix = ".mp3"  # Default fallback
+        print(f"🔵 Creating temp file with suffix: {suffix} (from filename: {filename})")
         logger.info(f"Creating temp file with suffix: {suffix} (from filename: {filename})")
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file_path = temp_file.name
             temp_file.write(audio_data)
+            print(f"🔵 Temp file created: {temp_file_path}")
             logger.info(f"Temp file created: {temp_file_path}")
 
         # Validate and transcribe
         try:
+            print(f"🔵 Validating audio file: {temp_file_path}")
             logger.info(f"Validating audio file: {temp_file_path}")
             meta = await transcription_service.validate_audio_file(temp_file_path)
+            print(f"🔵 Validation result: {meta}")
             logger.info(f"Validation result: {meta}")
             if not meta.get("is_valid"):
+                print(f"❌ Audio validation failed: {meta}")
                 logger.error(f"Audio validation failed: {meta}")
                 return fail(request, error="INVALID_AUDIO", message=meta.get("error") or "Invalid audio")
         except HTTPException as e:
             raise
         except Exception as e:
+            print(f"⚠️ Audio validation error: {e}")
             logger.warning(f"Audio validation error: {e}")
 
+        print(f"🔵 Starting transcription for file: {temp_file_path}, language: {language}")
         logger.info(f"Starting transcription for file: {temp_file_path}, language: {language}")
         result = await transcription_service.transcribe_audio(temp_file_path, language=language)
         
         raw_transcript = result.get("transcript") or ""
+        print(f"🔵 === Transcription completed. Transcript length: {len(raw_transcript)} characters ===")
         logger.info(f"=== Transcription completed. Transcript length: {len(raw_transcript)} characters ===")
         
         if not raw_transcript or raw_transcript.strip() == "":
+            print("❌ === ERROR: Empty transcript returned - stopping before database save ===")
             logger.error("=== ERROR: Empty transcript returned - stopping before database save ===")
             return fail(request, error="EMPTY_TRANSCRIPT", message="Transcription returned empty transcript")
 
         # Azure Speech Service provides structured dialogue with speaker diarization
         pre_structured_dialogue = result.get("structured_dialogue")
         speaker_info = result.get("speaker_labels", {})
+        print("🔵 Extracting structured dialogue from result...")
+        print(f"🔵 pre_structured_dialogue type: {type(pre_structured_dialogue)}, is_list: {isinstance(pre_structured_dialogue, list)}")
+        print(f"🔵 speaker_info: {speaker_info}")
         
         if not pre_structured_dialogue or not isinstance(pre_structured_dialogue, list):
+            print(f"❌ === ERROR: No structured dialogue - stopping before database save ===")
+            print(f"   pre_structured_dialogue type: {type(pre_structured_dialogue)}, value: {pre_structured_dialogue}")
             logger.error(f"=== ERROR: No structured dialogue - stopping before database save ===")
             logger.error(f"  pre_structured_dialogue type: {type(pre_structured_dialogue)}, value: {pre_structured_dialogue}")
             return fail(
@@ -156,28 +176,38 @@ async def transcribe_audio_adhoc(
             )
         
         # Map speakers from Azure Speech Service to Doctor/Patient
+        print(f"🔵 Using pre-structured dialogue from Azure Speech Service ({len(pre_structured_dialogue)} turns)")
         logger.info(f"Using pre-structured dialogue from Azure Speech Service ({len(pre_structured_dialogue)} turns)")
         from ...application.utils.speaker_mapping import map_speakers_to_doctor_patient
+        print("🔵 Mapping speakers to Doctor/Patient...")
         structured_dialogue = map_speakers_to_doctor_patient(
             pre_structured_dialogue,
             speaker_info=speaker_info,
             language=language
         )
+        print(f"🔵 Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns")
         logger.info(f"Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns")
         
         if structured_dialogue:
+            print(f"✅ Successfully mapped structured dialogue with {len(structured_dialogue)} turns")
             logger.info(f"✅ Successfully mapped structured dialogue with {len(structured_dialogue)} turns")
         else:
+            print("❌ Failed to map structured dialogue from Azure Speech Service")
             logger.error("❌ Failed to map structured dialogue from Azure Speech Service")
             return fail(request, error="DIALOGUE_MAPPING_FAILED", message="Failed to map speakers to Doctor/Patient")
 
         # Save audio file to database
+        print("🔵 === Starting database save operations ===")
+        print(f"🔵 Audio data size: {len(audio_data)} bytes")
+        print(f"🔵 Filename: {audio_file.filename}")
+        print(f"🔵 Content type: {audio_file.content_type}")
         logger.info(f"=== Starting database save operations ===")
         logger.info(f"Audio data size: {len(audio_data)} bytes")
         logger.info(f"Filename: {audio_file.filename}")
         logger.info(f"Content type: {audio_file.content_type}")
         audio_file_record = None
         try:
+            print("🔵 Calling audio_repo.create_audio_file()...")
             logger.info(f"Calling audio_repo.create_audio_file()...")
             audio_file_record = await audio_repo.create_audio_file(
                 audio_data=audio_data,
@@ -186,23 +216,33 @@ async def transcribe_audio_adhoc(
                 audio_type="adhoc",
                 duration_seconds=result.get("duration"),
             )
+            print(f"✅ Audio file saved to database: {audio_file_record.audio_id}")
+            print(f"   Audio ID: {audio_file_record.audio_id}")
+            print(f"   Filename: {audio_file_record.filename}")
+            print(f"   File size: {audio_file_record.file_size} bytes")
             logger.info(f"✅ Audio file saved to database: {audio_file_record.audio_id}")
             logger.info(f"   Audio ID: {audio_file_record.audio_id}")
             logger.info(f"   Filename: {audio_file_record.filename}")
             logger.info(f"   File size: {audio_file_record.file_size} bytes")
         except Exception as e:
+            print(f"❌ Failed to save audio file to database: {e}")
             import traceback
             error_traceback = traceback.format_exc()
+            print(f"Full traceback: {error_traceback}")
             logger.error(f"❌ Failed to save audio file to database: {e}")
             logger.error(f"Full traceback: {error_traceback}")
             # Don't fail the request, but log prominently so we can debug
 
         # Persist ad-hoc transcript with structured dialogue
+        print("🔵 === Attempting to save adhoc transcript to database ===")
+        print(f"🔵 Transcript length: {len(raw_transcript)} characters")
+        print(f"🔵 Structured dialogue turns: {len(structured_dialogue)}")
         logger.info(f"=== Attempting to save adhoc transcript to database ===")
         logger.info(f"Transcript length: {len(raw_transcript)} characters")
         logger.info(f"Structured dialogue turns: {len(structured_dialogue)}")
         adhoc_id = None
         try:
+            print("🔵 Creating AdhocTranscriptMongo document...")
             logger.info(f"Creating AdhocTranscriptMongo document...")
             doc = AdhocTranscriptMongo(
                 transcript=raw_transcript,
@@ -215,39 +255,51 @@ async def transcribe_audio_adhoc(
                 filename=audio_file.filename or None,
                 audio_file_path=None,  # No longer using file paths
             )
+            print("🔵 Calling doc.insert()...")
             logger.info(f"Calling doc.insert()...")
             await doc.insert()
             adhoc_id = str(doc.id)
             result["adhoc_id"] = adhoc_id
+            print(f"✅ Adhoc transcript saved to database: {adhoc_id}")
+            print(f"   MongoDB ID: {doc.id}")
+            print(f"   Filename: {doc.filename}")
             logger.info(f"✅ Adhoc transcript saved to database: {adhoc_id}")
             logger.info(f"   MongoDB ID: {doc.id}")
             logger.info(f"   Filename: {doc.filename}")
             
             # Link audio file to adhoc transcript if we have both
             if audio_file_record:
+                print(f"🔵 Linking audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}...")
                 logger.info(f"Linking audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}...")
                 link_success = await audio_repo.link_audio_to_adhoc(audio_file_record.audio_id, adhoc_id)
                 if link_success:
+                    print(f"✅ Linked audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
                     logger.info(f"✅ Linked audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
                 else:
+                    print(f"⚠️ Failed to link audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
                     logger.warning(f"⚠️ Failed to link audio file {audio_file_record.audio_id} to adhoc transcript {adhoc_id}")
             else:
+                print("⚠️ No audio_file_record to link to adhoc transcript")
                 logger.warning(f"⚠️ No audio_file_record to link to adhoc transcript")
                 
         except Exception as e:
+            print(f"❌ Failed to persist adhoc transcript: {e}")
             import traceback
             error_traceback = traceback.format_exc()
+            print(f"Full traceback: {error_traceback}")
             logger.error(f"❌ Failed to persist adhoc transcript: {e}")
             logger.error(f"Full traceback: {error_traceback}")
             # Don't fail the request, but log prominently so we can debug
 
         # Return response with both raw transcript and structured dialogue
+        print(f"🔵 === Preparing response. Audio saved: {audio_file_record is not None}, Adhoc saved: {adhoc_id is not None} ===")
         logger.info(f"=== Preparing response. Audio saved: {audio_file_record is not None}, Adhoc saved: {adhoc_id is not None} ===")
         response_data = {
             **result,
             "filename": audio_file.filename or None,
             "structured_dialogue": structured_dialogue,  # Include structured dialogue in response
         }
+        print("🔵 === Returning successful response ===")
         logger.info(f"=== Returning successful response ===")
         return ok(request, data=AdhocTranscriptionResponse(**response_data))
     except Exception as e:
@@ -260,6 +312,7 @@ async def transcribe_audio_adhoc(
     finally:
         try:
             if temp_file_path and os.path.exists(temp_file_path):
+                print(f"🔵 Cleaning up temp file: {temp_file_path}")
                 os.unlink(temp_file_path)
         except Exception:
             pass

@@ -133,6 +133,19 @@ class TranscribeAudioUseCase:
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
+        # Check if transcription is already completed - return existing data if so
+        if visit.transcription_session and visit.transcription_session.transcription_status == "completed":
+            LOGGER.info(f"Transcription already completed for visit {request.visit_id}, returning existing data")
+            return AudioTranscriptionResponse(
+                patient_id=patient.patient_id.value,
+                visit_id=visit.visit_id.value,
+                transcript=visit.transcription_session.transcript or "",
+                word_count=visit.transcription_session.word_count or 0,
+                audio_duration=visit.transcription_session.audio_duration_seconds,
+                transcription_status=visit.transcription_session.transcription_status,
+                message="Transcription already completed"
+            )
+
         # Check if visit is ready for transcription based on workflow type
         if not visit.can_proceed_to_transcription():
             if visit.is_scheduled_workflow():
@@ -157,8 +170,18 @@ class TranscribeAudioUseCase:
             if transcription_language in ['es', 'sp']:
                 transcription_language = 'sp'
             
-            # Start transcription process
-            visit.start_transcription(request.audio_file_path)
+            # Start transcription process (only if not already started)
+            # The API endpoint may have already called start_transcription(None) to mark it as processing
+            # In that case, just update the audio_file_path instead of creating a new session
+            if visit.transcription_session and visit.transcription_session.transcription_status == "processing":
+                # Session already exists and is processing, just update the audio_file_path
+                LOGGER.info(f"Transcription session already exists for visit {request.visit_id}, updating audio_file_path")
+                visit.transcription_session.audio_file_path = request.audio_file_path
+                visit.updated_at = datetime.utcnow()
+            else:
+                # No session or session is not processing, create new one
+                visit.start_transcription(request.audio_file_path)
+            
             await self._visit_repository.save(visit)
 
             # Transcribe audio using Azure Speech Service
@@ -194,7 +217,7 @@ class TranscribeAudioUseCase:
                 pre_structured_dialogue,
                 speaker_info=speaker_info,
                 language=transcription_language
-            )
+                    )
             LOGGER.info(f"Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns")
 
             LOGGER.info(f"Raw transcript length: {len(raw_transcript)} characters")
