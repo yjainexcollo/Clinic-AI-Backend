@@ -56,10 +56,59 @@ def map_speakers_to_doctor_patient(
     if len(speaker_content) == 0:
         return structured_dialogue
     
-    # If only one speaker, assume it's mixed dialogue (shouldn't happen with diarization)
+    # If only one speaker, attempt to infer Doctor/Patient roles heuristically
     if len(speaker_content) == 1:
-        logger.warning("Only one speaker detected in diarization, cannot map to Doctor/Patient")
-        return structured_dialogue
+        logger.warning("Only one speaker detected in diarization, attempting content-based role mapping")
+        single_speaker_id = next(iter(speaker_content.keys()))
+        single_speaker_turns = speaker_content[single_speaker_id]
+        combined_text = " ".join(single_speaker_turns).lower()
+
+        doctor_indicators = [
+            "diagnosis", "prescribe", "examine", "recommend", "treatment",
+            "medication", "symptoms", "condition", "test", "results",
+            "let me", "i'll", "we'll", "can you", "please", "monitor",
+            "follow up", "schedule", "take your", "blood pressure", "lab work",
+            "i suggest", "we need to", "i recommend", "i want you to"
+        ]
+        patient_indicators = [
+            "i have", "i feel", "i've been", "i took", "i went",
+            "it hurts", "it's painful", "my doctor", "my symptoms",
+            "i'm worried", "i don't understand", "i started", "i'm feeling",
+            "i can't", "i tried", "i was told", "i noticed", "i think"
+        ]
+
+        doctor_score = sum(1 for term in doctor_indicators if term in combined_text)
+        patient_score = sum(1 for term in patient_indicators if term in combined_text)
+
+        logger.info(
+            "Single-speaker heuristic scores → Doctor: %d, Patient: %d",
+            doctor_score,
+            patient_score,
+        )
+
+        mapped_dialogue: List[Dict[str, str]] = []
+
+        if doctor_score != patient_score:
+            mapped_label = doctor_label if doctor_score > patient_score else patient_label
+            logger.info("Mapping all single-speaker turns to %s based on heuristic score", mapped_label)
+            for turn in structured_dialogue:
+                if isinstance(turn, dict) and len(turn) == 1:
+                    text = list(turn.values())[0]
+                    mapped_dialogue.append({mapped_label: text})
+                else:
+                    mapped_dialogue.append(turn)
+        else:
+            logger.info("Heuristic scores tied; alternating turns between Doctor and Patient")
+            next_label = doctor_label
+            for turn in structured_dialogue:
+                if isinstance(turn, dict) and len(turn) == 1:
+                    text = list(turn.values())[0]
+                    mapped_dialogue.append({next_label: text})
+                    next_label = patient_label if next_label == doctor_label else doctor_label
+                else:
+                    mapped_dialogue.append(turn)
+
+        return mapped_dialogue
     
     # Score each speaker to determine Doctor vs Patient
     speaker_scores: Dict[str, Dict[str, float]] = {}

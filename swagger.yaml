@@ -680,17 +680,17 @@ paths:
         required: true
         content:
           multipart/form-data:
-              schema:
-                type: object
-                required:
-                  - audio_file
-                properties:
-                  audio_file:
-                    type: string
-                    format: binary
-                    description: "Audio file to transcribe (.mp3, .wav, .m4a, .flac, .ogg, .webm). The uploaded part may use content-type `audio/*`, `video/mpeg`, `video/webm`, `video/mp4`, or `application/octet-stream`."
-                  language:
-                    type: string
+            schema:
+              type: object
+              required:
+                - audio_file
+              properties:
+                audio_file:
+                  type: string
+                  format: binary
+                  description: "Audio file to transcribe (.mp3, .wav, .m4a, .flac, .ogg, .webm). The uploaded part may use content-type `audio/*`, `video/mpeg`, `video/webm`, `video/mp4`, or `application/octet-stream`."
+                language:
+                  type: string
                   example: en
       responses:
         '200':
@@ -1232,7 +1232,6 @@ components:
           properties:
         patient_id: {type: string}
         visit_id: {type: string}
-        transcript: {type: string, nullable: true}
     SoapGenerationResponse:
       type: object
       required: [patient_id, visit_id, soap_note, generated_at, message]
@@ -1273,7 +1272,7 @@ components:
         audio_duration_seconds: {type: number, nullable: true}
         word_count: {type: integer, nullable: true}
         structured_dialogue:
-              type: array
+          type: array
           items: {type: object, additionalProperties: true}
           nullable: true
     TranscriptionStatusResponse:
