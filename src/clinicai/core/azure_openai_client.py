@@ -50,12 +50,20 @@ class AzureOpenAIClient:
             }
             logger.info("✅ Azure OpenAI with Helicone AI observability enabled")
         
-        # Initialize Azure OpenAI client
+        # Initialize Azure OpenAI client (Azure SDK does not allow base_url with azure_endpoint)
+        helicone_base_url = os.getenv("HELICONE_BASE_URL")
+        if helicone_base_url:
+            logger.info(
+                "🔁 HELICONE_BASE_URL is set (%s); "
+                "ensure your Azure OpenAI endpoint is configured to route through Helicone.",
+                helicone_base_url,
+            )
+        
         self.client = AsyncAzureOpenAI(
             api_key=api_key,
             api_version=api_version,
             azure_endpoint=normalized_endpoint,
-            default_headers=self.default_headers if self.default_headers else None
+            default_headers=self.default_headers if self.default_headers else None,
         )
         
         if not self.helicone_enabled:

@@ -31,7 +31,7 @@ class IntakeSessionMongo(BaseModel):
     """MongoDB model for intake session."""
     questions_asked: List[QuestionAnswerMongo] = Field(default_factory=list)
     current_question_count: int = Field(default=0)
-    max_questions: int = Field(default=12)
+    max_questions: int = Field(default=14)
     status: str = Field(default="in_progress")  # in_progress, completed, cancelled
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
@@ -250,7 +250,7 @@ class DoctorPreferencesMongo(Document):
     doctor_id: str = Field(..., description="Doctor ID", unique=True)
     global_categories: list[str] = Field(default_factory=list)
     selected_categories: list[str] = Field(default_factory=list)
-    max_questions: int = Field(default=5)
+    max_questions: int = Field(default=10)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:

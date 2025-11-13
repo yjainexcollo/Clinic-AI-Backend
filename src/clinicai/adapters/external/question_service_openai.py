@@ -16,6 +16,7 @@ import logging
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 
@@ -80,31 +81,75 @@ Ha viajado recientemente: {"Sí" if recently_travelled else "No"}
 
 Realiza un análisis médico completo y devuelve un JSON con esta estructura EXACTA:
 
-REGLAS MÉDICAS PARA PRIORITY_TOPICS:
+REGLAS MÉDICAS PARA PRIORITY_TOPICS (CUMPLE EXACTAMENTE):
 
-ATENCIÓN: Todos los ejemplos siguientes (diabetes, asma, hipertensión, epilepsia, EPOC, etc.) son SOLO ILUSTRATIVOS. DEBES generalizar esta lógica a cualquier enfermedad crónica, aguda, rara o no listada según el mejor criterio médico. Al identificar cronicidad, riesgo de complicaciones, herencia genética, etc., aplícalo aunque la enfermedad no esté en los ejemplos.
+PRIORIDAD DE FLUJO - aplica a todas las entrevistas (omite solo lo que no sea relevante):
+   1. Duración - siempre la primera pregunta.
+   2. Medicamentos + cuidados caseros combinados - segunda pregunta; incluye fármacos prescritos y todo lo que el paciente use en casa (OTC, hierbas, remedios).
+   3. Temas de alta prioridad según la enfermedad - aborda inmediatamente después (ver secciones). Si el médico selecciona categorías, cúbrelas primero pero respetando este orden global y eligiendo la pregunta más relevante médicamente.
+   4. Síntomas asociados - solo si aportan valor, máximo 3 preguntas únicas (no reformules).
+   5. Monitoreo crónico - si is_chronic=true, formula exactamente DOS preguntas de monitoreo (lecturas en casa, adherencia, tendencias).
+   6. Detección/complicaciones - si is_chronic=true, formula exactamente UNA pregunta de detección que cite exámenes/laboratorios reales (combina chequeos relacionados en una sola pregunta).
+   7. Otras categorías - cualquier otro tema (impacto funcional, estilo de vida, alergias, desencadenantes, temporalidad, etc.) queda limitado a UNA pregunta por categoría.
+   8. Pregunta de cierre - "algo más" solo después de >=10 preguntas totales o cuando ya no existan temas de alto valor pendientes.
 
-1. MONITOREO CRÓNICO (monitoreo_crónico):
-   INCLUIR SI: is_chronic = true Y has_complications = true
-   Ejemplos ilustrativos: diabetes (glucosa/HbA1c), hipertensión (presión arterial), asma (flujo espiratorio/peak flow), epilepsia (crisis), EPOC, enfermedades autoinmunes…
-   IMPORTANTE: Asma SIEMPRE requiere monitoreo (peak flow, frecuencia de inhalador, exacerbaciones)
-   Si recibes otra condición crónica (no listada), pregunta acerca del monitoreo relevante igualmente.
+EVITA DUPLICADOS:
+   - No separes apetito, peso y energía en múltiples preguntas; si uno se cubre, omite los demás.
+   - No reformules preguntas ya realizadas; usa el contexto semántico para evitar redundancias.
 
-2. HISTORIA FAMILIAR (historia_familiar):
-   INCLUIR SI: is_hereditary = true
-   Ejemplos: diabetes, hipertensión, asma, cáncer, enfermedades cardíacas, trastornos tiroideos (SOLO ILUSTRATIVOS)
-   Si la enfermedad es genética/hereditaria aunque no esté en la lista, pregunta la historia familiar apropiada.
+PRIORIDADES SEGÚN TIPO DE CONDICIÓN (generaliza con criterio clínico):
 
-3. ALERGIAS (alergias):
-   INCLUIR SI: is_allergy_related = true o hay síntomas de alergia
-   Uso idéntico para cualquier condición relevante.
+**Enfermedades crónicas (diabetes, hipertensión, asma, tiroides, cardiopatías, cáncer, EPOC, etc.)**
+   - Alta prioridad: duración, combinación medicamentos/cuidados caseros, monitoreo crónico (2 preguntas), detección/complicaciones (1 pregunta), historia familiar (dentro de las primeras 5), laboratorios/imágenes recientes.
+   - Ejemplos de monitoreo:
+      - Diabetes - registros de glucosa, CGM, HbA1c, hipoglucemias.
+      - Hipertensión - registros de PA domiciliaria, calibración de tensiómetro.
+      - Asma - registros de peak flow, uso de inhalador de rescate, diario de síntomas.
+      - Tiroides - TSH/T4 recientes, frecuencia cardíaca, síntomas de hipo/hipertiroidismo.
+      - Cardiopatías - BP/HR domiciliarios, saturación/oxígeno, control de peso.
+   - Ejemplos de detección/complicaciones (mención en la pregunta):
+      - Diabetes - fondo de ojo, examen de pies, revisión dental, microalbuminuria/eGFR.
+      - Hipertensión - función renal, examen retinal, pruebas cardíacas (ECG/eco/estrés).
+      - Asma - espirometría, panel de alergias, radiografía/TC de tórax, peak flow basal.
+      - Tiroides - examen de cuello/ultrasonido, densitometría ósea, evaluación cardíaca.
+      - Cardiopatías - panel lipídico, pruebas de esfuerzo, Holter/ECG, ecocardiograma.
+      - Cáncer - imágenes (CT/MRI/PET), marcadores tumorales, biopsias, estadificación.
+   - Prioridad media: síntomas asociados, estilo de vida (dieta, ejercicio, tabaco), impacto funcional.
+   - Baja prioridad: viajes, alergias (salvo relación evidente).
+   - Prohibido salvo que el médico lo solicite explícitamente: preguntas genéricas de historial médico/pasos similares en el pasado ("¿Ha tenido episodios parecidos antes?", "¿Qué enfermedades ha tenido?", etc.). Mantén el enfoque en el control actual y el monitoreo.
+   - Combina detección y complicaciones en una sola pregunta rica.
 
-4. SIEMPRE INCLUIR (todas las condiciones):
-   - duración (primero)
-   - medicamentos_actuales (segundo)
-   - caracterización_síntomas o síntomas_asociados
+**Condiciones agudas/infecciosas (fiebre, tos, diarrea, infecciones, etc.)**
+   - Alta prioridad: duración, síntomas asociados, medicamentos/cuidados caseros, viajes (solo si hay riesgo), episodios previos similares.
+   - Media: evaluación de dolor (si corresponde), impacto en estilo de vida/aislamiento.
+   - Prohibido: historia familiar, monitoreo/detección crónica.
 
-PARA CUALQUIER NUEVA, RARA O COMPLEJA condición usa juicio clínico: si reconoces cronicidad/herencia/complicaciones sigue esta lógica aunque no esté en la lista.
+**Condiciones dolorosas (cefalea, dolor torácico, musculoesquelético)**
+   - Alta prioridad: duración, caracterización del dolor, desencadenantes/alivio, impacto funcional, medicamentos/cuidados caseros, episodios previos similares.
+   - Media: síntomas asociados, factores de estilo de vida (sueño, estrés).
+   - Prohibido: historia familiar, monitoreo crónico (salvo dolor crónico documentado).
+
+**Salud de la mujer (menstruación, fertilidad, embarazo, menopausia, SOP, dolor pélvico)**
+   - Alta prioridad: duración, combinación medicamentos/cuidados caseros, síntomas hormonales/ginecológicos, tamizajes recientes (Pap, mamografía, densitometría, análisis hormonales), historia familiar de cáncer de mama/ovario o trastornos endocrinos (dentro de las primeras 5 si es crónico).
+   - Media: síntomas asociados, estilo de vida, impacto funcional.
+   - Baja: viajes, alergias (salvo relación directa).
+
+ENFOQUE POR EDAD:
+   - <12 años: nunca hacer preguntas menstruales; prioriza causas generales y seguridad.
+   - 10-18: abordar regularidad menstrual, pubertad, SOP, cólicos/pain con la regla.
+   - 19-40: fertilidad, endometriosis, embarazo/obstetricia, alteraciones menstruales.
+   - 41-60: perimenopausia, menopausia, salud ósea, cambios hormonales.
+   - >60: sin preguntas menstruales; enfócate en integración con enfermedades crónicas y tamizajes.
+   - Todas las edades: si hay enfermedad crónica, pregunta historia familiar una vez y en las primeras 5 preguntas.
+
+REGLAS GENERALES:
+   - Respeta estrictamente los límites (síntomas asociados <=3, monitoreo crónico =2, detección =1, resto <=1).
+   - Preguntas de viaje solo si la casilla está marcada y el cuadro clínico lo amerita.
+   - Preguntas menstruales/pregnancy solo con género, edad y síntomas pertinentes.
+   - No formules la pregunta final antes de tiempo.
+   - Las categorías elegidas por el médico tienen prioridad, sin romper el flujo global; elige la pregunta más relevante médicamente dentro de cada categoría seleccionada.
+
+Los ejemplos son ilustrativos: aplica tu mejor criterio clínico para enfermedades raras o complejas usando estas mismas prioridades.
 
 {{
     "condition_properties": {{
@@ -119,12 +164,29 @@ PARA CUALQUIER NUEVA, RARA O COMPLEJA condición usa juicio clínico: si reconoc
     }},
     "priority_topics": [
         <lista ordenada de temas médicos a explorar según REGLAS arriba>
-        Opciones disponibles:
-        "duración", "medicamentos_actuales", "caracterización_síntomas", "síntomas_asociados",
-        "historia_familiar", "monitoreo_crónico", "ciclo_menstrual", "historial_viajes",
-        "alergias", "factores_estilo_vida"
+        Opciones disponibles (EN ESTE ORDEN EXACTO DE SECUENCIA - solo incluir si es relevante para los síntomas):
+        1. "duración" - SIEMPRE PRIMERO si no se ha preguntado
+        2. "síntomas_asociados", "caracterización_síntomas" - Después de duración (máximo 2-3 preguntas)
+        3. "medicamentos_actuales" - Después de síntomas asociados (incluye medicamentos Y remedios caseros, máximo 1 pregunta)
+        4. "evaluación_dolor", "caracterización_dolor" - Solo si el dolor es parte de los síntomas
+        5. "historial_viajes" - Solo si recently_travelled=True Y síntomas son relevantes para viajes
+        6. "monitoreo_crónico" - Solo para enfermedades crónicas (OBLIGATORIO: hacer exactamente 2 preguntas)
+        7. "detección" - Solo para enfermedades crónicas (OBLIGATORIO: hacer exactamente 1 pregunta sobre exámenes específicos)
+        8. "alergias" - Solo si síntomas relacionados con alergias
+        9. "historial_médico_previo", "hpi" - Solo si es relevante para síntomas actuales O el médico lo seleccionó explícitamente (omitir en seguimientos crónicos) (máximo 1 pregunta)
+        10. "ciclo_menstrual" - SOLO para condiciones de salud de la mujer (NO para hipertensión/diabetes/dolor de cabeza)
+        11. "impacto_funcional", "impacto_diario" - Después de preguntas centrales
+        12. "factores_estilo_vida" - Después de funcional (máximo 1 pregunta)
+        13. "desencadenantes", "factores_agravantes" - Después de estilo de vida
+        14. "temporal", "progresión", "frecuencia" - Después de desencadenantes
+        15. "otros", "exploratorio" - Último, después de todas las categorías anteriores
+        También disponible (agregar cuando sea relevante):
+        "historia_familiar" - OBLIGATORIO para enfermedades crónicas (máximo 1 pregunta)
         
-        IMPORTANTE: Solo incluye temas que cumplen las REGLAS MÉDICAS arriba
+        IMPORTANTE:
+        - Sigue esta secuencia ESTRICTAMENTE - NO te saltes categorías anteriores si aún son relevantes
+        - Solo incluye temas que cumplen las REGLAS MÉDICAS arriba Y son relevantes para los síntomas
+        - Revisa brechas de información para ver qué categorías aún se necesitan
     ],
     "avoid_topics": [
         <lista de temas que NO son relevantes para esta condición>
@@ -156,31 +218,75 @@ Recently traveled: {"Yes" if recently_travelled else "No"}
 
 Perform a comprehensive medical analysis and return a JSON with this EXACT structure:
 
-MEDICAL RULES FOR PRIORITY_TOPICS:
+MEDICAL RULES FOR PRIORITY_TOPICS (FOLLOW EXACTLY):
 
-NOTE: All examples below (e.g., diabetes, asthma, hypertension, epilepsy, COPD, etc.) are for ILLUSTRATION ONLY. You MUST generalize this logic to ANY chronic, acute, rare, or unlisted disease according to best medical practice. Always apply this reasoning to any disease that fits the pattern (chronic, hereditary, risk of complication…) even if not explicitly named.
+FLOW PRIORITY - apply to every intake (skip only when medically irrelevant):
+   1. Duration - must be the very first question.
+   2. Combined medications + home/self-care - second question, covering prescriptions AND over-the-counter/herbal/home remedies in one question.
+   3. Disease-specific high-priority items - ask next (see sections below). If the doctor supplied selected categories, address those first while keeping this global order. Within a selected category, choose the question a general physician would prioritise.
+   4. Associated symptoms - only if relevant, maximum 3 unique questions (never rephrase the same symptom).
+   5. Chronic monitoring - if is_chronic=true, ask exactly TWO monitoring questions (home logs, device readings, treatment adherence, trend tracking).
+   6. Chronic screening/complications - if is_chronic=true, ask exactly ONE screening question referencing real exams/labs (combine related checks in a single question).
+   7. Other categories - everything else (functional impact, lifestyle, allergies, triggers, temporal progression, etc.) is limited to ONE question each.
+   8. Closing question - "anything else" only after >=10 total questions or when no high-value topics remain.
 
-1. CHRONIC MONITORING (chronic_monitoring):
-   INCLUDE IF: is_chronic = true AND has_complications = true
-   Examples (ONLY illustration): diabetes (glucose logs/HbA1c), hypertension (BP readings), asthma (peak flow/inhaler frequency), epilepsy (seizure record), COPD, autoimmune disorders...
-   IMPORTANT: Asthma ALWAYS requires monitoring (peak flow, inhaler usage, exacerbations)
-   If you encounter ANY other chronic disease, always ask about pertinent monitoring, even if it's not listed.
+DUPLICATE SAFEGUARDS:
+   - Never split appetite/weight/energy across separate questions; once one is covered, do not ask the others.
+   - Do not rephrase previously covered information; rely on semantic understanding to avoid duplicates.
 
-2. FAMILY HISTORY (family_history):
-   INCLUDE IF: is_hereditary = true
-   Examples: diabetes, hypertension, asthma, cancer, heart disease (ONLY ILLUSTRATIVE)
-   If the disease is hereditary/genetic but not listed, apply best judgment and ask relevant family history.
+CONDITION-SPECIFIC PRIORITIES (examples generalise to similar illnesses; adapt using clinical reasoning):
 
-3. ALLERGIES (allergies):
-   INCLUDE IF: is_allergy_related = true OR allergic symptoms present
-   Use for ANY relevant case, not just those listed.
+**Chronic diseases (diabetes, hypertension, asthma, thyroid, heart disease, cancer, COPD, etc.)**
+   - High priority (ask early): duration, combined meds/home care, chronic monitoring (2 questions), screening/complication exam (1 question), family history (within first 5), recent labs/imaging.
+   - Monitoring examples:
+      - Diabetes - home glucose logs, CGM trends, HbA1c, hypoglycaemia episodes.
+      - Hypertension - home BP logs, cuff calibration, sudden spikes.
+      - Asthma - peak-flow records, rescue inhaler frequency, symptom diary.
+      - Thyroid - recent TSH/FT4 results, heart rate checks.
+      - Heart disease - BP/HR logs, home oxygen use if applicable.
+   - Screening/complication examples (reference real tests in the screening question):
+      - Diabetes - eye exam, foot exam, dental check, kidney labs (microalbumin, eGFR).
+      - Hypertension - kidney function labs, retinal exam, cardiac imaging/stress tests.
+      - Asthma - pulmonary function test, allergy panels, chest imaging, baseline peak-flow.
+      - Thyroid - neck exam/ultrasound, bone density, cardiac rhythm evaluation.
+      - Heart disease - lipid panel, stress test, echocardiogram, Holter/ECG.
+      - Cancer - imaging (CT/MRI/PET), tumour markers, biopsies, staging labs.
+   - Medium priority: associated symptoms, lifestyle factors (diet, exercise, smoking), functional impact.
+   - Low priority: travel history, allergies (unless clearly linked).
+   - Forbidden unless clinician explicitly requests: generic past medical history questions ("Have you experienced this before?", "Any similar episodes in the past?", "What past conditions have you had?"). Stay focused on current control and monitoring.
+   - Combine screening + complication context in ONE rich question.
 
-4. ALWAYS INCLUDE (all conditions):
-   - duration (always first)
-   - current_medications (always second)
-   - symptom_characterization OR associated_symptoms
+**Acute infections (fever, cough, gastroenteritis, URI, etc.)**
+   - High priority: duration, associated symptoms, combined meds/home care, travel history (only if risk factors), past similar episodes.
+   - Medium: pain assessment (when applicable), lifestyle/contagion considerations.
+   - Forbidden: family history, chronic monitoring/screening.
 
-FOR ANY NEW, RARE OR COMPLEX CONDITION, use clinical reasoning: if chronic, ask about monitoring/adherence/complication; if hereditary, ask about family history, etc.
+**Pain conditions (headache, chest pain, musculoskeletal pain)**
+   - High priority: duration, pain character/severity, triggers/relieving factors, functional impact, combined meds/home care, past similar episodes.
+   - Medium: associated symptoms, lifestyle factors (sleep, stress).
+   - Forbidden: family history, chronic monitoring (unless chronic pain management is the focus).
+
+**Women's health (menstrual, fertility, pregnancy, menopause, PCOS, pelvic pain)**
+   - High priority: duration, combined meds/home care, hormonal/gynecologic symptoms, recent screenings (Pap smear, pelvic exam, mammogram, bone density, hormone panels), family history of breast/ovarian/endocrine cancers (within first 5 if chronic context).
+   - Medium: associated symptoms, lifestyle, functional impact.
+   - Low: travel, allergies (unless related).
+
+AGE-FOCUSED GUIDANCE:
+   - <12 years: never ask menstrual questions; emphasise general causes and safety.
+   - 10-18: include puberty, cycle regularity, PCOS, cramps when relevant.
+   - 19-40: fertility, endometriosis, pregnancy history, menstrual irregularities.
+   - 41-60: perimenopause, menopause, hormone changes, bone health.
+   - >60: no menstrual questions; focus on chronic disease interplay and relevant screenings.
+   - All ages: when chronic disease present, ask family history once early (within first 5).
+
+GENERAL RULES:
+   - Respect per-category limits strictly (associated symptoms <=3, chronic monitoring =2, screening =1, every other category <=1).
+   - Travel questions only when checkbox is true AND symptoms justify it.
+   - Menstrual/pregnancy questions require appropriate gender, age, and symptom relevance.
+   - Never ask the final "anything else" question prematurely.
+   - Doctor-selected categories override the generic order, but do NOT violate the flow; choose the most medically relevant question within each selected category.
+
+Examples are illustrative—always apply best clinical reasoning for any condition, including rare or complex presentations.
 
 IMPORTANT: These examples are illustrative—always apply your best clinical reasoning for any condition.
 
@@ -197,12 +303,29 @@ IMPORTANT: These examples are illustrative—always apply your best clinical rea
     }},
     "priority_topics": [
         <ordered list of medical topics to explore according to RULES above>
-        Available options:
-        "duration", "current_medications", "symptom_characterization", "associated_symptoms",
-        "family_history", "chronic_monitoring", "menstrual_cycle", "travel_history",
-        "allergies", "lifestyle_factors"
+        Available options (IN THIS EXACT SEQUENCE ORDER - only include if relevant to symptoms):
+        1. "duration" - ALWAYS FIRST if not already asked
+        2. "associated_symptoms", "symptom_characterization" - After duration (2-3 questions max)
+        3. "current_medications" - After associated symptoms (includes medications AND home remedies, 1 question max)
+        4. "pain_assessment", "pain_characterization" - Only if pain is part of symptoms
+        5. "travel_history" - Only if recently_travelled=True AND symptoms are travel-relevant
+        6. "chronic_monitoring" - Only for chronic diseases (MANDATORY: ask exactly 2 questions)
+        7. "screening" - Only for chronic diseases (MANDATORY: ask exactly 1 question about specific exams/checkups)
+        8. "allergies" - Only if allergy-related symptoms
+        9. "past_medical_history", "hpi" - Only if relevant to current symptoms OR doctor explicitly selected it (skip for chronic follow-up)
+        10. "menstrual_cycle" - ONLY for women's health conditions (NOT for hypertension/diabetes/headache)
+        11. "functional_impact", "daily_impact" - After core questions
+        12. "lifestyle_factors" - After functional (1 question max)
+        13. "triggers", "aggravating_factors" - After lifestyle
+        14. "temporal", "progression", "frequency" - After triggers
+        15. "other", "exploratory" - Last, after all above categories
+        Also available (add when relevant):
+        "family_history" - MANDATORY for chronic diseases (1 question max)
         
-        IMPORTANT: Only include topics that meet the MEDICAL RULES above
+        IMPORTANT: 
+        - Follow this sequence STRICTLY - do NOT skip ahead to later categories if earlier ones are still relevant
+        - Only include topics that meet the MEDICAL RULES above AND are relevant to the symptoms
+        - Check information_gaps to see which categories are still needed
     ],
     "avoid_topics": [
         <list of topics that are NOT relevant for this condition>
@@ -220,8 +343,8 @@ CRITICAL SAFETY RULES (do not violate):
 Return ONLY the JSON, no additional text."""
 
         try:
-            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
+                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -398,6 +521,7 @@ class ExtractedInformation:
     already_mentioned_duration: bool
     already_mentioned_medications: bool
     redundant_categories: List[str]
+    topic_counts: Optional[Dict[str, int]] = None  # Count of how many times each topic was asked
 
 
 class AnswerExtractor:
@@ -445,7 +569,8 @@ class AnswerExtractor:
                 extracted_facts={},
                 already_mentioned_duration=False,
                 already_mentioned_medications=False,
-                redundant_categories=[]
+                redundant_categories=[],
+                topic_counts=None
             )
         
         lang = self._normalize_language(language)
@@ -473,9 +598,13 @@ Devuelve un JSON con esta estructura EXACTA:
 {{
     "topics_covered": [
         <lista de temas que YA fueron preguntados/respondidos EN CUALQUIER PREGUNTA>
-        Opciones: "duración", "medicamentos_actuales", "caracterización_síntomas", 
-                 "síntomas_asociados", "historia_familiar", "monitoreo_crónico",
-                 "ciclo_menstrual", "historial_viajes", "alergias", "factores_estilo_vida"
+        Opciones (en orden de secuencia): "duración", "síntomas_asociados", "caracterización_síntomas",
+                 "medicamentos_actuales", "evaluación_dolor", "caracterización_dolor",
+                 "historial_viajes", "monitoreo_crónico", "detección", "alergias",
+                 "historial_médico_previo", "hpi", "ciclo_menstrual", "impacto_funcional",
+                 "impacto_diario", "factores_estilo_vida", "desencadenantes", "factores_agravantes",
+                 "temporal", "progresión", "frecuencia", "otros", "exploratorio",
+                 "historia_familiar"
     ],
     "information_gaps": [
         <lista de temas prioritarios que AÚN NO se han preguntado>
@@ -493,14 +622,24 @@ Devuelve un JSON con esta estructura EXACTA:
     ]
 }}
 
-REGLAS CRÍTICAS PARA MARCAR REDUNDANT_CATEGORIES:
+REGLAS CRÍTICAS PARA MARCAR REDUNDANT_CATEGORIES (revisa TODAS las categorías en orden de secuencia):
 1. Revisa TODAS las {len(all_qa)} preguntas arriba, no solo las últimas 3
 2. Si "duración" fue preguntada EXPLÍCITAMENTE en CUALQUIER pregunta → already_mentioned_duration = true Y añade "duración" a redundant_categories
-3. Si "medicamentos" fueron preguntados EXPLÍCITAMENTE en CUALQUIER pregunta → already_mentioned_medications = true Y añade "medicamentos_actuales" a redundant_categories
-4. Si "síntomas asociados" o "otros síntomas" fueron preguntados EXPLÍCITAMENTE → añade "síntomas_asociados" a redundant_categories SOLO SI YA FUERON PREGUNTADOS
-5. Si "caracterización de síntomas" fue preguntada EXPLÍCITAMENTE → añade "caracterización_síntomas" SOLO SI YA FUE PREGUNTADA
-6. Si "actividades diarias" fue preguntado EXPLÍCITAMENTE → añade "factores_estilo_vida" SOLO SI YA FUE PREGUNTADO
-7. Si "progresión" fue preguntada EXPLÍCITAMENTE → marca como redundante SOLO SI YA FUE PREGUNTADA
+3. Si "síntomas asociados" o "otros síntomas" fueron preguntados EXPLÍCITAMENTE → añade "síntomas_asociados" a redundant_categories SOLO SI YA FUERON PREGUNTADOS (máximo 2-3 preguntas)
+4. Si "caracterización de síntomas" o "describe los síntomas" fue preguntada EXPLÍCITAMENTE → añade "caracterización_síntomas" a redundant_categories SOLO SI YA FUE PREGUNTADA
+5. Si "medicamentos" o "remedios caseros" fueron preguntados EXPLÍCITAMENTE en CUALQUIER pregunta → already_mentioned_medications = true Y añade "medicamentos_actuales" a redundant_categories (máximo 1 pregunta)
+6. Si "dolor" o "evaluación del dolor" fue preguntado EXPLÍCITAMENTE → añade "evaluación_dolor" o "caracterización_dolor" a redundant_categories SOLO SI YA FUE PREGUNTADO
+7. Si "viajes" o "historial de viajes" fue preguntado EXPLÍCITAMENTE → añade "historial_viajes" a redundant_categories SOLO SI YA FUE PREGUNTADO
+8. Si "monitoreo crónico" o monitoreo de lecturas/registros fue preguntado EXPLÍCITAMENTE → añade "monitoreo_crónico" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 2 preguntas en total)
+9. Si "detección" o "chequeos" o exámenes específicos (ojos/pies/dental) fueron preguntados EXPLÍCITAMENTE → añade "detección" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta en total)
+10. Si "alergias" fue preguntado EXPLÍCITAMENTE → añade "alergias" a redundant_categories SOLO SI YA FUE PREGUNTADO
+11. Si "historial médico previo" o "episodios anteriores" o "HPI" fue preguntado EXPLÍCITAMENTE → añade "historial_médico_previo" o "hpi" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta)
+12. Si "ciclo menstrual" o "período" fue preguntado EXPLÍCITAMENTE → añade "ciclo_menstrual" a redundant_categories SOLO SI YA FUE PREGUNTADO
+13. Si "impacto funcional" o "actividades diarias" o "vida diaria" fue preguntado EXPLÍCITAMENTE → añade "impacto_funcional" o "impacto_diario" a redundant_categories SOLO SI YA FUE PREGUNTADO
+14. Si "factores de estilo de vida" o "cambios en el estilo de vida" fue preguntado EXPLÍCITAMENTE → añade "factores_estilo_vida" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta)
+15. Si "desencadenantes" o "qué lo empeora/mejora" o "factores agravantes" fue preguntado EXPLÍCITAMENTE → añade "desencadenantes" o "factores_agravantes" a redundant_categories SOLO SI YA FUE PREGUNTADO
+16. Si "temporal" o "progresión" o "frecuencia" o "con qué frecuencia" o "con el tiempo" fue preguntado EXPLÍCITAMENTE → añade "temporal" o "progresión" o "frecuencia" a redundant_categories SOLO SI YA FUE PREGUNTADO
+17. Si "historia familiar" fue preguntada EXPLÍCITAMENTE → añade "historia_familiar" a redundant_categories SOLO SI YA FUE PREGUNTADA (máximo 1 pregunta, obligatorio para enfermedades crónicas)
 
 IMPORTANTE:
 - SÉ CONSERVADOR: solo marca un tema como redundante si la pregunta REALMENTE lo preguntó directamente
@@ -535,9 +674,13 @@ Return a JSON with this EXACT structure:
 {{
     "topics_covered": [
         <list of topics that were ALREADY asked/answered IN ANY QUESTION>
-        Options: "duration", "current_medications", "symptom_characterization", 
-                 "associated_symptoms", "family_history", "chronic_monitoring",
-                 "menstrual_cycle", "travel_history", "allergies", "lifestyle_factors"
+        Options (in sequence order): "duration", "associated_symptoms", 
+                 "current_medications", "pain_assessment", "pain_characterization",
+                 "travel_history", "chronic_monitoring", "screening", "allergies",
+                 "past_medical_history", "hpi", "menstrual_cycle", "functional_impact",
+                 "daily_impact", "lifestyle_factors", "triggers", "aggravating_factors",
+                 "temporal", "progression", "frequency", "other", "exploratory",
+                 "family_history"
     ],
     "information_gaps": [
         <list of priority topics that have NOT been asked yet>
@@ -555,14 +698,24 @@ Return a JSON with this EXACT structure:
     ]
 }}
 
-CRITICAL RULES FOR MARKING REDUNDANT_CATEGORIES:
+CRITICAL RULES FOR MARKING REDUNDANT_CATEGORIES (check ALL categories in sequence order):
 1. Review ALL {len(all_qa)} questions above, not just the last 3
 2. If "duration" was asked EXPLICITLY in ANY previous question → already_mentioned_duration = true AND add "duration" to redundant_categories
-3. If "medications" were asked EXPLICITLY in ANY previous question → already_mentioned_medications = true AND add "current_medications" to redundant_categories
-4. If "associated symptoms" were asked EXPLICITLY → add "associated_symptoms" to redundant_categories ONLY IF ALREADY ASKED
-5. If "symptom characterization" was asked EXPLICITLY → add "symptom_characterization" ONLY IF ALREADY ASKED
-6. If "daily activities" was asked EXPLICITLY → add "lifestyle_factors" ONLY IF ALREADY ASKED
-7. If "progression" was asked EXPLICITLY → mark as redundant ONLY IF ALREADY ASKED
+3. If "associated symptoms" or "other symptoms" were asked EXPLICITLY → add "associated_symptoms" to redundant_categories ONLY IF ALREADY ASKED (max 2-3 questions)
+4. If "symptom characterization" or "describe symptoms" was asked EXPLICITLY → add "symptom_characterization" to redundant_categories ONLY IF ALREADY ASKED
+5. If "medications" or "home remedies" were asked EXPLICITLY in ANY previous question → already_mentioned_medications = true AND add "current_medications" to redundant_categories (max 1 question)
+6. If "pain" or "pain assessment" was asked EXPLICITLY → add "pain_assessment" or "pain_characterization" to redundant_categories ONLY IF ALREADY ASKED
+7. If "travel" or "travel history" was asked EXPLICITLY → add "travel_history" to redundant_categories ONLY IF ALREADY ASKED
+8. If "chronic monitoring" or monitoring of readings/logs was asked EXPLICITLY → add "chronic_monitoring" to redundant_categories ONLY IF ALREADY ASKED (max 2 questions total)
+9. If "screening" or "checkups" or specific exams (eye/foot/dental) were asked EXPLICITLY → add "screening" to redundant_categories ONLY IF ALREADY ASKED (max 1 question total)
+10. If "allergies" was asked EXPLICITLY → add "allergies" to redundant_categories ONLY IF ALREADY ASKED
+11. If "past medical history" or "previous episodes" or "HPI" was asked EXPLICITLY → add "past_medical_history" or "hpi" to redundant_categories ONLY IF ALREADY ASKED (max 1 question)
+12. If "menstrual cycle" or "period" was asked EXPLICITLY → add "menstrual_cycle" to redundant_categories ONLY IF ALREADY ASKED
+13. If "functional impact" or "daily activities" or "daily life" was asked EXPLICITLY → add "functional_impact" or "daily_impact" to redundant_categories ONLY IF ALREADY ASKED
+14. If "lifestyle factors" or "lifestyle changes" was asked EXPLICITLY → add "lifestyle_factors" to redundant_categories ONLY IF ALREADY ASKED (max 1 question)
+15. If "triggers" or "what makes it worse/better" or "aggravating factors" was asked EXPLICITLY → add "triggers" or "aggravating_factors" to redundant_categories ONLY IF ALREADY ASKED
+16. If "temporal" or "progression" or "frequency" or "how often" or "over time" was asked EXPLICITLY → add "temporal" or "progression" or "frequency" to redundant_categories ONLY IF ALREADY ASKED
+17. If "family history" was asked EXPLICITLY → add "family_history" to redundant_categories ONLY IF ALREADY ASKED (max 1 question, mandatory for chronic diseases)
 
 IMPORTANT:
 - Be CONSERVATIVE: only mark a topic as redundant if the question ACTUALLY asked about it directly
@@ -575,8 +728,8 @@ KEEP information_gaps with at least 2-3 topics until the patient has answered at
 Return ONLY the JSON, no additional text."""
 
         try:
-            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
+                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -631,13 +784,21 @@ Return ONLY the JSON, no additional text."""
                 f"(analyzed {len(all_qa)} total Q&A pairs)"
             )
             
+            # Calculate topic_counts from topics_covered if not provided
+            topic_counts = extraction.get("topic_counts")
+            if topic_counts is None:
+                # Count occurrences of each topic in topics_covered
+                from collections import Counter
+                topic_counts = dict(Counter(topics_covered))
+            
             return ExtractedInformation(
                 topics_covered=topics_covered,
                 information_gaps=information_gaps,
                 extracted_facts=extraction.get("extracted_facts", {}),
                 already_mentioned_duration=extraction.get("already_mentioned_duration", False),
                 already_mentioned_medications=extraction.get("already_mentioned_medications", False),
-                redundant_categories=redundant_categories
+                redundant_categories=redundant_categories,
+                topic_counts=topic_counts
             )
             
         except Exception as e:
@@ -649,7 +810,8 @@ Return ONLY the JSON, no additional text."""
                 extracted_facts={},
                 already_mentioned_duration=False,
                 already_mentioned_medications=False,
-                redundant_categories=[]
+                redundant_categories=[],
+                topic_counts=None
             )
     
     def _format_qa_pairs(self, qa_pairs: List[Dict[str, str]]) -> str:
@@ -689,7 +851,8 @@ class QuestionGenerator:
         language: str = "en",
         avoid_similar_to: Optional[str] = None,
         asked_questions: Optional[List[str]] = None,
-        previous_answers: Optional[List[str]] = None
+        previous_answers: Optional[List[str]] = None,
+        is_deep_diagnostic: bool = False
     ) -> str:
         """
         Generate next medical question based on context and what's been covered.
@@ -729,6 +892,37 @@ Tu trabajo es generar UNA pregunta médicamente relevante, clara y amigable para
 
 La pregunta debe ser apropiada para un contexto de entrevista médica."""
 
+            deep_diagnostic_block_sp = ""
+            if is_deep_diagnostic:
+                deep_diagnostic_block_sp = (
+                    "🔍 MODO DIAGNÓSTICO PROFUNDO: El paciente aceptó responder preguntas diagnósticas detalladas. "
+                    "Esta es la pregunta diagnóstica profunda #" + str(current_count - 9) + " de 3.\n\n"
+                    "CRÍTICO: Estas preguntas deben ser PROFUNDAMENTE DIAGNÓSTICAS - NO preguntas básicas como 'cuánto tiempo', "
+                    "'cuándo comenzó', 'duración', 'medicamentos', etc. Esas ya fueron preguntadas.\n\n"
+                    "Genera preguntas diagnósticas ALTAMENTE ESPECÍFICAS que exploren:\n"
+                    "- Patrones específicos de síntomas, desencadenantes o asociaciones\n"
+                    "- Caracterización detallada de síntomas (calidad, radiación, momento)\n"
+                    "- Impacto en sistemas corporales o funciones específicas\n"
+                    "- Historia detallada relacionada con la queja principal\n"
+                    "- Pistas diagnósticas específicas o señales de alerta\n\n"
+                    "Ejemplos de BUENAS preguntas diagnósticas profundas:\n"
+                    "- '¿Puede describir el patrón exacto de su [síntoma] - viene en oleadas, es constante, o tiene desencadenantes específicos?'\n"
+                    "- 'Cuando experimenta [síntoma], ¿se irradia a alguna otra parte de su cuerpo, y si es así, dónde exactamente?'\n"
+                    "- '¿Ha notado alguna hora específica del día o circunstancias cuando [síntoma] empeora o mejora?'\n"
+                    "- '¿Hay alguna actividad, posición o movimiento específico que desencadene o empeore su [síntoma]?'\n\n"
+                    "Ejemplos de MALAS preguntas (NO hagas estas - son demasiado básicas):\n"
+                    "- '¿Desde hace cuánto tiempo tiene esto?' (ya preguntado)\n"
+                    "- '¿Qué medicamentos está tomando?' (ya preguntado)\n"
+                    "- '¿Puede describir sus síntomas?' (demasiado genérico)\n\n"
+                )
+
+            duplicate_warning_sp = ""
+            if avoid_similar_to:
+                duplicate_warning_sp = (
+                    f"⚠️ ADVERTENCIA CRÍTICA: La pregunta '{avoid_similar_to}' fue RECHAZADA como duplicado. "
+                    "Debes generar una pregunta COMPLETAMENTE DIFERENTE sobre un TEMA DIFERENTE. NO reformules la misma pregunta.\n"
+                )
+
             user_prompt = f"""
 Contexto médico:
 - Queja principal: {medical_context.chief_complaint}
@@ -757,40 +951,28 @@ Información ya recopilada:
 
 Progreso: Pregunta {current_count + 1} de {max_count}
 
-{"⚠️ ADVERTENCIA CRÍTICA: La pregunta '" + avoid_similar_to + "' fue RECHAZADA como duplicado. Debes generar una pregunta COMPLETAMENTE DIFERENTE sobre un TEMA DIFERENTE. NO reformules la misma pregunta." if avoid_similar_to else ""}
+{deep_diagnostic_block_sp}
+
+"REGLAS DE FLUJO Y CATEGORÍAS (OBLIGATORIAS):\n"
+"- Sigue la secuencia global: 1) duración (ya debería estar cubierta salvo que sea la primera pregunta), 2) UNA pregunta combinada de medicamentos + cuidados/remedios caseros, 3) temas de alta prioridad según la enfermedad, 4) síntomas asociados (<=3 únicos), 5) monitoreo crónico (exactamente 2 si es crónica), 6) detección/complicaciones (exactamente 1 si es crónica), 7) categorías restantes (<=1 pregunta cada una), 8) pregunta de cierre solo al final (>=7 preguntas totales o sin temas valiosos pendientes).\n"
+"- Si el médico seleccionó categorías, cúbrelas primero dentro de esta secuencia eligiendo la pregunta más relevante clínicamente.\n"
+"- No preguntes historia familiar en cuadros agudos/infecciosos ni en dolor aislado. En condiciones crónicas, omite preguntas de historial médico / episodios similares ("¿Ha pasado antes?", etc.) a menos que el médico lo haya solicitado explícitamente.\n"
+"- Escenarios agudos/infecciosos: enfócate en duración, síntomas asociados, medicamentos/cuidados caseros, viajes relevantes, episodios previos similares. NO hagas preguntas de monitoreo/detección crónica.\n"
+"- Escenarios de dolor: prioriza duración, caracterización/severidad, desencadenantes/alivio, impacto funcional, medicamentos/cuidados caseros, episodios previos. Evita historia familiar salvo dolor crónico.\n"
+"- Salud de la mujer: incluye síntomas hormonales/ginecológicos, tamizajes recientes (Pap, examen pélvico, mamografía, densitometría, laboratorios hormonales) e historia familiar pertinente. Viajes/alergias solo con justificación.\n"
+"- Enfermedades crónicas (diabetes, hipertensión, asma, tiroides, cardiopatías, cáncer, EPOC, etc.): formula DOS preguntas de monitoreo y UNA de detección/complicaciones mencionando pruebas reales (fondo de ojo/examen de pies/consulta dental + laboratorios renales para diabetes; laboratorios renales, examen retinal y pruebas cardíacas para hipertensión; espirometría, pruebas de alergia, imágenes torácicas y peak-flow basal para asma; TSH/FT4, examen de cuello/ultrasonido, densitometría ósea y ritmo cardíaco para tiroides; panel lipídico, prueba de esfuerzo, Holter/ECG, ecocardiograma para cardiopatías; CT/MRI/PET, marcadores tumorales, biopsias y estudios de estadificación para oncología). Combina screening y complicaciones en una sola pregunta rica.\n"
+"- Guía por edad: <12 y >60 -> sin preguntas menstruales. Ajusta para pubertad, fertilidad o menopausia según corresponda.\n"
+"- No dividas apetito, peso y energía en preguntas separadas; una vez cubierto un aspecto, los demás quedan redundantes.\n"
+"- Preguntas de viaje solo cuando la casilla esté marcada Y el cuadro clínico lo amerite.\n\n"
+
+{duplicate_warning_sp}
 
 INSTRUCCIÓN ESPECIAL: Si las brechas de información están vacías, genera una pregunta exploratoria médicamente relevante basada en la queja principal y las propiedades de la condición. NO hagas una pregunta genérica de "¿algo más?" a menos que sea la última pregunta.
 
-DETECCIÓN UNIVERSAL DE DUPLICADOS SEMÁNTICOS:
+PREVENCIÓN DE DUPLICADOS:
 
-PRINCIPIO CLAVE: Dos preguntas son DUPLICADAS si buscan el MISMO TIPO de información del paciente, sin importar cómo estén formuladas.
-
-EQUIVALENCIAS SEMÁNTICAS (estas preguntas son LA MISMA pregunta):
-1. DESCRIPCIÓN DE SÍNTOMAS:
-   - "¿Cuál es su principal preocupación?" (Q1 queja principal)
-   = "Describa sus síntomas"
-   = "¿Qué síntomas está experimentando?"
-   = "¿Puede decirme qué está sintiendo?"
-   ↑ Si el paciente YA describió su queja principal, NO vuelvas a preguntar por síntomas
-
-2. SÍNTOMAS ADICIONALES:
-   - "¿Ha experimentado otros síntomas?"
-   = "Síntomas asociados"
-   = "Síntomas específicos adicionales"
-   = "Otros síntomas relacionados"
-   ↑ Si YA se preguntó sobre "otros síntomas", NO repitas en ninguna forma
-
-3. DURACIÓN:
-   - "¿Desde hace cuánto tiempo?"
-   = "¿Cuándo comenzó?"
-   = "Duración de los síntomas"
-   ↑ Si YA se preguntó duración, NO repitas
-
-4. MEDICAMENTOS:
-   - "¿Qué medicamentos está tomando?"
-   = "Tratamientos que ha probado"
-   = "Medicamentos o suplementos"
-   ↑ Si YA se preguntó medicamentos, NO repitas
+CRÍTICO: Revisa "Temas cubiertos" y "Categorías redundantes" - estos temas YA fueron preguntados y NO deben repetirse.
+La detección programática de duplicados rechazará cualquier pregunta duplicada, así que asegúrate de que tu pregunta sea sobre un NUEVO tema de "Brechas de información".
 
 VALIDACIÓN OBLIGATORIA antes de generar:
 Paso 1: Identifica qué INFORMACIÓN CENTRAL busca tu pregunta
@@ -802,24 +984,11 @@ REGLAS CRÍTICAS:
 1. Genera UNA pregunta sobre el siguiente tema más importante que AÚN NO se ha cubierto
 2. Prioriza brechas de información sobre temas prioritarios
 3. NUNCA preguntes sobre temas en "Temas a EVITAR"
-4. NUNCA repitas categorías en "Categorías redundantes"
-5. Si ya se mencionó duración, NO preguntes sobre duración de nuevo
-6. Si ya se preguntó sobre medicamentos, NO repitas esa pregunta
-7. Haz la pregunta clara, específica y amigable para el paciente
-8. La pregunta debe ser tipo entrevista, NO tipo cuestionario
-9. Termina siempre con "?"
-10. NO incluyas razonamiento, categorías o explicaciones - SOLO la pregunta
-
-EJEMPLOS DE BUENAS PREGUNTAS (estilo entrevista):
-- "¿Qué tratamientos o medicamentos ha probado para este problema?"
-- "¿Hay algo que haga que el dolor empeore o mejore?"
-- "¿Ha notado otros síntomas junto con esto?"
-- "¿Alguien en su familia ha tenido problemas similares?"
-
-EJEMPLOS DE MALAS PREGUNTAS (evitar):
-- "Descríbame su historial médico completo" (demasiado amplio)
-- "¿Tiene diabetes?" (sí/no cerrado, no entrevista)
-- "Califique su dolor del 1 al 10" (tipo cuestionario)
+4. NUNCA repitas categorías en "Categorías redundantes" (incluye duración y medicamentos si ya fueron preguntados)
+5. Haz la pregunta clara, específica y amigable para el paciente
+6. La pregunta debe ser tipo entrevista, NO tipo cuestionario
+7. Termina siempre con "?"
+8. NO incluyas razonamiento, categorías o explicaciones - SOLO la pregunta
 
 VALIDACIÓN FINAL OBLIGATORIA:
 Antes de responder, VERIFICA:
@@ -840,6 +1009,37 @@ Genera LA SIGUIENTE pregunta más importante ahora:"""
 Your job is to generate ONE medically relevant, clear, and patient-friendly question.
 
 The question should be appropriate for a medical interview context."""
+
+            deep_diagnostic_block_en = ""
+            if is_deep_diagnostic:
+                deep_diagnostic_block_en = (
+                    "🔍 DEEP DIAGNOSTIC MODE: The patient agreed to answer detailed diagnostic questions. "
+                    "This is deep diagnostic question #" + str(current_count - 9) + " of 3.\n\n"
+                    "CRITICAL: These questions must be DEEPLY DIAGNOSTIC - NOT basic questions like 'how long', "
+                    "'when did it start', 'duration', 'medications', etc. Those have already been asked.\n\n"
+                    "Generate HIGHLY SPECIFIC diagnostic questions that explore:\n"
+                    "- Specific symptom patterns, triggers, or associations\n"
+                    "- Detailed characterization of symptoms (quality, radiation, timing)\n"
+                    "- Impact on specific body systems or functions\n"
+                    "- Detailed history related to the chief complaint\n"
+                    "- Specific diagnostic clues or red flags\n\n"
+                    "Examples of GOOD deep diagnostic questions:\n"
+                    "- 'Can you describe the exact pattern of your [symptom] - does it come in waves, is it constant, or does it have specific triggers?'\n"
+                    "- 'When you experience [symptom], does it radiate to any other part of your body, and if so, where exactly?'\n"
+                    "- 'Have you noticed any specific time of day or circumstances when [symptom] is worse or better?'\n"
+                    "- 'Are there any specific activities, positions, or movements that trigger or worsen your [symptom]?'\n\n"
+                    "Examples of BAD questions (DO NOT ask these - they're too basic):\n"
+                    "- 'How long have you had this?' (already asked)\n"
+                    "- 'What medications are you taking?' (already asked)\n"
+                    "- 'Can you describe your symptoms?' (too generic)\n\n"
+                )
+
+            duplicate_warning_en = ""
+            if avoid_similar_to:
+                duplicate_warning_en = (
+                    f"⚠️ CRITICAL WARNING: The question '{avoid_similar_to}' was REJECTED as duplicate. "
+                    "You MUST generate a COMPLETELY DIFFERENT question about a DIFFERENT TOPIC. DO NOT rephrase the same question.\n"
+                )
 
             user_prompt = f"""
 Medical context:
@@ -869,40 +1069,28 @@ Information already collected:
 
 Progress: Question {current_count + 1} of {max_count}
 
-{"⚠️ CRITICAL WARNING: The question '" + avoid_similar_to + "' was REJECTED as duplicate. You MUST generate a COMPLETELY DIFFERENT question about a DIFFERENT TOPIC. DO NOT rephrase the same question." if avoid_similar_to else ""}
+{deep_diagnostic_block_en}
+
+"FLOW & CATEGORY RULES (MANDATORY):\n"
+"- Follow the global sequence: 1) duration (already asked unless this is Q1), 2) one combined medications + home/self-care question, 3) disease-specific high-priority items, 4) associated symptoms (<=3 unique), 5) chronic monitoring (exactly 2 when chronic), 6) chronic screening/complication (exactly 1 when chronic), 7) remaining categories (<=1 question each), 8) closing question only at the end (>=7 total questions or no high-value topics left).\n"
+"- If the doctor selected categories, address them first within that sequence while choosing the most clinically relevant question.\n"
+"- Do not ask family history for purely acute infections or isolated pain complaints. For chronic conditions, SKIP any past medical history / "have you had this before" questions unless the doctor explicitly selected that category.\n"
+"- Acute/infectious scenarios: focus on duration, associated symptoms, combined meds/home care, relevant travel exposure, prior similar episodes. NO chronic monitoring/screening questions.\n"
+"- Pain scenarios: emphasise duration, pain character/severity, triggers/relief, functional impact, combined meds/home care, previous similar episodes. Avoid family history unless managing chronic pain.\n"
+"- Women's health: include hormonal/gynecologic symptoms, recent screenings (Pap, pelvic exam, mammogram, bone density, hormone labs) and pertinent family history. Travel/allergy questions only when justified.\n"
+"- Chronic diseases (diabetes, hypertension, asthma, thyroid, heart disease, cancer, COPD, etc.): ensure TWO monitoring questions and ONE screening/complication question referencing real tests (eye/foot/dental + kidney labs for diabetes; kidney labs, retinal exam and cardiac testing for hypertension; pulmonary function test, allergy testing, chest imaging and peak-flow baseline for asthma; TSH/FT4, neck exam/ultrasound, bone density and heart rhythm checks for thyroid; lipid panel, stress test, Holter/ECG, echocardiogram for heart disease; CT/MRI/PET, tumour markers, biopsies and staging labs for oncology). Combine screening and complications into a single rich question.\n"
+"- Apply age guidance: <12 and >60 -> no menstrual questions. Adjust for puberty, fertility or menopause as appropriate.\n"
+"- Do not split appetite, weight and energy into separate questions; once covered, treat the others as redundant.\n"
+"- Travel questions only when the travel checkbox is true AND symptoms justify it.\n\n"
+
+{duplicate_warning_en}
 
 SPECIAL INSTRUCTION: If information_gaps is empty, generate a medically relevant exploratory question based on the chief complaint and condition properties. Do NOT ask a generic "anything else?" question unless this is the last question.
 
-UNIVERSAL SEMANTIC DUPLICATE DETECTION:
+DUPLICATE PREVENTION:
 
-KEY PRINCIPLE: Two questions are DUPLICATES if they seek the SAME TYPE of patient information, regardless of how they're worded.
-
-SEMANTIC EQUIVALENCES (these questions are THE SAME question):
-1. SYMPTOM DESCRIPTION:
-   - "What is your main concern?" (Q1 chief complaint)
-   = "Describe your symptoms"
-   = "What symptoms are you experiencing?"
-   = "Can you tell me what you're feeling?"
-   ↑ If patient ALREADY described their chief complaint, DO NOT ask about symptoms again
-
-2. ADDITIONAL SYMPTOMS:
-   - "Have you experienced any other symptoms?"
-   = "Associated symptoms"
-   = "Specific additional symptoms"
-   = "Other related symptoms"
-   ↑ If "other symptoms" was ALREADY asked, DO NOT repeat in any form
-
-3. DURATION:
-   - "How long have you had this?"
-   = "When did it start?"
-   = "Duration of symptoms"
-   ↑ If duration was ALREADY asked, DO NOT repeat
-
-4. MEDICATIONS:
-   - "What medications are you taking?"
-   = "Treatments you've tried"
-   = "Medications or supplements"
-   ↑ If medications were ALREADY asked, DO NOT repeat
+CRITICAL: Check "Topics covered" and "Redundant categories" - these topics have ALREADY been asked and must NOT be repeated.
+Programmatic duplicate detection will reject any duplicate questions, so ensure your question is about a NEW topic from "Information gaps".
 
 MANDATORY VALIDATION before generating:
 Step 1: Identify what CORE INFORMATION your question seeks
@@ -914,24 +1102,11 @@ CRITICAL RULES:
 1. Generate ONE question about the next most important topic that has NOT been covered
 2. Prioritize information gaps from priority topics
 3. NEVER ask about topics in "Topics to AVOID"
-4. NEVER repeat categories in "Redundant categories"
-5. If duration already mentioned, DO NOT ask about duration again
-6. If medications already asked, DO NOT repeat that question
-7. Make the question clear, specific, and patient-friendly
-8. Question should be interview-style, NOT questionnaire-style
-9. Always end with "?"
-10. DO NOT include reasoning, categories, or explanations - ONLY the question
-
-EXAMPLES OF GOOD QUESTIONS (interview style):
-- "What treatments or medications have you tried for this problem?"
-- "Is there anything that makes the pain worse or better?"
-- "Have you noticed any other symptoms along with this?"
-- "Has anyone in your family had similar issues?"
-
-EXAMPLES OF BAD QUESTIONS (avoid):
-- "Describe your complete medical history" (too broad)
-- "Do you have diabetes?" (yes/no closed, not interview)
-- "Rate your pain 1-10" (questionnaire style)
+4. NEVER repeat categories in "Redundant categories" (includes duration and medications if already asked)
+5. Make the question clear, specific, and patient-friendly
+6. Question should be interview-style, NOT questionnaire-style
+7. Always end with "?"
+8. DO NOT include reasoning, categories, or explanations - ONLY the question
 
 MANDATORY FINAL VALIDATION:
 Before responding, VERIFY:
@@ -947,8 +1122,8 @@ Example of correct response: What medications are you currently taking?
 Generate THE NEXT most important question now:"""
 
         try:
-            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
             response, metrics = await self._client.chat_completion(
+                model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -1289,8 +1464,9 @@ class OpenAIQuestionService(QuestionService):
             if self._debug_prompts:
                 logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
 
-            # Use Azure OpenAI deployment name (model parameter is ignored for Azure OpenAI)
+            # Use Helicone client with tracking
             resp, metrics = await self._client.chat_completion(
+                model=self._settings.openai.model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -1320,6 +1496,74 @@ class OpenAIQuestionService(QuestionService):
         if normalized in ['es', 'sp']:
             return 'sp'
         return normalized if normalized in ['en', 'sp'] else 'en'
+
+    def _get_topic_count(
+        self,
+        extracted_info: ExtractedInformation,
+        topic_keys: List[str],
+    ) -> int:
+        """Count how many times any of the given topic keys have been asked."""
+        if not extracted_info:
+            return 0
+        
+        total = 0
+        if extracted_info.topic_counts:
+            for key in topic_keys:
+                total += extracted_info.topic_counts.get(key, 0)
+        else:
+            counter = Counter(extracted_info.topics_covered or [])
+            for key in topic_keys:
+                total += counter.get(key, 0)
+        return total
+
+    def _enforce_topic_requirement(
+        self,
+        extracted_info: ExtractedInformation,
+        topic_en: str,
+        topic_sp: str,
+        required_count: int,
+        language: str,
+        insert_after: Optional[List[str]] = None,
+        log_context: Optional[str] = None,
+    ) -> int:
+        """
+        Ensure a topic appears the required number of times by adjusting information_gaps/redundant_categories.
+        """
+        lang = self._normalize_language(language)
+        topic_name = topic_sp if lang == "sp" else topic_en
+        topic_keys = [topic_en, topic_sp]
+        
+        count = self._get_topic_count(extracted_info, topic_keys)
+        
+        info_gaps = list(extracted_info.information_gaps or [])
+        redundant = list(extracted_info.redundant_categories or [])
+        
+        if count < required_count:
+            if topic_name not in info_gaps:
+                insert_pos = 0
+                if insert_after:
+                    insert_pos = len(info_gaps)
+                    for i, name in enumerate(info_gaps):
+                        if name in insert_after:
+                            insert_pos = i + 1
+                insert_pos = max(0, min(insert_pos, len(info_gaps)))
+                info_gaps.insert(insert_pos, topic_name)
+                if log_context:
+                    logger.warning(
+                        f"{log_context} requirement not met (count={count} < {required_count}). "
+                        f"Added '{topic_name}' to information_gaps at position {insert_pos}"
+                    )
+            if topic_name in redundant:
+                redundant.remove(topic_name)
+        else:
+            if topic_name in info_gaps:
+                info_gaps.remove(topic_name)
+            if topic_name not in redundant:
+                redundant.append(topic_name)
+        
+        extracted_info.information_gaps = info_gaps
+        extracted_info.redundant_categories = redundant
+        return count
     
     async def generate_first_question(self, disease: str, language: str = "en") -> str:
         """Generate the first intake question"""
@@ -1350,6 +1594,7 @@ class OpenAIQuestionService(QuestionService):
         """
         
         try:
+            max_count = max(1, min(14, max_count))
             # AGENT 1: Analyze medical context
             logger.info(f"Agent 1: Analyzing medical context for '{disease}'")
             medical_context = await self._context_analyzer.analyze_condition(
@@ -1373,6 +1618,102 @@ class OpenAIQuestionService(QuestionService):
             logger.info(f"Agent 2 Results - Topics covered: {extracted_info.topics_covered}")
             logger.info(f"Agent 2 Results - Information gaps: {extracted_info.information_gaps}")
             logger.info(f"Agent 2 Results - Redundant categories: {extracted_info.redundant_categories}")
+            
+            condition_props = medical_context.condition_properties or {}
+            is_chronic = condition_props.get("is_chronic", False)
+            is_pain_related = condition_props.get("is_pain_related", False)
+
+            if is_chronic:
+                monitoring_count = self._enforce_topic_requirement(
+                    extracted_info=extracted_info,
+                    topic_en="chronic_monitoring",
+                    topic_sp="monitoreo_crónico",
+                    required_count=2,
+                    language=language,
+                    insert_after=["current_medications", "medicamentos_actuales"],
+                    log_context="Chronic monitoring",
+                )
+                screening_count = self._enforce_topic_requirement(
+                    extracted_info=extracted_info,
+                    topic_en="screening",
+                    topic_sp="detección",
+                    required_count=1,
+                    language=language,
+                    insert_after=[
+                        "chronic_monitoring", "monitoreo_crónico",
+                        "screening", "detección",
+                        "current_medications", "medicamentos_actuales"
+                    ],
+                    log_context="Screening",
+                )
+                logger.info(
+                    f"Chronic disease topic counts -> monitoring: {monitoring_count}, screening: {screening_count}"
+                )
+
+            if not is_pain_related:
+                pain_topics = ["pain_assessment", "pain_characterization", "evaluación_dolor", "caracterización_dolor"]
+                info_gaps = list(extracted_info.information_gaps or [])
+                redundant = list(extracted_info.redundant_categories or [])
+                for pain_topic in pain_topics:
+                    if pain_topic in info_gaps:
+                        info_gaps.remove(pain_topic)
+                        logger.info(f"Removed {pain_topic} from information_gaps - condition not pain-related")
+                    if pain_topic not in redundant:
+                        redundant.append(pain_topic)
+                extracted_info.information_gaps = info_gaps
+                extracted_info.redundant_categories = redundant
+
+            # CRITICAL: Check if patient answered "yes" to diagnostic consent question
+            # If yes, we need to generate deep diagnostic questions (3 questions)
+            diagnostic_consent_patterns = [
+                "would you like to answer some detailed diagnostic questions",
+                "detailed diagnostic questions related to your symptoms",
+                "le gustaría responder algunas preguntas diagnósticas detalladas",
+                "preguntas diagnósticas detalladas relacionadas con sus síntomas"
+            ]
+            
+            # Check if last question was diagnostic consent
+            is_after_consent = False
+            if asked_questions and previous_answers and len(asked_questions) == len(previous_answers):
+                last_question = asked_questions[-1].lower()
+                last_answer = previous_answers[-1].lower().strip()
+                is_consent_question = any(pattern in last_question for pattern in diagnostic_consent_patterns)
+                
+                if is_consent_question:
+                    # Check if answer is positive
+                    positive_responses = ["yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
+                                        "sí", "si", "claro", "por supuesto", "por supuesto que sí", "de acuerdo"]
+                    is_positive = any(pos in last_answer for pos in positive_responses) and len(last_answer) < 50
+                    
+                    if is_positive:
+                        is_after_consent = True
+                        logger.info(f"Patient answered YES to diagnostic consent - will generate deep diagnostic questions")
+                        # Update max_count to 14 to allow for 3 deep diagnostic questions + final question
+                        if max_count < 14:
+                            max_count = 14
+                            logger.info(f"Updated max_count to 14 for deep diagnostic questions")
+                    else:
+                        negative_responses = [
+                            "no", "n", "nope", "nah", "not really", "don't", "dont",
+                            "no gracias", "no quiero", "no, gracias", "no, no quiero"
+                        ]
+                        is_negative = any(neg in last_answer for neg in negative_responses) and len(last_answer) < 50
+                        if is_negative:
+                            logger.info("Patient declined diagnostic consent - returning final question immediately")
+                            lang = self._normalize_language(language)
+                            if lang == "sp":
+                                return "¿Hay algo más que le gustaría compartir sobre su condición?"
+                            return "Is there anything else you'd like to share about your condition?"
+            
+            # Gather condition properties (for logging/prompts only, no hardcoded enforcement)
+            
+            # CRITICAL: Check if this is Q10 (current_count == 9) - ask diagnostic consent question
+            if current_count == 9:
+                logger.info("Q10 reached - generating diagnostic consent question")
+                lang = self._normalize_language(language)
+                if lang == "sp":
+                    return "¿Le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?"
+                return "Would you like to answer some detailed diagnostic questions related to your symptoms?"
             
             # Validation: Check if we've reached max questions before checking information gaps
             # This prevents premature fallback to generic questions
@@ -1401,6 +1742,27 @@ class OpenAIQuestionService(QuestionService):
                 if attempt > 0:
                     logger.warning(f"Retry attempt {attempt} due to duplicate detection")
                 
+                # Count deep diagnostic questions if we're after consent
+                deeper_count = 0
+                if is_after_consent and asked_questions:
+                    # Count questions asked after the consent question
+                    consent_index = -1
+                    for i, q in enumerate(asked_questions):
+                        if any(pattern in q.lower() for pattern in diagnostic_consent_patterns):
+                            consent_index = i
+                            break
+                    if consent_index >= 0:
+                        # Count questions after consent (excluding the consent question itself)
+                        deeper_count = len(asked_questions) - consent_index - 1
+                
+                # If we've asked 3 deep diagnostic questions, ask final question
+                if is_after_consent and deeper_count >= 3:
+                    logger.info(f"3 deep diagnostic questions completed ({deeper_count} asked) - generating final question")
+                    lang = self._normalize_language(language)
+                    if lang == "sp":
+                        return "¿Hay algo más que le gustaría compartir sobre su condición?"
+                    return "Is there anything else you'd like to share about your condition?"
+                
                 question = await self._question_generator.generate_question(
                     medical_context=medical_context,
                     extracted_info=extracted_info,
@@ -1409,7 +1771,8 @@ class OpenAIQuestionService(QuestionService):
                     language=language,
                     avoid_similar_to=rejected_question,  # Tell Agent 3 to avoid this specific question
                     asked_questions=asked_questions,  # Full Q&A history for context
-                    previous_answers=previous_answers  # Full Q&A history for context
+                    previous_answers=previous_answers,  # Full Q&A history for context
+                    is_deep_diagnostic=is_after_consent and deeper_count < 3  # Generate deep diagnostic if after consent and less than 3 asked
                 )
                 
                 # AGENT 4: Validate safety

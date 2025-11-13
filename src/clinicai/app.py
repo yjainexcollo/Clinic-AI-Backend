@@ -18,6 +18,7 @@ from .api.routers import intake as intake_router
 from .core.config import get_settings
 from .domain.errors import DomainError
 from .core.hipaa_audit import get_audit_logger
+from .middleware.auth_middleware import AuthenticationMiddleware
 from .middleware.hipaa_middleware import HIPAAAuditMiddleware
 from .middleware.performance_middleware import PerformanceMiddleware
 from clinicai.middleware.request_id_middleware import RequestIDMiddleware
@@ -334,7 +335,13 @@ def create_app() -> FastAPI:
     
     # Add specific headers for file uploads
     if allow_headers != ["*"]:
-        upload_headers = ["content-type", "content-disposition", "authorization", "x-requested-with"]
+        upload_headers = [
+            "content-type",
+            "content-disposition",
+            "authorization",
+            "x-requested-with",
+            "x-api-key",
+        ]
         for header in upload_headers:
             if header not in {h.lower() for h in allow_headers}:
                 allow_headers.append(header)
@@ -356,7 +363,12 @@ def create_app() -> FastAPI:
         expose_headers=["*"],  # Expose all headers to client
     )
     
-    # Add HIPAA audit middleware
+    # Add authentication middleware FIRST (before HIPAA audit)
+    # This ensures all PHI endpoints require authentication
+    app.add_middleware(AuthenticationMiddleware)
+    
+    # Add HIPAA audit middleware (runs after authentication)
+    # This logs all PHI access with authenticated user IDs
     app.add_middleware(HIPAAAuditMiddleware)
     
     # Add performance tracking middleware
@@ -386,7 +398,7 @@ def create_app() -> FastAPI:
         # Add CORS headers to all responses
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, X-API-Key, Accept, Origin"
         response.headers["Access-Control-Expose-Headers"] = "*"
         response.headers["Access-Control-Max-Age"] = "600"
         

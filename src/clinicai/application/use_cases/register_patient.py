@@ -45,6 +45,7 @@ class RegisterPatientUseCase:
             visit = Visit(
                 visit_id=visit_id, patient_id=existing_patient.patient_id.value, symptom=""
             )
+            visit.intake_session.max_questions = 10
             # Update patient's language preference for this visit
             existing_patient.language = request.language
             first_question = await self._question_service.generate_first_question(
@@ -90,6 +91,7 @@ class RegisterPatientUseCase:
         visit = Visit(
             visit_id=visit_id, patient_id=patient_id.value, symptom=""
         )
+        visit.intake_session.max_questions = 10
 
         # Generate first question via QuestionService for consistency
         first_question = await self._question_service.generate_first_question(

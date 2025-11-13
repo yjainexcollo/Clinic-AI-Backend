@@ -20,33 +20,55 @@ def extract_user_id_from_request(request: Request) -> str:
     Extract user ID from request headers or state.
     
     Priority:
-    1. request.state.user_id (set by auth middleware)
-    2. X-User-ID header
-    3. Authorization header
-    4. "anonymous" (development only - NOT HIPAA compliant for production)
+    1. request.state.user_id (set by auth middleware) - PRIMARY SOURCE
+    2. X-User-ID header (for trusted frontend scenarios)
+    3. Authorization header (fallback if auth middleware didn't set user_id)
+    
+    Note: "anonymous" fallback removed for HIPAA compliance.
+    All PHI access must be authenticated.
     """
-    # Check if auth middleware already set user_id
+    # Check if auth middleware already set user_id (this is the primary source)
     if hasattr(request.state, "user_id") and request.state.user_id:
         return request.state.user_id
     
-    # Check X-User-ID header
+    # Fallback: Try to extract from headers (for cases where auth middleware might not have run)
+    # This should rarely be needed if authentication middleware is properly configured
     user_id_header = request.headers.get("X-User-ID") or request.headers.get("x-user-id")
     if user_id_header:
+        logger.warning(
+            f"Using X-User-ID header for user identification on {request.url.path}. "
+            "This should be set by authentication middleware."
+        )
         return user_id_header
     
-    # Check Authorization header
+    # Last resort: Try to get from Authorization header
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     if auth_header:
         if auth_header.startswith("Bearer "):
             # Extract token and use first 20 chars as identifier
             token = auth_header[7:]
+            logger.warning(
+                f"Extracting user ID from Bearer token on {request.url.path}. "
+                "Authentication middleware should have set request.state.user_id."
+            )
             return f"bearer_{token[:20]}"
         elif auth_header.startswith("Basic "):
-            # Basic auth
-            return "basic_auth_user"
+            # Basic auth - extract username
+            import base64
+            try:
+                credentials = base64.b64decode(auth_header[6:]).decode("utf-8")
+                username, _ = credentials.split(":", 1)
+                return username
+            except Exception:
+                pass
     
-    # Development fallback - NOT HIPAA compliant for production
-    return "anonymous"
+    # No authentication found - this should not happen if authentication middleware is working
+    # Log as "unauthenticated" for audit purposes, but this indicates a configuration issue
+    logger.error(
+        f"❌ No user ID found for request to {request.url.path}. "
+        "Authentication middleware should have set request.state.user_id or rejected the request."
+    )
+    return "unauthenticated"
 
 
 class HIPAAAuditMiddleware(BaseHTTPMiddleware):

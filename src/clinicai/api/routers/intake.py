@@ -76,13 +76,13 @@ async def _load_preferences(doctor_id: str) -> Dict[str, Any]:
         return {
             "doctor_id": doctor_id,
             "categories": [],
-            "max_questions": 5,
+            "max_questions": 10,
             "global_categories": default_globals,
         }
     return {
         "doctor_id": doctor_id,
         "categories": list(dict.fromkeys([c.strip().lower() for c in (doc.selected_categories or [])])),
-        "max_questions": int(doc.max_questions or 5),
+        "max_questions": max(1, min(14, int(doc.max_questions or 10))),
         "global_categories": list(dict.fromkeys([c.strip().lower() for c in (doc.global_categories or [])])),
     }
 
@@ -98,7 +98,7 @@ async def start_intake(request: Request, req: IntakeStartRequest):
             "patient_id": req.patient_id,
             "doctor_id": prefs["doctor_id"],
             "categories": prefs["categories"],
-            "max_questions": prefs["max_questions"],
+            "max_questions": max(1, min(14, int(prefs["max_questions"]))),
             "asked_count": 0,
             "asked_questions": [],  # type: List[str]
             "previous_answers": [],  # type: List[str]
@@ -128,7 +128,7 @@ async def next_question(request: Request, req: NextQuestionRequest, question_ser
         raise HTTPException(status_code=404, detail={"error": "SESSION_NOT_FOUND", "message": "Start intake first."})
 
     asked_count = int(session.get("asked_count", 0))
-    max_questions = int(session.get("max_questions", 5))
+    max_questions = max(1, min(14, int(session.get("max_questions", 10))))
 
     # Stop if limit reached
     if asked_count >= max_questions:

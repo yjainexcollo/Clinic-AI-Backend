@@ -28,10 +28,12 @@ class HeliconeOpenAIClient:
         self.environment = environment
         
         if self.helicone_enabled:
+            # Allow overriding the proxy endpoint (e.g., self-hosted Helicone)
+            base_url = os.getenv("HELICONE_BASE_URL", "https://oai.hconeai.com/v1")
             # Use Helicone proxy for all OpenAI calls
             self.client = AsyncOpenAI(
                 api_key=api_key,
-                base_url="https://oai.hconeai.com/v1",
+                base_url=base_url,
                 default_headers={
                     "Helicone-Auth": f"Bearer {helicone_api_key}",
                     "Helicone-Property-Environment": environment,
@@ -39,7 +41,7 @@ class HeliconeOpenAIClient:
                     "Helicone-Cache-Enabled": "true" if enable_cache else "false",
                 }
             )
-            logger.info("✅ Helicone AI observability enabled")
+            logger.info("✅ Helicone AI observability enabled (base_url=%s)", base_url)
         else:
             self.client = AsyncOpenAI(api_key=api_key)
             logger.warning("⚠️  Helicone disabled - no AI observability")

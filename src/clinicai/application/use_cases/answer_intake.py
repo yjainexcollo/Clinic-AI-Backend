@@ -1,6 +1,8 @@
 """Answer Intake use case for Step-01 functionality.
 Formatting-only changes; behavior preserved.
 """
+import logging
+from ...domain.entities.visit import Visit
 from ...domain.errors import (
     IntakeAlreadyCompletedError,
     PatientNotFoundError,
@@ -10,17 +12,16 @@ from ...domain.errors import (
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
 from ..dto.patient_dto import (
-    AnswerIntakeRequest,
-    AnswerIntakeResponse,
-    EditAnswerRequest,
-    EditAnswerResponse,
-    PreVisitSummaryRequest,
+AnswerIntakeRequest,
+AnswerIntakeResponse,
+EditAnswerRequest,
+EditAnswerResponse,
+PreVisitSummaryRequest,
 )
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.question_service import QuestionService
-
-
+logger = logging.getLogger("clinicai")
 class AnswerIntakeUseCase:
     """Use case for answering intake questions."""
 
@@ -41,15 +42,13 @@ class AnswerIntakeUseCase:
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id
-        )
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
-        
 
         # Build prior context from latest completed visit (excluding current)
         from typing import Optional, List
+
         prior_summary: Optional[str] = None
         prior_qas: Optional[List[str]] = None
         try:
@@ -77,7 +76,7 @@ class AnswerIntakeUseCase:
             if visit.intake_session.current_question_count == 0:
                 current_question = await self._question_service.generate_first_question(
                     disease=visit.symptom or "general consultation",
-                    language=patient.language
+                    language=patient.language,
                 )
             else:
                 previous_answers = [qa.answer for qa in visit.intake_session.questions_asked]
@@ -126,9 +125,12 @@ class AnswerIntakeUseCase:
             current_question,
             request.answer,
         )
+
         # If this is the first answer, set the visit.symptom from patient's response
         if visit.symptom == "" and visit.intake_session.current_question_count == 1:
             visit.symptom = request.answer.strip()
+
+        self._apply_diagnostic_consent_limit(visit)
 
         # Check if we should stop asking questions
         should_stop = await self._question_service.should_stop_asking(
@@ -144,19 +146,25 @@ class AnswerIntakeUseCase:
         # Enforce minimum of 5 questions before completion unless service decides to stop after >=5
         min_questions_required = 5
         reached_minimum = visit.intake_session.current_question_count >= min_questions_required
-        
-        # Log completion decision for debugging
-        import logging
-        logger = logging.getLogger("clinicai")
-        logger.info(f"Completion check: should_stop={should_stop}, reached_minimum={reached_minimum}, "
-                   f"can_ask_more={visit.can_ask_more_questions()}, current_count={visit.intake_session.current_question_count}")
+
+        logger.info(
+            "Completion check: should_stop=%s, reached_minimum=%s, can_ask_more=%s, current_count=%s",
+            should_stop,
+            reached_minimum,
+            visit.can_ask_more_questions(),
+            visit.intake_session.current_question_count,
+        )
 
         if (should_stop and reached_minimum) or not visit.can_ask_more_questions():
             # Complete the intake
             visit.complete_intake()
             is_complete = True
             message = "Intake completed successfully. Ready for next step."
-            logger.info(f"Intake completed for visit {request.visit_id} with {visit.intake_session.current_question_count} questions")
+            logger.info(
+                "Intake completed for visit %s with %s questions",
+                request.visit_id,
+                visit.intake_session.current_question_count,
+            )
         else:
             # Generate next question for the NEXT round and cache it as pending
             previous_answers = [qa.answer for qa in visit.intake_session.questions_asked]
@@ -220,13 +228,6 @@ class AnswerIntakeUseCase:
         # Save the updated visit
         await self._visit_repository.save(visit)
 
-        # Note: Pre-visit summary generation is now manual via /patients/summary/previsit endpoint
-        # This allows for better control over when summaries are generated
-
-        # Raise domain events
-        # Note: In a real implementation, you'd have an event bus
-
-        # Check if next question allows image upload
         allows_image_upload = False
         if next_question:
             allows_image_upload = await self._question_service.is_medication_question(next_question)
@@ -251,9 +252,7 @@ class AnswerIntakeUseCase:
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id
-        )
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -268,6 +267,7 @@ class AnswerIntakeUseCase:
 
         # Truncate all questions AFTER the edited one to allow dynamic regeneration
         visit.truncate_questions_after(request.question_number)
+        self._apply_diagnostic_consent_limit(visit)
 
         # Recompute and set pending next question from updated context
         previous_answers = [x.answer for x in visit.intake_session.questions_asked]
@@ -313,3 +313,37 @@ class AnswerIntakeUseCase:
             completion_percent=completion_percent,
             allows_image_upload=allows_image_upload,
         )
+
+    @staticmethod
+    def _apply_diagnostic_consent_limit(visit: Visit) -> None:
+        """Set intake max question limit based on diagnostic consent responses."""
+        if not visit or not visit.intake_session:
+            return
+
+        consent_prompts = {
+            "would you like to answer some detailed diagnostic questions related to your symptoms?",
+            "¿le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?",
+        }
+        positive_responses = {
+            "yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
+            "sí", "si", "claro", "por supuesto", "por supuesto que sí", "de acuerdo",
+        }
+        negative_responses = {
+            "no", "n", "nope", "nah", "not really", "don't", "dont",
+            "no gracias", "no quiero", "no, gracias", "no, no quiero",
+        }
+
+        # Base limit is 10 unless a positive consent appears
+        new_limit = 10
+        for qa in visit.intake_session.questions_asked:
+            question_text = (qa.question or "").strip().lower()
+            if question_text in consent_prompts:
+                answer_text = (qa.answer or "").strip().lower()
+                if any(resp in answer_text for resp in positive_responses):
+                    new_limit = 14
+                    break
+                if any(resp in answer_text for resp in negative_responses):
+                    new_limit = 10
+                    break
+
+        visit.intake_session.max_questions = max(1, min(14, new_limit))

@@ -35,7 +35,7 @@ class IntakeSession:
     symptom: str = ""  # Make symptom optional with default empty string
     questions_asked: List[QuestionAnswer] = field(default_factory=list)
     current_question_count: int = 0
-    max_questions: int = 10
+    max_questions: int = 14
     status: str = "in_progress"  # in_progress, completed, cancelled
     started_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None

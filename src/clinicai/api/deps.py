@@ -30,6 +30,8 @@ from ..application.ports.services.question_service import QuestionService
 from ..application.ports.services.transcription_service import TranscriptionService
 from ..application.ports.services.soap_service import SoapService
 from ..application.ports.services.action_plan_service import ActionPlanService
+from ..core.auth import get_auth_service
+from fastapi import Request
 
 
 @lru_cache()
@@ -114,6 +116,28 @@ def get_action_plan_service() -> ActionPlanService:
     return OpenAIActionPlanService()
 
 
+def get_current_user(request: Request) -> str:
+    """
+    Get current authenticated user ID from request state.
+    
+    This dependency can be used in endpoints to access the authenticated user ID.
+    The authentication middleware must have run first (which it does by default).
+    
+    Note: This is optional - most endpoints don't need this since user_id is
+    automatically logged by HIPAA audit middleware. Use this if you need to
+    access user_id in your endpoint logic.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        # This should not happen if authentication middleware is working
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=401,
+            detail="User not authenticated"
+        )
+    return user_id
+
+
 # Dependency annotations for FastAPI
 VisitRepositoryDep = Annotated[VisitRepository, Depends(get_visit_repository)]
 PatientRepositoryDep = Annotated[PatientRepository, Depends(get_patient_repository)]
@@ -123,3 +147,4 @@ QuestionServiceDep = Annotated[QuestionService, Depends(get_question_service)]
 TranscriptionServiceDep = Annotated[TranscriptionService, Depends(get_transcription_service)]
 SoapServiceDep = Annotated[SoapService, Depends(get_soap_service)]
 ActionPlanServiceDep = Annotated[ActionPlanService, Depends(get_action_plan_service)]
+CurrentUserDep = Annotated[str, Depends(get_current_user)]
