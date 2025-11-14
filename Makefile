@@ -101,6 +101,31 @@ docker-clean: ## Clean up Docker images and containers
 	docker rm $$(docker ps -aq) 2>/dev/null || true
 	docker rmi clinicai:latest 2>/dev/null || true
 
+# GCR (Google Container Registry) targets
+GCP_PROJECT = clinic-ai-472907
+IMAGE_NAME = clinic-ai-backend
+GCR_IMAGE = gcr.io/$(GCP_PROJECT)/$(IMAGE_NAME)
+
+gcr-auth: ## Authenticate with Google Container Registry
+	@echo "🔐 Authenticating with GCR..."
+	gcloud auth configure-docker --quiet
+	@echo "✅ Authentication configured"
+
+gcr-build: ## Build Docker image for GCR
+	@echo "🐳 Building Docker image for GCR..."
+	docker build -f docker/Dockerfile -t $(IMAGE_NAME):latest .
+	docker tag $(IMAGE_NAME):latest $(GCR_IMAGE):latest
+	@echo "✅ Image built and tagged: $(GCR_IMAGE):latest"
+
+gcr-push: gcr-build ## Push Docker image to GCR
+	@echo "📤 Pushing Docker image to GCR..."
+	docker push $(GCR_IMAGE):latest
+	@echo "✅ Image pushed to $(GCR_IMAGE):latest"
+
+gcr-build-push: gcr-auth gcr-push ## Build and push to GCR (complete workflow)
+	@echo "✅ Build and push to GCR complete!"
+	@echo "   Image: $(GCR_IMAGE):latest"
+
 # Documentation targets
 docs: ## Generate documentation
 	@echo "📚 Generating documentation..."
@@ -123,18 +148,18 @@ clean-all: clean docker-clean ## Clean everything including Docker
 	@echo "🧹 Cleaned everything!"
 
 # Database targets
-db-start: ## Start MongoDB and Redis (requires Docker)
-	@echo "🗄️ Starting databases..."
-	docker-compose up -d mongodb redis
+db-start: ## Start MongoDB (requires Docker)
+	@echo "🗄️ Starting MongoDB..."
+	docker-compose up -d mongodb
 
-db-stop: ## Stop MongoDB and Redis
-	@echo "🗄️ Stopping databases..."
+db-stop: ## Stop MongoDB
+	@echo "🗄️ Stopping MongoDB..."
 	docker-compose down
 
-db-reset: ## Reset databases (WARNING: This will delete all data!)
-	@echo "⚠️  Resetting databases..."
+db-reset: ## Reset MongoDB (WARNING: This will delete all data!)
+	@echo "⚠️  Resetting MongoDB..."
 	docker-compose down -v
-	docker-compose up -d mongodb redis
+	docker-compose up -d mongodb
 
 # Health checks
 health: ## Check system health
@@ -142,13 +167,11 @@ health: ## Check system health
 	@echo "  - Python version:"
 	@python --version
 	@echo "  - Dependencies:"
-	@pip list | grep -E "(fastapi|uvicorn|pydantic|motor|beanie|redis)"
+	@pip list | grep -E "(fastapi|uvicorn|pydantic|motor|beanie)"
 	@echo "  - Docker:"
 	@docker --version 2>/dev/null || echo "    Docker not installed"
 	@echo "  - MongoDB:"
 	@docker ps | grep mongodb >/dev/null && echo "    ✅ Running" || echo "    ❌ Not running"
-	@echo "  - Redis:"
-	@docker ps | grep redis >/dev/null && echo "    ✅ Running" || echo "    ❌ Not running"
 
 # Development workflow
 workflow: format lint test ## Run complete development workflow

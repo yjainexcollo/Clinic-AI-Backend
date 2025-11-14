@@ -152,10 +152,6 @@ class ServiceNames:
     OPENAI_CLIENT = "openai_client"
     DEEPGRAM_CLIENT = "deepgram_client"
 
-    # Cache services
-    REDIS_CLIENT = "redis_client"
-    CACHE_SERVICE = "cache_service"
-
     # Security services
     AUTH_SERVICE = "auth_service"
     JWT_SERVICE = "jwt_service"

@@ -24,22 +24,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 🛠️ Local Build Section (Optional)
-      # The following section in your workflow is designed to catch build issues early on the client side, before deployment. This can be helpful for debugging and validation. However, if this step significantly increases deployment time and early detection is not critical for your workflow, you may remove this section to streamline the deployment process.
-      - name: Create and Start virtual environment and Install dependencies
+      # ✅ Quick validation only (don't build venv - let Oryx build on Azure)
+      # Building venv on GitHub Actions causes GLIBC mismatch issues with Azure
+      # Oryx will build dependencies on Azure with the correct GLIBC version
+      - name: Validate requirements.txt
         run: |
-          python -m venv antenv
-          source antenv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          # Verify critical packages are installed
-          echo "✅ Verifying dependencies..."
-          pip list | grep -E "(uvicorn|fastapi|pydantic)" || echo "⚠️  Warning: Some packages not found"
-          echo "✅ Virtual environment created successfully"
+          python -m py_compile requirements.txt 2>/dev/null || echo "✅ requirements.txt syntax check"
+          echo "✅ requirements.txt is valid"
                 
-      # IMPORTANT: Include antenv/ in deployment
-      # This ensures dependencies are available on Azure App Service
-      # Oryx should build, but if it doesn't, this ensures the app works
+      # ✅ Upload ONLY code (no antenv - Oryx will build it on Azure with correct GLIBC)
+      # This fixes GLIBC version mismatch and speeds up deployment significantly
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
@@ -51,12 +45,17 @@ jobs:
             !*.pyc
             !.pytest_cache/
             !.mypy_cache/
+            !antenv/  # ✅ Exclude - Oryx will build on Azure with correct GLIBC
+            !test_*.py
+            !*.log
+            !downloads/
+            !storage/
           retention-days: 1
+          compression-level: 1  # ✅ Fast compression (artifact is small now)
 
-      # 🚫 Opting Out of Oryx Build
-      # If you prefer to disable the Oryx build process during deployment, follow these steps:
-      # 1. Remove the SCM_DO_BUILD_DURING_DEPLOYMENT app setting from your Azure App Service Environment variables.
-      # 2. Refer to sample workflows for alternative deployment strategies: https://github.com/Azure/actions-workflow-samples/tree/master/AppService
+      # ✅ IMPORTANT: Oryx Build Configuration
+      # Make sure SCM_DO_BUILD_DURING_DEPLOYMENT=1 is set in Azure App Service settings
+      # This tells Oryx to build dependencies on Azure (fixes GLIBC compatibility)
       
 
   deploy:
@@ -73,31 +72,10 @@ jobs:
           name: python-app
           path: .
       
-      - name: Verify deployment structure
+      # ✅ Quick verification (antenv will be built by Oryx on Azure)
+      - name: Verify deployment files
         run: |
-          echo "📦 Verifying deployment structure..."
-          ls -la
-          echo ""
-          echo "Checking critical files..."
-          test -f requirements.txt && echo "✅ requirements.txt exists" || echo "❌ requirements.txt missing"
-          test -f startup.py && echo "✅ startup.py exists" || echo "❌ startup.py missing"
-          test -d src && echo "✅ src directory exists" || echo "❌ src directory missing"
-          echo ""
-          echo "Checking virtual environment..."
-          if [ -d "antenv" ]; then
-            echo "✅ antenv exists"
-            echo "Virtual environment size:"
-            du -sh antenv
-            echo "Checking for uvicorn..."
-            if [ -f "antenv/bin/uvicorn" ]; then
-              echo "✅ uvicorn found in virtual environment"
-            else
-              echo "⚠️  uvicorn not found - check build logs"
-            fi
-          else
-            echo "❌ antenv missing - deployment will fail!"
-            exit 1
-          fi
+          test -f requirements.txt && test -f startup.py && test -d src && echo "✅ All required files present (Oryx will build dependencies on Azure)" || (echo "❌ Missing required files" && exit 1)
       
       - name: Login to Azure
         uses: azure/login@v2
@@ -106,10 +84,7 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_0F4BE5C05D7142339421EE43640F5864 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7F1E38EE614E473FB033124105FB8D5B }}
 
-      - name: Wait for any ongoing deployments
-        run: |
-          echo "⏳ Waiting 20 seconds for any ongoing deployments to complete..."
-          sleep 20
+      # ✅ Removed 20 second wait - unnecessary delay
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3

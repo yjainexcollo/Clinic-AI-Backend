@@ -23,23 +23,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # Redis service
-  redis:
-    image: redis:7.2-alpine
-    container_name: clinicai-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - clinicai-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   # MongoDB Express (optional - for database management)
   mongo-express:
     image: mongo-express:1.0.0
@@ -59,25 +42,8 @@ services:
     networks:
       - clinicai-network
 
-  # Redis Commander (optional - for Redis management)
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: clinicai-redis-commander
-    restart: unless-stopped
-    environment:
-      REDIS_HOSTS: local:redis:6379
-    ports:
-      - "8082:8081"
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - clinicai-network
-
 volumes:
   mongodb_data:
-    driver: local
-  redis_data:
     driver: local
 
 networks:
