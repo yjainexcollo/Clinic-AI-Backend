@@ -85,3 +85,5 @@ echo "    --platform managed \\"
 echo "    --region us-central1"
 echo ""
 
+
+
