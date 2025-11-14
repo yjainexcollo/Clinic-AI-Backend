@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from azure.keyvault.secrets import SecretClient
-from azure.core.exceptions import AzureError, ClientAuthenticationError
+from azure.core.exceptions import AzureError
 
 logger = logging.getLogger("clinicai")
 
@@ -55,20 +55,10 @@ class AzureKeyVaultService:
                     vault_url=self.vault_url,
                     credential=credential
                 )
-                # Test connection by trying to list secrets (with limit)
-                # This will fail if access is not granted
-                try:
-                    list(self._client.list_properties_of_secrets())
-                    self._available = True
-                    logger.info(f"✅ Azure Key Vault client initialized: {self.vault_name}")
-                except ClientAuthenticationError:
-                    logger.warning(f"⚠️  Key Vault access denied. Check Managed Identity permissions.")
-                    self._available = False
-                    return None
-                except Exception as e:
-                    # Other errors might be okay (e.g., no permissions to list, but can read)
-                    logger.info(f"Key Vault connection established (list permission may be missing): {e}")
-                    self._available = True
+                # Mark as available - actual access will be tested when get_secret() is called
+                # This avoids the expensive list_properties_of_secrets() call that causes slow startup
+                self._available = True
+                logger.info(f"✅ Azure Key Vault client initialized: {self.vault_name}")
                     
             except Exception as e:
                 logger.error(f"❌ Failed to create Key Vault client: {e}")
