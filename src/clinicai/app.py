@@ -29,232 +29,366 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import logging
 import asyncio
+import sys
+import traceback
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    settings = get_settings()
-    print(f"🚀 Starting Clinic-AI Intake Assistant v{settings.app_version}")
-    print(f"📊 Environment: {settings.app_env}")
-    print(f"🔧 Debug mode: {settings.debug}")
-    
-    # Note: Azure Application Insights is initialized in create_app() before middleware
-    # to ensure proper instrumentation order and request capture
-    
-    # Initialize database connection (MongoDB + Beanie)
+    worker_task = None  # Initialize worker_task at function scope
     try:
-        from beanie import init_beanie  # type: ignore
-        from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
-        import certifi  # type: ignore
-
-        # Import models for registration
-        from .adapters.db.mongo.models.patient_m import (
-            PatientMongo,
-            VisitMongo,
-            MedicationImageMongo,
-            AdhocTranscriptMongo,
-            DoctorPreferencesMongo,
-            AudioFileMongo,
-        )
-        from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
-
-        # Use configured URI
-        mongo_uri = settings.database.uri
-        db_name = settings.database.db_name
-
-        # Enable TLS only for Atlas SRV URIs
-        if mongo_uri.startswith("mongodb+srv://"):
-            ca_path = certifi.where()
-            client = AsyncIOMotorClient(
-                mongo_uri,
-                serverSelectionTimeoutMS=15000,
-                tls=True,
-                tlsCAFile=ca_path,
-                tlsAllowInvalidCertificates=False,
-            )
-        else:
-            # Local/standard connection (no TLS)
-            client = AsyncIOMotorClient(
-                mongo_uri,
-                serverSelectionTimeoutMS=15000,
-            )
-
-        db = client[db_name]
-        await init_beanie(
-            database=db,
-            document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference],
-        )
-        print("✅ Database connection established")
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        raise
-
-    # Initialize Azure Key Vault (if configured)
-    try:
-        from .core.key_vault import get_key_vault_service
-        key_vault = get_key_vault_service()
-        if key_vault and key_vault.is_available:
-            print("✅ Azure Key Vault initialized")
-            logging.info("Azure Key Vault initialized successfully")
-        else:
-            print("⚠️  Azure Key Vault not available (using environment variables)")
-            logging.debug("Azure Key Vault not configured or not accessible")
-    except Exception as e:
-        print(f"⚠️  Azure Key Vault initialization failed: {e}")
-        logging.debug(f"Azure Key Vault initialization skipped: {e}")
-
-    # Initialize Azure Blob Storage
-    try:
-        from .adapters.storage.azure_blob_service import get_azure_blob_service
-        blob_service = get_azure_blob_service()
-        await blob_service.ensure_container_exists()
-        print("✅ Azure Blob Storage initialized")
-    except Exception as e:
-        print(f"⚠️  Azure Blob Storage initialization failed: {e}")
-        logging.error(f"Azure Blob Storage failed to initialize: {e}")
-
-    # Initialize Azure Queue Storage and start worker (if enabled)
-    worker_task = None
-    try:
-        try:
-            from .adapters.queue.azure_queue_service import get_azure_queue_service
-            queue_service = get_azure_queue_service()
-            await queue_service.ensure_queue_exists()
-            print("✅ Azure Queue Storage initialized")
-            
-            # Start transcription worker if enabled (set ENABLE_TRANSCRIPTION_WORKER=true)
-            if os.getenv("ENABLE_TRANSCRIPTION_WORKER", "false").lower() == "true":
-                from .workers.transcription_worker import TranscriptionWorker
-                worker = TranscriptionWorker()
-                worker_task = asyncio.create_task(worker.run())
-                print("✅ Transcription worker started")
-                logging.info("Transcription worker started as background task")
-            else:
-                print("ℹ️  Transcription worker disabled (set ENABLE_TRANSCRIPTION_WORKER=true to enable)")
-        except ImportError:
-            print("⚠️  Azure Queue Storage not available (azure-storage-queue package not installed)")
-            logging.warning("Azure Queue Storage not available - install azure-storage-queue package")
-    except Exception as e:
-        print(f"⚠️  Azure Queue Storage initialization failed: {e}")
-        logging.error(f"Azure Queue Storage failed to initialize: {e}")
-
-    # Initialize HIPAA audit logger
-    try:
-        audit_logger = get_audit_logger()
-        await audit_logger.initialize(
-            mongo_uri=mongo_uri,
-            db_name=db_name
-        )
-        print("✅ HIPAA Audit Logger initialized")
-    except Exception as e:
-        print(f"⚠️  HIPAA Audit Logger initialization failed: {e}")
-        # Don't fail startup, but log the error
-        logging.error(f"HIPAA Audit Logger failed to initialize: {e}")
-
-    # Validate Azure OpenAI configuration
-    try:
-        azure_openai_configured = (
-            settings.azure_openai.endpoint and 
-            settings.azure_openai.api_key
-        )
+        settings = get_settings()
+        logger = logging.getLogger(__name__)
+        # Use both print and logger to ensure visibility in all environments
+        startup_msg = f"🚀 Starting Clinic-AI Intake Assistant v{settings.app_version}"
+        print(startup_msg, flush=True)
+        logger.info(startup_msg)
+        env_msg = f"📊 Environment: {settings.app_env}"
+        print(env_msg, flush=True)
+        logger.info(env_msg)
+        debug_msg = f"🔧 Debug mode: {settings.debug}"
+        print(debug_msg, flush=True)
+        logger.info(debug_msg)
+        print("=" * 60, flush=True)
+        logger.info("=" * 60)
         
-        if azure_openai_configured:
-            # Validate endpoint format
-            if not settings.azure_openai.endpoint.startswith("https://") or ".openai.azure.com" not in settings.azure_openai.endpoint:
-                raise ValueError(
-                    f"Invalid Azure OpenAI endpoint format: {settings.azure_openai.endpoint}. "
-                    "Must be: https://xxx.openai.azure.com/"
-                )
-            
-            # Validate deployment names are configured
-            if not settings.azure_openai.deployment_name:
-                raise ValueError(
-                    "Azure OpenAI chat deployment name is required. "
-                    "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
-                )
-            
-            # Azure OpenAI Whisper deployment not required - using Azure Speech Service for transcription
-            
-            # Validate API key is not empty
-            if not settings.azure_openai.api_key or len(settings.azure_openai.api_key.strip()) == 0:
-                raise ValueError(
-                    "Azure OpenAI API key is required. "
-                    "Please set AZURE_OPENAI_API_KEY."
-                )
-            
-            # Validate deployment actually exists by making a test call
-            print(f"🔍 Validating Azure OpenAI deployments...")
-            print(f"   Endpoint: {settings.azure_openai.endpoint}")
-            print(f"   API Version: {settings.azure_openai.api_version}")
-            print(f"   Deployment: {settings.azure_openai.deployment_name}")
-            from .core.azure_openai_client import validate_azure_openai_deployment
-            
-            # Validate chat deployment (will try multiple API versions automatically)
-            is_valid, error_msg = await validate_azure_openai_deployment(
-                endpoint=settings.azure_openai.endpoint,
-                api_key=settings.azure_openai.api_key,
-                api_version=settings.azure_openai.api_version,
-                deployment_name=settings.azure_openai.deployment_name,
-                timeout=10.0,
-                try_alternative_versions=True
-            )
-            
-            if not is_valid:
-                print(f"❌ Deployment validation failed:")
-                print(f"   {error_msg}")
-                raise ValueError(
-                    f"Azure OpenAI chat deployment validation failed: {error_msg}"
-                )
-            
-            # If validation succeeded but with a different API version, show a warning
-            if error_msg and "API version" in error_msg:
-                print(f"⚠️  {error_msg}")
-                logging.warning(error_msg)
-            
-            print(f"✅ Azure OpenAI configuration validated")
-            print(f"   Endpoint: {settings.azure_openai.endpoint}")
-            print(f"   API Version: {settings.azure_openai.api_version}")
-            print(f"   Chat Deployment: {settings.azure_openai.deployment_name} ✓")
-            print(f"   Transcription Service: Azure Speech Service (batch with speaker diarization)")
-            logging.info(
-                f"Azure OpenAI validated - endpoint={settings.azure_openai.endpoint}, "
-                f"chat_deployment={settings.azure_openai.deployment_name}, "
-                f"transcription_service=azure_speech"
-            )
-        else:
-            # Azure OpenAI is required - fail startup if not configured
-            raise ValueError(
-                "Azure OpenAI is required but not configured. "
-                "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
-                "Fallback to standard OpenAI is disabled for data security."
-            )
-    except ValueError as e:
-        print(f"❌ Azure OpenAI validation failed: {e}")
-        logging.error(f"Azure OpenAI validation failed: {e}")
-        raise  # Fail startup if Azure OpenAI is misconfigured
-    except Exception as e:
-        print(f"⚠️  Azure OpenAI validation error: {e}")
-        logging.warning(f"Azure OpenAI validation error: {e}")
-        # Don't fail startup for unexpected errors, but log them
+        # Note: Azure Application Insights is initialized in create_app() before middleware
+        # to ensure proper instrumentation order and request capture
+        
+        # Initialize database connection (MongoDB + Beanie)
+        try:
+            from beanie import init_beanie  # type: ignore
+            from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
+            import certifi  # type: ignore
 
-    # Azure Speech Service transcription - no warm-up needed
+            # Import models for registration
+            from .adapters.db.mongo.models.patient_m import (
+                PatientMongo,
+                VisitMongo,
+                MedicationImageMongo,
+                AdhocTranscriptMongo,
+                DoctorPreferencesMongo,
+                AudioFileMongo,
+            )
+            from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
+
+            # Use configured URI
+            mongo_uri = settings.database.uri
+            db_name = settings.database.db_name
+
+            # Enable TLS only for Atlas SRV URIs
+            if mongo_uri.startswith("mongodb+srv://"):
+                ca_path = certifi.where()
+                client = AsyncIOMotorClient(
+                    mongo_uri,
+                    serverSelectionTimeoutMS=15000,
+                    tls=True,
+                    tlsCAFile=ca_path,
+                    tlsAllowInvalidCertificates=False,
+                )
+            else:
+                # Local/standard connection (no TLS)
+                client = AsyncIOMotorClient(
+                    mongo_uri,
+                    serverSelectionTimeoutMS=15000,
+                )
+
+            db = client[db_name]
+            await init_beanie(
+                database=db,
+                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference],
+            )
+            msg = "✅ Database connection established"
+            print(msg, flush=True)
+            logger.info(msg)
+        except Exception as e:
+            error_sep = "=" * 60
+            print(error_sep, flush=True)
+            logger.error(error_sep)
+            error_msg = f"❌ Database connection failed: {e}"
+            print(error_msg, flush=True)
+            logger.error(error_msg)
+            error_type = f"Error type: {type(e).__name__}"
+            print(error_type, flush=True)
+            logger.error(error_type)
+            traceback_str = f"Traceback:\n{traceback.format_exc()}"
+            print(traceback_str, flush=True)
+            logger.error(traceback_str)
+            print(error_sep, flush=True)
+            logger.error(error_sep)
+            sys.stderr.flush()
+            raise
+
+        # Initialize Azure Key Vault (if configured)
+        try:
+            msg = "Initializing Azure Key Vault..."
+            print(msg, flush=True)
+            logger.info(msg)
+            from .core.key_vault import get_key_vault_service
+            key_vault = get_key_vault_service()
+            if key_vault and key_vault.is_available:
+                msg = "✅ Azure Key Vault initialized"
+                print(msg, flush=True)
+                logger.info(msg)
+                logging.info("Azure Key Vault initialized successfully")
+            else:
+                msg = "⚠️  Azure Key Vault not available (using environment variables)"
+                print(msg, flush=True)
+                logger.warning(msg)
+                logging.debug("Azure Key Vault not configured or not accessible")
+        except Exception as e:
+            msg = f"⚠️  Azure Key Vault initialization failed: {e}"
+            print(msg, flush=True)
+            logger.warning(msg)
+            logging.debug(f"Azure Key Vault initialization skipped: {e}")
+
+        # Initialize Azure Blob Storage
+        try:
+            msg = "Initializing Azure Blob Storage..."
+            print(msg, flush=True)
+            logger.info(msg)
+            from .adapters.storage.azure_blob_service import get_azure_blob_service
+            blob_service = get_azure_blob_service()
+            await blob_service.ensure_container_exists()
+            msg = "✅ Azure Blob Storage initialized"
+            print(msg, flush=True)
+            logger.info(msg)
+        except Exception as e:
+            msg = f"⚠️  Azure Blob Storage initialization failed: {e}"
+            print(msg, flush=True)
+            logger.error(msg)
+            logging.error(f"Azure Blob Storage failed to initialize: {e}")
+
+        # Initialize Azure Queue Storage and start worker (if enabled)
+        try:
+            try:
+                from .adapters.queue.azure_queue_service import get_azure_queue_service
+                queue_service = get_azure_queue_service()
+                await queue_service.ensure_queue_exists()
+                msg = "✅ Azure Queue Storage initialized"
+                print(msg, flush=True)
+                logger.info(msg)
+                
+                # Start transcription worker if enabled (set ENABLE_TRANSCRIPTION_WORKER=true)
+                if os.getenv("ENABLE_TRANSCRIPTION_WORKER", "false").lower() == "true":
+                    from .workers.transcription_worker import TranscriptionWorker
+                    worker = TranscriptionWorker()
+                    worker_task = asyncio.create_task(worker.run())
+                    msg = "✅ Transcription worker started"
+                    print(msg, flush=True)
+                    logger.info(msg)
+                    logging.info("Transcription worker started as background task")
+                else:
+                    msg = "ℹ️  Transcription worker disabled (set ENABLE_TRANSCRIPTION_WORKER=true to enable)"
+                    print(msg, flush=True)
+                    logger.info(msg)
+            except ImportError:
+                msg = "⚠️  Azure Queue Storage not available (azure-storage-queue package not installed)"
+                print(msg, flush=True)
+                logger.warning(msg)
+                logging.warning("Azure Queue Storage not available - install azure-storage-queue package")
+        except Exception as e:
+            msg = f"⚠️  Azure Queue Storage initialization failed: {e}"
+            print(msg, flush=True)
+            logger.error(msg)
+            logging.error(f"Azure Queue Storage failed to initialize: {e}")
+
+        # Initialize HIPAA audit logger
+        try:
+            msg = "Initializing HIPAA Audit Logger..."
+            print(msg, flush=True)
+            logger.info(msg)
+            audit_logger = get_audit_logger()
+            await audit_logger.initialize(
+                mongo_uri=mongo_uri,
+                db_name=db_name
+            )
+            msg = "✅ HIPAA Audit Logger initialized"
+            print(msg, flush=True)
+            logger.info(msg)
+        except Exception as e:
+            msg = f"⚠️  HIPAA Audit Logger initialization failed: {e}"
+            print(msg, flush=True)
+            logger.warning(msg)
+            # Don't fail startup, but log the error
+            logging.error(f"HIPAA Audit Logger failed to initialize: {e}")
+
+        # Validate Azure OpenAI configuration
+        try:
+            msg = "Validating Azure OpenAI configuration..."
+            print(msg, flush=True)
+            logger.info(msg)
+            azure_openai_configured = (
+                settings.azure_openai.endpoint and 
+                settings.azure_openai.api_key
+            )
+            
+            if azure_openai_configured:
+                # Validate endpoint format
+                if not settings.azure_openai.endpoint.startswith("https://") or ".openai.azure.com" not in settings.azure_openai.endpoint:
+                    raise ValueError(
+                        f"Invalid Azure OpenAI endpoint format: {settings.azure_openai.endpoint}. "
+                        "Must be: https://xxx.openai.azure.com/"
+                    )
+                
+                # Validate deployment names are configured
+                if not settings.azure_openai.deployment_name:
+                    raise ValueError(
+                        "Azure OpenAI chat deployment name is required. "
+                        "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
+                    )
+                
+                # Azure OpenAI Whisper deployment not required - using Azure Speech Service for transcription
+                
+                # Validate API key is not empty
+                if not settings.azure_openai.api_key or len(settings.azure_openai.api_key.strip()) == 0:
+                    raise ValueError(
+                        "Azure OpenAI API key is required. "
+                        "Please set AZURE_OPENAI_API_KEY."
+                    )
+                
+                # Validate deployment actually exists by making a test call
+                msg = f"🔍 Validating Azure OpenAI deployments..."
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   Endpoint: {settings.azure_openai.endpoint}"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   API Version: {settings.azure_openai.api_version}"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   Deployment: {settings.azure_openai.deployment_name}"
+                print(msg, flush=True)
+                logger.info(msg)
+                from .core.azure_openai_client import validate_azure_openai_deployment
+                
+                # Validate chat deployment (will try multiple API versions automatically)
+                is_valid, error_msg = await validate_azure_openai_deployment(
+                    endpoint=settings.azure_openai.endpoint,
+                    api_key=settings.azure_openai.api_key,
+                    api_version=settings.azure_openai.api_version,
+                    deployment_name=settings.azure_openai.deployment_name,
+                    timeout=10.0,
+                    try_alternative_versions=True
+                )
+                
+                if not is_valid:
+                    error_detail = f"❌ Deployment validation failed:"
+                    print(error_detail, flush=True)
+                    logger.error(error_detail)
+                    error_detail2 = f"   {error_msg}"
+                    print(error_detail2, flush=True)
+                    logger.error(error_detail2)
+                    sys.stderr.flush()
+                    raise ValueError(
+                        f"Azure OpenAI chat deployment validation failed: {error_msg}"
+                    )
+                
+                # If validation succeeded but with a different API version, show a warning
+                if error_msg and "API version" in error_msg:
+                    logger.warning(f"⚠️  {error_msg}")
+                    logging.warning(error_msg)
+                
+                msg = f"✅ Azure OpenAI configuration validated"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   Endpoint: {settings.azure_openai.endpoint}"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   API Version: {settings.azure_openai.api_version}"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   Chat Deployment: {settings.azure_openai.deployment_name} ✓"
+                print(msg, flush=True)
+                logger.info(msg)
+                msg = f"   Transcription Service: Azure Speech Service (batch with speaker diarization)"
+                print(msg, flush=True)
+                logger.info(msg)
+                logging.info(
+                    f"Azure OpenAI validated - endpoint={settings.azure_openai.endpoint}, "
+                    f"chat_deployment={settings.azure_openai.deployment_name}, "
+                    f"transcription_service=azure_speech"
+                )
+            else:
+                # Azure OpenAI is required - fail startup if not configured
+                error_msg = "❌ Azure OpenAI is required but not configured"
+                print(error_msg, flush=True)
+                logger.error(error_msg)
+                sys.stderr.flush()
+                raise ValueError(
+                    "Azure OpenAI is required but not configured. "
+                    "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
+                    "Fallback to standard OpenAI is disabled for data security."
+                )
+        except ValueError as e:
+            error_sep = "=" * 60
+            print(error_sep, flush=True)
+            logger.error(error_sep)
+            error_detail = f"❌ Azure OpenAI validation failed: {e}"
+            print(error_detail, flush=True)
+            logger.error(error_detail)
+            print(error_sep, flush=True)
+            logger.error(error_sep)
+            logging.error(f"Azure OpenAI validation failed: {e}")
+            sys.stderr.flush()
+            raise  # Fail startup if Azure OpenAI is misconfigured
+        except Exception as e:
+            warning_msg = f"⚠️  Azure OpenAI validation error: {e}"
+            print(warning_msg, flush=True)
+            logger.warning(warning_msg)
+            logging.warning(f"Azure OpenAI validation error: {e}")
+            # Don't fail startup for unexpected errors, but log them
+
+        # Azure Speech Service transcription - no warm-up needed
+        msg = "✅ Application startup completed successfully"
+        print(msg, flush=True)
+        logger.info(msg)
+
+    except Exception as e:
+        error_sep = "=" * 60
+        print(error_sep, flush=True)
+        logger.error(error_sep)
+        critical_msg = "❌ CRITICAL: Application startup failed"
+        print(critical_msg, flush=True)
+        logger.error(critical_msg)
+        print(error_sep, flush=True)
+        logger.error(error_sep)
+        error_detail = f"Error: {e}"
+        print(error_detail, flush=True)
+        logger.error(error_detail)
+        error_type = f"Error type: {type(e).__name__}"
+        print(error_type, flush=True)
+        logger.error(error_type)
+        traceback_str = f"Traceback:\n{traceback.format_exc()}"
+        print(traceback_str, flush=True)
+        logger.error(traceback_str)
+        print(error_sep, flush=True)
+        logger.error(error_sep)
+        sys.stderr.flush()
+        raise  # Re-raise to fail startup
 
     yield
 
     # Shutdown
-    print("🛑 Shutting down Clinic-AI Intake Assistant")
+    msg = "🛑 Shutting down Clinic-AI Intake Assistant"
+    print(msg, flush=True)
+    logger.info(msg)
     
     # Stop transcription worker if running
     if worker_task:
-        print("🛑 Stopping transcription worker...")
+        msg = "🛑 Stopping transcription worker..."
+        print(msg, flush=True)
+        logger.info(msg)
         worker_task.cancel()
         try:
             await worker_task
         except asyncio.CancelledError:
             pass
-        print("✅ Transcription worker stopped")
+        msg = "✅ Transcription worker stopped"
+        print(msg, flush=True)
+        logger.info(msg)
 
 
 def create_app() -> FastAPI:
