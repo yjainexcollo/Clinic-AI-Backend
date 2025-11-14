@@ -30,16 +30,28 @@ jobs:
         run: |
           python -m venv antenv
           source antenv/bin/activate
+          pip install --upgrade pip
           pip install -r requirements.txt
+          # Verify critical packages are installed
+          echo "✅ Verifying dependencies..."
+          pip list | grep -E "(uvicorn|fastapi|pydantic)" || echo "⚠️  Warning: Some packages not found"
+          echo "✅ Virtual environment created successfully"
                 
-      # By default, when you enable GitHub CI/CD integration through the Azure portal, the platform automatically sets the SCM_DO_BUILD_DURING_DEPLOYMENT application setting to true. This triggers the use of Oryx, a build engine that handles application compilation and dependency installation (e.g., pip install) directly on the platform during deployment. Hence, we exclude the antenv virtual environment directory from the deployment artifact to reduce the payload size. 
+      # IMPORTANT: Include antenv/ in deployment
+      # This ensures dependencies are available on Azure App Service
+      # Oryx should build, but if it doesn't, this ensures the app works
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
             .
-            !antenv/
+            !.git/
+            !__pycache__/
+            !*.pyc
+            !.pytest_cache/
+            !.mypy_cache/
+          retention-days: 1
 
       # 🚫 Opting Out of Oryx Build
       # If you prefer to disable the Oryx build process during deployment, follow these steps:
@@ -59,6 +71,32 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
+      
+      - name: Verify deployment structure
+        run: |
+          echo "📦 Verifying deployment structure..."
+          ls -la
+          echo ""
+          echo "Checking critical files..."
+          test -f requirements.txt && echo "✅ requirements.txt exists" || echo "❌ requirements.txt missing"
+          test -f startup.py && echo "✅ startup.py exists" || echo "❌ startup.py missing"
+          test -d src && echo "✅ src directory exists" || echo "❌ src directory missing"
+          echo ""
+          echo "Checking virtual environment..."
+          if [ -d "antenv" ]; then
+            echo "✅ antenv exists"
+            echo "Virtual environment size:"
+            du -sh antenv
+            echo "Checking for uvicorn..."
+            if [ -f "antenv/bin/uvicorn" ]; then
+              echo "✅ uvicorn found in virtual environment"
+            else
+              echo "⚠️  uvicorn not found - check build logs"
+            fi
+          else
+            echo "❌ antenv missing - deployment will fail!"
+            exit 1
+          fi
       
       - name: Login to Azure
         uses: azure/login@v2
