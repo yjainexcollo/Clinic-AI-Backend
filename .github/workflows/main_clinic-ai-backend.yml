@@ -105,10 +105,19 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_0F4BE5C05D7142339421EE43640F5864 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7F1E38EE614E473FB033124105FB8D5B }}
 
+      - name: Wait for any ongoing deployments
+        run: |
+          echo "⏳ Waiting 20 seconds for any ongoing deployments to complete..."
+          sleep 20
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
-          app-name: 'clinic-ai-backend'
+          app-name: 'clinic-ai-backend-b4anbydmd2gfa4fd'
           slot-name: 'Production'
+          # Use zip deployment for better reliability with large files
+          type: zip
+          # Increase timeout for large deployments (antenv can be large)
+          start-timeout: 600
           
