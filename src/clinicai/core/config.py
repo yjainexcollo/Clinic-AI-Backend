@@ -171,9 +171,6 @@ class SoapSettings(BaseSettings):
         return v
 
 
-
-
-
 class FileStorageSettings(BaseSettings):
     """File storage configuration settings."""
 
@@ -365,6 +362,8 @@ class Settings(BaseSettings):
         self.audio = AudioSettings()
         self.soap = SoapSettings()
         self.file_storage = FileStorageSettings()
+        self.azure_blob = AzureBlobSettings()
+        self.azure_openai = AzureOpenAISettings()
         self.azure_queue = AzureQueueSettings()
         self.azure_speech = AzureSpeechSettings()
 

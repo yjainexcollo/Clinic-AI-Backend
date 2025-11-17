@@ -36,17 +36,24 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "Please set AZURE_SPEECH_SUBSCRIPTION_KEY environment variable."
             )
         
-        if not self._settings.azure_speech.region:
+        if not self._settings.azure_speech.region and not self._settings.azure_speech.endpoint:
             raise ValueError(
-                "Azure Speech Service region is required. "
+                "Azure Speech Service region is required unless AZURE_SPEECH_ENDPOINT is provided. "
                 "Please set AZURE_SPEECH_REGION environment variable (e.g., 'eastus', 'westus2')."
             )
         
-        # Build endpoint
-        self._endpoint = f"https://{self._settings.azure_speech.region}.api.cognitive.microsoft.com"
+        # Build endpoint (use explicit override if provided)
+        self._endpoint = (
+            self._settings.azure_speech.endpoint
+            or f"https://{self._settings.azure_speech.region}.api.cognitive.microsoft.com"
+        )
         self._subscription_key = self._settings.azure_speech.subscription_key
         
-        logger.info(f"✅ Azure Speech Service initialized (region: {self._settings.azure_speech.region}, mode: {self._settings.azure_speech.transcription_mode})")
+        logger.info(
+            "✅ Azure Speech Service initialized (endpoint: %s, mode: %s)",
+            self._endpoint,
+            self._settings.azure_speech.transcription_mode,
+        )
     
     async def transcribe_audio(
         self,
@@ -198,50 +205,30 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             sas_url = blob_service.generate_signed_url(
                 blob_path=blob_path,
                 expires_in_hours=24,  # 24 hours should be enough for transcription
-                permissions="r"
             )
             
-            logger.info(f"Uploaded audio to blob and generated SAS URL: {blob_path}")
+            logger.info(f"Uploaded audio to blob storage for transcription: {blob_path}")
             return sas_url
             
         except Exception as e:
-            logger.error(f"Failed to upload audio to blob: {e}", exc_info=True)
-            raise ValueError(f"Failed to upload audio file: {str(e)}")
+            logger.error(f"Failed to upload audio for transcription: {e}", exc_info=True)
+            raise
     
-    async def _create_transcription_job(self, blob_url: str, locale: str) -> str:
-        """Create a batch transcription job."""
-        url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
-        
-        # Verify diarization settings
-        if self._settings.azure_speech.enable_speaker_diarization:
-            logger.info(f"✅ Speaker diarization enabled: max_speakers={self._settings.azure_speech.max_speakers}")
-            print(f"🔵 Diarization config: enabled=True, max_speakers={self._settings.azure_speech.max_speakers}")
-        else:
-            logger.warning("⚠️ Speaker diarization is DISABLED in settings!")
-            print("⚠️ WARNING: Speaker diarization is disabled!")
-        
-        # Configure transcription properties
-        properties = {
-            "diarizationEnabled": self._settings.azure_speech.enable_speaker_diarization,
-            "wordLevelTimestampsEnabled": True,
-            "punctuationMode": "Dictated",
-            "profanityFilterMode": "Masked",
-        }
-        
-        if self._settings.azure_speech.enable_speaker_diarization:
-            properties["diarization"] = {
-                "speakers": {
-                    "minCount": 1,
-                    "maxCount": self._settings.azure_speech.max_speakers
-                }
-            }
+    async def _create_transcription_job(self, blob_url: str, language: str) -> str:
+        """Create Azure Speech transcription job."""
+        transcription_name = f"clinicai-transcription-{uuid.uuid4()}"
         
         payload = {
             "contentUrls": [blob_url],
-            "locale": locale,
-            "displayName": f"transcription_{int(time.time())}",
-            "description": "Medical consultation transcription",
-            "properties": properties
+            "locale": language,
+            "displayName": transcription_name,
+            "properties": {
+                "diarizationEnabled": self._settings.azure_speech.enable_speaker_diarization,
+                "wordLevelTimestampsEnabled": True,
+                "punctuationMode": "DictatedAndAutomatic",
+                "profanityFilterMode": "Masked",
+                "channels": "Auto"
+            }
         }
         
         headers = {
@@ -250,346 +237,154 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as response:
-                if response.status not in [200, 201]:
+            url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
+            async with session.post(url, json=payload, headers=headers, timeout=60) as response:
+                if response.status not in (200, 201, 202):
                     error_text = await response.text()
-                    error_json = {}
-                    try:
-                        error_json = await response.json()
-                    except:
-                        pass
-                    
-                    # Check for subscription tier error
-                    error_code = error_json.get("error", {}).get("code", "") if error_json.get("error") else ""
-                    if "InvalidSubscription" in error_text or error_code == "InvalidSubscription":
-                        raise ValueError(
-                            "Azure Speech Service batch transcription requires a 'Standard' tier subscription. "
-                            "Your current subscription appears to be 'Free' tier. "
-                            "Please upgrade your Azure Speech Service subscription to 'Standard' tier in the Azure Portal. "
-                            f"Original error: {error_text}"
-                        )
-                    
-                    raise ValueError(f"Failed to create transcription job: {response.status} - {error_text}")
+                    logger.error(f"Failed to create transcription job: {response.status} {error_text}")
+                    raise ValueError(f"Failed to create transcription job: {response.status} {error_text}")
                 
-                result = await response.json()
-                transcription_id = result.get("self", "").split("/")[-1]
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError("Azure Speech Service did not return transcription location URL")
+                
+                transcription_id = location.rstrip("/").split("/")[-1]
                 return transcription_id
     
     async def _poll_transcription_status(self, transcription_id: str) -> Dict[str, Any]:
-        """Poll transcription status until complete."""
-        url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
-        headers = {
-            "Ocp-Apim-Subscription-Key": self._subscription_key
-        }
-        
-        max_wait_time = self._settings.azure_speech.batch_max_wait_time
+        """Poll transcription job status until completion."""
+        status_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
         poll_interval = self._settings.azure_speech.batch_polling_interval
+        timeout_seconds = self._settings.azure_speech.batch_max_wait_time
         start_time = time.time()
         
         async with aiohttp.ClientSession() as session:
             while True:
-                async with session.get(url, headers=headers) as response:
+                async with session.get(status_url, headers=headers, timeout=30) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        raise ValueError(f"Failed to get transcription status: {response.status} - {error_text}")
+                        logger.error(f"Failed to get transcription status: {response.status} {error_text}")
+                        raise ValueError(f"Failed to get transcription status: {response.status} {error_text}")
                     
-                    result = await response.json()
-                    status = result.get("status", "Unknown")
+                    status_data = await response.json()
+                    status = status_data.get("status")
                     
                     logger.info(f"Transcription status: {status}")
                     
-                    if status in ["Succeeded", "Failed", "Cancelled"]:
-                        return {
-                            "status": status,
-                            "error": result.get("properties", {}).get("error") if status == "Failed" else None
-                        }
+                    if status in ("Succeeded", "Failed"):
+                        return status_data
                     
-                    elapsed = time.time() - start_time
-                    if elapsed >= max_wait_time:
-                        raise TimeoutError(f"Transcription timed out after {max_wait_time} seconds")
+                    if time.time() - start_time > timeout_seconds:
+                        raise TimeoutError(
+                            f"Transcription job timed out after {timeout_seconds} seconds. Last status: {status}"
+                        )
                     
                     await asyncio.sleep(poll_interval)
     
     async def _get_transcription_results(self, transcription_id: str) -> List[Dict[str, Any]]:
-        """Download and parse transcription results."""
-        url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}/files"
-        headers = {
-            "Ocp-Apim-Subscription-Key": self._subscription_key
-        }
-        
-        results = []
+        """Retrieve transcription results."""
+        files_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}/files"
+        headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
         
         async with aiohttp.ClientSession() as session:
-            # Get list of result files
-            async with session.get(url, headers=headers) as response:
+            async with session.get(files_url, headers=headers, timeout=30) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise ValueError(f"Failed to get transcription files: {response.status} - {error_text}")
+                    logger.error(f"Failed to get transcription files: {response.status} {error_text}")
+                    raise ValueError(f"Failed to get transcription files: {response.status} {error_text}")
                 
-                files_response = await response.json()
-                result_files = files_response.get("values", [])
+                files_data = await response.json()
+                result_files = files_data.get("values", [])
                 
-                # Download each result file
-                for result_file in result_files:
-                    if result_file.get("kind") == "Transcription":
-                        result_url = result_file.get("links", {}).get("contentUrl")
-                        if result_url:
-                            async with session.get(result_url) as file_response:
-                                if file_response.status == 200:
-                                    result_data = await file_response.json()
-                                    results.append(result_data)
-                                else:
-                                    logger.warning(f"Failed to download result from {result_url}: {file_response.status}")
-        
-        return results
+                transcripts = []
+                for file_info in result_files:
+                    if file_info.get("kind") != "Transcription":
+                        continue
+                    
+                    content_url = file_info.get("links", {}).get("contentUrl")
+                    if not content_url:
+                        continue
+                    
+                    async with session.get(content_url, timeout=60) as content_response:
+                        if content_response.status != 200:
+                            logger.warning(f"Failed to download transcription result: {content_response.status}")
+                            continue
+                        
+                        transcript_json = await content_response.json()
+                        transcripts.append(transcript_json)
+                
+                return transcripts
     
     def _process_transcription_results(
-        self,
-        results: List[Dict[str, Any]]
-    ) -> Tuple[str, List[Dict[str, str]], Dict[str, Any]]:
-        """
-        Process Azure Speech Service results to extract:
-        1. Full transcript text
-        2. Structured dialogue with speaker labels
-        3. Speaker information
-        """
-        if not results:
-            logger.warning("No results to process")
-            return "", [], {}
-        
-        # Combine all result files
-        all_segments = []
-        for i, result in enumerate(results):
-            print(f"🔵 Processing result {i+1}/{len(results)}")
-            logger.info(f"Processing result {i+1}/{len(results)}")
-            if "recognizedPhrases" in result:
-                phrases = result["recognizedPhrases"]
-                print(f"🔵 Found {len(phrases)} recognized phrases in result {i+1}")
-                logger.info(f"Found {len(phrases)} recognized phrases in result {i+1}")
-                all_segments.extend(phrases)
-            else:
-                print(f"⚠️ Result {i+1} does not contain 'recognizedPhrases' key. Keys: {list(result.keys())}")
-                logger.warning(f"Result {i+1} does not contain 'recognizedPhrases' key. Keys: {list(result.keys())}")
-        
-        print(f"🔵 Total segments collected: {len(all_segments)}")
-        logger.info(f"Total segments collected: {len(all_segments)}")
-        
-        # Sort by offset (time)
-        all_segments.sort(key=lambda x: x.get("offsetInTicks", 0))
-        
-        # Prefer recognizedPhrases for speaker diarization (has individual speaker segments)
-        # Only use combinedRecognizedPhrases as fallback if recognizedPhrases is empty
-        if not all_segments and results and "combinedRecognizedPhrases" in results[0]:
-            combined = results[0]["combinedRecognizedPhrases"]
-            logger.info(f"Found combinedRecognizedPhrases with {len(combined)} items (using as fallback)")
-            if combined:
-                # Use combinedRecognizedPhrases as fallback (but we lose speaker separation)
-                all_segments = combined
-                logger.warning("Using combinedRecognizedPhrases - speaker diarization may not work properly")
-        else:
-            logger.info(f"Using recognizedPhrases with {len(all_segments)} segments for proper speaker diarization")
-        
-        # Extract full transcript
-        transcript_parts = []
+        self, results: List[Dict[str, Any]]
+    ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+        """Process Azure Speech transcription results into structured dialogue."""
+        transcript_text = []
         structured_dialogue = []
-        speaker_info = {}
+        speaker_info = {"speakers": []}
         
-        logger.info(f"Processing {len(all_segments)} segments")
-        
-        # Diagnostic: Check speaker distribution
-        speaker_ids_found = set()
-        segments_with_speaker = 0
-        segments_without_speaker = 0
-        
-        for i, segment in enumerate(all_segments):
-            # Try different possible field names for text
-            # Azure Speech Service can return text in different places:
-            # 1. Direct "text" field (for combinedRecognizedPhrases)
-            # 2. Direct "display" field (alternative format)
-            # 3. Inside nBest[0].text (for recognizedPhrases with speaker diarization)
-            text = ""
+        for result in results:
+            recognized_phrases = result.get("recognizedPhrases", [])
+            combined_phrases = result.get("combinedRecognizedPhrases", [])
             
-            # First try direct fields
-            if "text" in segment:
-                text = segment["text"]
-            elif "display" in segment:
-                text = segment["display"]
-            # Then try nBest array (most common for speaker diarization)
-            elif "nBest" in segment and isinstance(segment["nBest"], list) and len(segment["nBest"]) > 0:
-                nbest_item = segment["nBest"][0]
-                if isinstance(nbest_item, dict):
-                    text = nbest_item.get("text", "") or nbest_item.get("display", "") or nbest_item.get("lexical", "")
-            
-            # Clean up text
-            if isinstance(text, str):
-                text = text.strip()
-            else:
-                text = ""
-            
-            if not text:
-                if i < 3:
-                    print(f"⚠️ Segment {i+1} has no text. Keys: {list(segment.keys())}")
-                    if "nBest" in segment:
-                        print(f"   nBest type: {type(segment['nBest'])}, length: {len(segment['nBest']) if isinstance(segment['nBest'], list) else 'N/A'}")
-                        if isinstance(segment['nBest'], list) and len(segment['nBest']) > 0:
-                            print(f"   nBest[0] keys: {list(segment['nBest'][0].keys()) if isinstance(segment['nBest'][0], dict) else 'Not a dict'}")
-                            print(f"   nBest[0] data: {str(segment['nBest'][0])[:300]}")
-                logger.warning(f"Segment {i+1} has no text. Keys: {list(segment.keys())}")
-                continue
-            else:
-                if i < 3:
-                    print(f"✅ Segment {i+1} has text: {text[:100]}...")
-            
-            # Get speaker ID if diarization is enabled
-            # Speaker ID can be in different places depending on the result structure
-            speaker_id = segment.get("speaker", None) or segment.get("speakerId", None)
-            
-            # If using nBest format, get speaker from first best
-            if speaker_id is None and "nBest" in segment and len(segment["nBest"]) > 0:
-                speaker_id = segment["nBest"][0].get("speaker", None)
-            
-            # Diagnostic tracking
-            if speaker_id is not None:
-                speaker_ids_found.add(speaker_id)
-                segments_with_speaker += 1
-            else:
-                segments_without_speaker += 1
-                if i < 5:  # Log first few segments without speaker
-                    logger.warning(f"Segment {i+1} has no speaker ID. Segment keys: {list(segment.keys())}")
-                    if "nBest" in segment and isinstance(segment.get("nBest"), list) and len(segment.get("nBest", [])) > 0:
-                        logger.warning(f"  nBest[0] keys: {list(segment['nBest'][0].keys()) if isinstance(segment['nBest'][0], dict) else 'N/A'}")
-            
-            # Build transcript
-            transcript_parts.append(text)
-            
-            # Build structured dialogue
-            if speaker_id is not None:
-                # Map speaker ID to label (will be mapped to Doctor/Patient later)
-                speaker_label = f"Speaker {speaker_id}"
+            for phrase in combined_phrases:
+                text = phrase.get("display", "")
+                transcript_text.append(text)
                 
-                # Track speaker info
-                if speaker_id not in speaker_info:
-                    speaker_info[speaker_id] = {
-                        "speaker_id": speaker_id,
-                        "total_segments": 0,
-                        "total_words": 0
-                    }
-                speaker_info[speaker_id]["total_segments"] += 1
-                speaker_info[speaker_id]["total_words"] += len(text.split())
+                recognized_phrase = next(
+                    (rp for rp in recognized_phrases if rp.get("id") == phrase.get("id")), None
+                )
                 
-                # Add to structured dialogue (will be mapped to Doctor/Patient)
-                structured_dialogue.append({
-                    speaker_label: text
-                })
-            else:
-                # No speaker info, add as unknown
-                structured_dialogue.append({
-                    "Unknown": text
-                })
+                if recognized_phrase:
+                    channel = recognized_phrase.get("channel", 0)
+                    speaker = f"Speaker {channel + 1}"
+                    structured_dialogue.append(
+                        {
+                            "speaker": speaker,
+                            "text": text,
+                            "offset": recognized_phrase.get("offset"),
+                            "duration": recognized_phrase.get("duration"),
+                        }
+                    )
         
-        full_transcript = " ".join(transcript_parts)
+        speaker_info["speakers"] = [{"label": "Speaker 1"}, {"label": "Speaker 2"}]
         
-        # Log speaker diagnostics
-        logger.info(f"🔵 Speaker diarization diagnostics:")
-        logger.info(f"   - Unique speakers detected: {len(speaker_ids_found)} ({sorted(speaker_ids_found)})")
-        logger.info(f"   - Segments with speaker ID: {segments_with_speaker}")
-        logger.info(f"   - Segments without speaker ID: {segments_without_speaker}")
-        print(f"🔵 Speaker diarization: {len(speaker_ids_found)} speakers found ({sorted(speaker_ids_found)})")
-        if len(speaker_ids_found) == 1:
-            logger.warning("⚠️ Only one speaker detected. This may indicate:")
-            logger.warning("   1. Audio actually has only one speaker")
-            logger.warning("   2. Speaker diarization not working properly")
-            logger.warning("   3. Audio quality issues preventing speaker separation")
-            print(f"⚠️ Warning: Only one speaker detected in audio")
-        elif len(speaker_ids_found) == 0:
-            logger.warning("⚠️ No speakers detected - diarization may not be enabled or working")
-            print(f"⚠️ Warning: No speakers detected in audio")
-        
-        return full_transcript, structured_dialogue, speaker_info
+        return " ".join(transcript_text).strip(), structured_dialogue, speaker_info
     
     def _calculate_average_confidence(self, results: List[Dict[str, Any]]) -> float:
-        """Calculate average confidence from results."""
         confidences = []
         for result in results:
-            if "recognizedPhrases" in result:
-                for phrase in result["recognizedPhrases"]:
-                    confidence = phrase.get("confidence", 0.0)
-                    if confidence > 0:
-                        confidences.append(confidence)
-        
-        if confidences:
-            return sum(confidences) / len(confidences)
-        return 0.0
+            recognized_phrases = result.get("recognizedPhrases", [])
+            for phrase in recognized_phrases:
+                nbest = phrase.get("nBest", [])
+                if nbest:
+                    confidences.append(nbest[0].get("confidence", 0.0))
+        if not confidences:
+            return 0.0
+        return sum(confidences) / len(confidences)
     
-    def _extract_duration(self, results: List[Dict[str, Any]]) -> Optional[float]:
-        """Extract audio duration from results."""
-        if not results:
-            return None
-        
-        # Get duration from first result
-        duration_ticks = results[0].get("durationInTicks", 0)
-        if duration_ticks > 0:
-            # Convert ticks to seconds (1 tick = 100 nanoseconds)
-            return duration_ticks / 10_000_000
-        
-        return None
+    def _extract_duration(self, results: List[Dict[str, Any]]) -> float:
+        durations = []
+        for result in results:
+            recognized_phrases = result.get("recognizedPhrases", [])
+            for phrase in recognized_phrases:
+                duration_text = phrase.get("duration")
+                if duration_text:
+                    try:
+                        if duration_text.startswith("PT") and duration_text.endswith("S"):
+                            duration_seconds = float(duration_text[2:-1])
+                            durations.append(duration_seconds)
+                    except ValueError:
+                        continue
+        return max(durations) if durations else 0.0
     
     async def _delete_transcription_job(self, transcription_id: str) -> None:
-        """Delete transcription job."""
-        url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
-        headers = {
-            "Ocp-Apim-Subscription-Key": self._subscription_key
-        }
+        """Delete transcription job to clean up resources."""
+        delete_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
         
         async with aiohttp.ClientSession() as session:
-            async with session.delete(url, headers=headers) as response:
-                if response.status not in [200, 204]:
-                    error_text = await response.text()
-                    logger.warning(f"Failed to delete transcription job: {response.status} - {error_text}")
-    
-    async def validate_audio_file(self, audio_file_path: str) -> Dict[str, Any]:
-        """Validate audio file format and quality."""
-        try:
-            p = Path(audio_file_path)
-            if not p.exists() or not p.is_file():
-                return {"is_valid": False, "error": "Audio file not found", "file_size": 0, "duration": 0}
-            
-            file_size = p.stat().st_size
-            if file_size <= 0:
-                return {"is_valid": False, "error": "Empty file", "file_size": 0, "duration": 0}
-            
-            # Azure Speech Service supports up to 1GB for batch transcription
-            max_size = 1024 * 1024 * 1024  # 1GB
-            if file_size > max_size:
-                return {
-                    "is_valid": False,
-                    "error": f"File too large ({file_size / (1024*1024):.1f}MB, max 1GB)",
-                    "file_size": file_size,
-                    "duration": 0
-                }
-            
-            # Check file extension
-            # Note: .mpeg/.mpg files should be normalized to .mp3 before reaching here
-            valid_extensions = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm", ".mp4"]
-            file_ext = p.suffix.lower()
-            # Also accept .mpeg/.mpg as they're typically MP3 format
-            if file_ext in [".mpeg", ".mpg"]:
-                file_ext = ".mp3"
-            if file_ext not in valid_extensions:
-                return {
-                    "is_valid": False,
-                    "error": f"Unsupported file format: {p.suffix}. Supported: {', '.join(valid_extensions)}",
-                    "file_size": file_size,
-                    "duration": 0
-                }
-            
-            return {
-                "is_valid": True,
-                "file_size": file_size,
-                "duration": 0,  # Will be determined during transcription
-                "format": p.suffix.lower()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error validating audio file: {e}", exc_info=True)
-            return {"is_valid": False, "error": str(e), "file_size": 0, "duration": 0}
+            async with session.delete(delete_url, headers=headers, timeout=30) as response:
+                if response.status not in (200, 202, 204):
+                    logger.warning(f"Failed to delete transcription job: {response.status}")

@@ -87,13 +87,17 @@ if os.environ.get('SECURITY_SECRET_KEY'):
 
 if __name__ == "__main__":
     try:
-        port = int(os.environ.get("PORT", 8000))
+        from clinicai.core.config import get_settings
+        settings = get_settings()
+        port = int(os.environ.get("PORT", settings.port))
+        host = os.environ.get("HOST", settings.host)
+
         sep = "=" * 60
         print(f"\n{sep}", flush=True)
-        print(f"Starting application on port {port}", flush=True)
+        print(f"Starting application on {host}:{port}", flush=True)
         print(f"{sep}\n", flush=True)
         logger.info(f"\n{sep}")
-        logger.info(f"Starting application on port {port}")
+        logger.info(f"Starting application on {host}:{port}")
         logger.info(f"{sep}\n")
         
         # Test import before starting
@@ -118,8 +122,6 @@ if __name__ == "__main__":
         print("Step 2: Loading application settings...", flush=True)
         logger.info("Step 2: Loading application settings...")
         try:
-            from clinicai.core.config import get_settings
-            settings = get_settings()
             print("✅ Settings loaded successfully", flush=True)
             logger.info("✅ Settings loaded successfully")
             print(f"  App name: {settings.app_name}", flush=True)
@@ -162,14 +164,14 @@ if __name__ == "__main__":
         # Start uvicorn with better error handling
         sep = "=" * 60
         print(f"\n{sep}", flush=True)
-        print(f"Step 3: Starting uvicorn server on 0.0.0.0:{port}...", flush=True)
+        print(f"Step 3: Starting uvicorn server on {host}:{port}...", flush=True)
         print(f"{sep}\n", flush=True)
         logger.info(f"\n{sep}")
-        logger.info(f"Step 3: Starting uvicorn server on 0.0.0.0:{port}...")
+        logger.info(f"Step 3: Starting uvicorn server on {host}:{port}...")
         logger.info(f"{sep}\n")
         uvicorn.run(
             "clinicai.app:app",
-            host="0.0.0.0",
+            host=host,
             port=port,
             workers=1,
             log_level="info",
