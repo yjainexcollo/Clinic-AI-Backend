@@ -212,7 +212,7 @@ backend/
 
 ## 📚 API Documentation
 
-### Core Endpoints
+### Core Endpoint
 
 #### Health & Monitoring
 - `GET /health` - Basic health check
