@@ -21,25 +21,33 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     All other endpoints require valid authentication.
     """
     
-    # Endpoints that don't require authentication
-    PUBLIC_ENDPOINTS = [
-        "/health",
-        "/health/ready",
-        "/health/live",
-        "/health/audit",
+    PUBLIC_PATHS = {
+        "/",
+        "/favicon.ico",
         "/docs",
         "/redoc",
         "/openapi.json",
-        "/swagger.yaml",
-        "/",
-    ]
+        "/health",
+        "/health/live",
+        "/health/ready",
+    }
+    
+    PUBLIC_PATH_PREFIXES = {
+        "/docs",
+        "/redoc",
+    }
     
     def is_public_endpoint(self, path: str) -> bool:
-        """Check if endpoint is public and doesn't require authentication"""
-        # Check exact match or prefix match
-        for public_path in self.PUBLIC_ENDPOINTS:
-            if path == public_path or path.startswith(public_path + "/"):
+        """Check if endpoint is public and doesn't require authentication."""
+        normalized_path = path.rstrip("/") or "/"
+        
+        if normalized_path in self.PUBLIC_PATHS:
+            return True
+        
+        for prefix in self.PUBLIC_PATH_PREFIXES:
+            if path.startswith(prefix + "/"):
                 return True
+        
         return False
     
     async def dispatch(self, request: Request, call_next):
@@ -107,4 +115,3 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         
         # Authentication successful - proceed with request
         return await call_next(request)
-
