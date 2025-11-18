@@ -929,9 +929,19 @@ async def generate_pre_visit_summary(
         http_request.state.audit_patient_id = request.patient_id
         http_request.state.audit_visit_id = request.visit_id
         
-        # Convert Pydantic model to DTO
+        # Convert Pydantic model to DTO - handle patient_id decoding gracefully
+        try:
+            decoded_patient_id = decode_patient_id(request.patient_id)
+        except (ValueError, Exception) as decode_error:
+            # If decoding fails, try using the patient_id as-is (might already be decoded)
+            logger.warning(
+                f"Failed to decode patient_id {request.patient_id[:20] if request.patient_id else 'None'}..., "
+                f"using as-is: {decode_error}"
+            )
+            decoded_patient_id = request.patient_id
+        
         dto_request = PreVisitSummaryRequest(
-            patient_id=decode_patient_id(request.patient_id),
+            patient_id=decoded_patient_id,
             visit_id=request.visit_id,
         )
 
@@ -947,14 +957,33 @@ async def generate_pre_visit_summary(
         )
 
     except ValueError as e:
+        logger.error(f"ValueError in generate_pre_visit_summary: {e}", exc_info=True)
         return fail(http_request, error="INTAKE_NOT_COMPLETED", message=str(e))
     except PatientNotFoundError as e:
+        logger.error(f"PatientNotFoundError in generate_pre_visit_summary: patient_id={request.patient_id[:20] if request.patient_id else None}, error={e.message}")
         return fail(http_request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
+        logger.error(f"VisitNotFoundError in generate_pre_visit_summary: visit_id={request.visit_id}, error={e.message}")
         return fail(http_request, error="VISIT_NOT_FOUND", message=e.message)
     except Exception as e:
-        logger.error("Unhandled error in generate_pre_visit_summary", exc_info=True)
-        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        # Log the full error with traceback and context for debugging
+        error_type = type(e).__name__
+        error_message = str(e)
+        logger.error(
+            f"Unhandled error in generate_pre_visit_summary: {error_type}: {error_message}",
+            exc_info=True,
+            extra={
+                "patient_id": request.patient_id[:20] if request.patient_id else None,
+                "visit_id": request.visit_id,
+                "error_type": error_type,
+                "error_message": error_message,
+            }
+        )
+        # Return more helpful error message in development, generic in production
+        import os
+        is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
+        error_msg = f"{error_type}: {error_message}" if is_dev else "An unexpected error occurred"
+        return fail(http_request, error="INTERNAL_ERROR", message=error_msg)
 
 
 @router.get(
