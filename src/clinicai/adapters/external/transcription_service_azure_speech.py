@@ -183,10 +183,18 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             # Determine content type from file extension
             content_type_map = {
                 ".mp3": "audio/mpeg",
+                ".mpeg": "audio/mpeg",
+                ".mpg": "audio/mpeg",
                 ".wav": "audio/wav",
                 ".m4a": "audio/mp4",
+                ".mp4": "audio/mp4",
                 ".flac": "audio/flac",
                 ".ogg": "audio/ogg",
+                ".opus": "audio/opus",
+                ".amr": "audio/amr",
+                ".webm": "audio/webm",
+                ".aac": "audio/aac",
+                ".wma": "audio/x-ms-wma",
             }
             file_ext = Path(audio_file_path).suffix.lower()
             content_type = content_type_map.get(file_ext, "audio/mpeg")
@@ -388,3 +396,112 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             async with session.delete(delete_url, headers=headers, timeout=30) as response:
                 if response.status not in (200, 202, 204):
                     logger.warning(f"Failed to delete transcription job: {response.status}")
+    
+    async def validate_audio_file(self, audio_file_path: str) -> Dict[str, Any]:
+        """
+        Validate audio file format and quality for Azure Speech Service.
+        
+        Azure Speech Service supports the following formats:
+        - WAV (PCM, A-law, mu-law)
+        - MP3 (MPEG-1/2 Audio Layer 3)
+        - M4A (MPEG-4 Audio)
+        - FLAC (Free Lossless Audio Codec)
+        - OGG (Ogg Vorbis)
+        - OPUS (Opus codec)
+        - AMR (Adaptive Multi-Rate)
+        - WebM (WebM audio)
+        
+        Args:
+            audio_file_path: Path to audio file
+            
+        Returns:
+            Dict containing validation results and metadata:
+            - is_valid: bool
+            - error: Optional error message
+            - file_size: File size in bytes
+            - duration: Audio duration in seconds (0 if unknown)
+            - format: File format/extension
+        """
+        try:
+            p = Path(audio_file_path)
+            if not p.exists() or not p.is_file():
+                return {
+                    "is_valid": False,
+                    "error": "Audio file not found",
+                    "file_size": 0,
+                    "duration": 0,
+                    "format": None,
+                }
+            
+            file_size = p.stat().st_size
+            if file_size <= 0:
+                return {
+                    "is_valid": False,
+                    "error": "Empty file",
+                    "file_size": 0,
+                    "duration": 0,
+                    "format": None,
+                }
+            
+            # Azure Speech Service supports files up to 1GB, but we'll use a reasonable limit
+            # Check against configured max file size if available
+            max_size_mb = (
+                self._settings.file_storage.max_file_size_mb 
+                if hasattr(self._settings, 'file_storage') and hasattr(self._settings.file_storage, 'max_file_size_mb')
+                else 100
+            )
+            max_size_bytes = max_size_mb * 1024 * 1024
+            
+            if file_size > max_size_bytes:
+                return {
+                    "is_valid": False,
+                    "error": f"Audio file too large ({file_size / (1024*1024):.1f}MB, max {max_size_mb}MB)",
+                    "file_size": file_size,
+                    "duration": 0,
+                    "format": p.suffix.lower().lstrip("."),
+                }
+            
+            # Validate file format - Azure Speech Service supported formats
+            # Including MPEG variants and other common formats
+            supported_formats = {
+                ".wav",      # WAV (PCM, A-law, mu-law)
+                ".mp3",      # MP3 (MPEG-1/2 Audio Layer 3)
+                ".mpeg",     # MPEG audio
+                ".mpg",      # MPEG audio (alternative extension)
+                ".m4a",      # M4A (MPEG-4 Audio)
+                ".mp4",      # MP4 (can contain audio)
+                ".flac",     # FLAC (Free Lossless Audio Codec)
+                ".ogg",      # OGG (Ogg Vorbis)
+                ".opus",     # OPUS (Opus codec)
+                ".amr",      # AMR (Adaptive Multi-Rate)
+                ".webm",     # WebM audio
+                ".aac",      # AAC (Advanced Audio Coding)
+                ".wma",      # WMA (Windows Media Audio) - if supported
+            }
+            file_ext = p.suffix.lower()
+            
+            if file_ext not in supported_formats:
+                return {
+                    "is_valid": False,
+                    "error": f"Unsupported audio format: {file_ext}. Supported formats: {', '.join(sorted(supported_formats))}",
+                    "file_size": file_size,
+                    "duration": 0,
+                    "format": file_ext.lstrip("."),
+                }
+            
+            return {
+                "is_valid": True,
+                "error": None,
+                "file_size": file_size,
+                "duration": 0,  # Duration would require audio processing library to determine
+                "format": file_ext.lstrip("."),
+            }
+        except Exception as e:
+            logger.error(f"Error validating audio file {audio_file_path}: {e}", exc_info=True)
+            return {
+                "is_valid": False,
+                "error": f"Validation error: {e}",
+                "file_size": 0,
+                "duration": 0,
+                "format": None,
+            }

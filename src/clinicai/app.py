@@ -454,6 +454,48 @@ def create_app() -> FastAPI:
             {"name": "Post-Visit Summary", "description": "Post-visit summary generation and retrieval"},
             {"name": "Audio Management", "description": "Audio file listing and management operations"},
         ]
+        
+        # Add API key security scheme to OpenAPI schema
+        # This enables the "Authorize" button in Swagger UI
+        if "components" not in openapi_schema:
+            openapi_schema["components"] = {}
+        
+        openapi_schema["components"]["securitySchemes"] = {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+                "description": "API key authentication. Enter your API key (e.g., 'abc123' from your API_KEYS environment variable)"
+            },
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "API Key",
+                "description": "Bearer token authentication. Enter your API key as: 'Bearer your-api-key'"
+            }
+        }
+        
+        # Apply security to all endpoints (except public ones which are already excluded by middleware)
+        # Note: Public endpoints are already handled by middleware, but we mark protected paths as requiring auth
+        # The middleware will still allow public paths through
+        if "paths" in openapi_schema:
+            for path, methods in openapi_schema["paths"].items():
+                # Skip public paths
+                if path in ["/", "/docs", "/redoc", "/openapi.json", "/health", "/health/live", "/health/ready"]:
+                    continue
+                # Skip paths that start with /docs or /redoc
+                if path.startswith("/docs/") or path.startswith("/redoc/"):
+                    continue
+                
+                # Add security requirement to all methods in this path
+                for method_name, method_info in methods.items():
+                    if isinstance(method_info, dict) and "security" not in method_info:
+                        # Allow either ApiKeyAuth or BearerAuth
+                        method_info["security"] = [
+                            {"ApiKeyAuth": []},
+                            {"BearerAuth": []}
+                        ]
+        
         app.openapi_schema = openapi_schema
         return app.openapi_schema
     
