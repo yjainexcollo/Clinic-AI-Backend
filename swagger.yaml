@@ -470,7 +470,12 @@ paths:
     post:
       tags: [Notes]
       summary: Transcribe audio
-      description: Queue audio transcription and return immediately (202).
+      description: |
+        Queue audio transcription and return immediately (202).
+        - Supports large audio files (up to 100MB) with streaming upload
+        - Request timeout: 300 seconds (5 minutes) for file upload
+        - Files are streamed to avoid memory accumulation
+        - Transcription is processed asynchronously by background worker
       operationId: transcribe_audio
       requestBody:
         required: true
@@ -483,12 +488,13 @@ paths:
                 patient_id: {type: string}
                 visit_id: {type: string}
                 language: {type: string, default: en}
-                audio_file: {type: string, format: binary}
+                audio_file: {type: string, format: binary, description: "Audio file to transcribe. Supports large files with streaming upload."}
       responses:
         '202': {description: Queued for transcription}
         '400': {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '422': {description: Invalid audio file or visit status, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
+        '504': {description: Request timeout after 300 seconds. File may be too large or server overloaded. Retry recommended., content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
   /notes/transcribe/status/{patient_id}/{visit_id}:
     get:
@@ -539,12 +545,12 @@ paths:
         '404': {description: Patient or visit not found, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '422': {description: No transcript available or invalid visit status, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
         '500': {description: Internal server error, content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}}
-  /notes/{patient_id}/visits/{visit_id}/transcript:
+  /notes/{patient_id}/visits/{visit_id}/dialogue:
     get:
       tags: [Notes]
-      summary: Get transcript
-      description: "Get transcript for a visit. Returns 202 Accepted with Retry-After header if transcription is still in progress (status: pending or processing)."
-      operationId: get_transcript
+      summary: Get doctor/patient dialogue
+      description: "Get transcript plus doctor/patient structured dialogue for a visit. Returns 202 Accepted with Retry-After header if transcription is still in progress (status: pending or processing)."
+      operationId: get_transcription_dialogue
       parameters:
         - name: patient_id
           in: path

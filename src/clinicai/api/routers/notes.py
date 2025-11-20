@@ -1,8 +1,9 @@
 """Note-related API endpoints for Step-03 functionality."""
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, BackgroundTasks, Request
-from fastapi.responses import Response as FastAPIResponse
+from fastapi.responses import Response as FastAPIResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import tempfile
@@ -31,17 +32,18 @@ from ...core.utils.crypto import decode_patient_id
 from ..schemas import ErrorResponse
 from ...core.config import get_settings
 from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
+from ..schemas.common import ApiResponse, ErrorResponse
+from ..utils.responses import ok, fail
+
+router = APIRouter(prefix="/notes")
+logger = logging.getLogger("clinicai")
+
 try:
     from ...adapters.queue.azure_queue_service import get_azure_queue_service
     QUEUE_SERVICE_AVAILABLE = True
 except ImportError:
     QUEUE_SERVICE_AVAILABLE = False
     logger.warning("Azure Queue Storage not available. Install azure-storage-queue package.")
-from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import ok, fail
-
-router = APIRouter(prefix="/notes")
-logger = logging.getLogger("clinicai")
 
 
 # Vitals data models
@@ -124,6 +126,7 @@ async def transcribe_audio(
     print(f"🔵 Content-Type: {request.headers.get('content-type', 'not set')}")
     print(f"🔵 Filename: {audio_file.filename if audio_file else 'None'}")
     logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}, language: {language}")
+    print("🔵 Step 1: Request received, starting validation...")
 
     if not audio_file.filename:
         raise HTTPException(
@@ -132,10 +135,12 @@ async def transcribe_audio(
         )
 
     # Validate file type (allow common audio types and mpeg containers)
+    print("🔵 Step 2: Validating file type...")
     content_type = audio_file.content_type or ""
     is_audio_like = content_type.startswith("audio/")
     is_mpeg_container = content_type in ("video/mpeg", "video/mpg", "application/mpeg")
     is_generic_stream = content_type in ("application/octet-stream",)
+    print(f"🔵 Step 2 complete: content_type={content_type}, is_audio_like={is_audio_like}, is_mpeg_container={is_mpeg_container}, is_generic_stream={is_generic_stream}")
     if not (is_audio_like or is_mpeg_container or is_generic_stream):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -147,6 +152,7 @@ async def transcribe_audio(
         )
 
     # Decode opaque patient id from client
+    print("🔵 Step 3: Decoding patient ID...")
     # Check if this looks like an internal patient ID (format: name_mobile)
     if '_' in patient_id:
         parts = patient_id.split('_', 1)
@@ -169,32 +175,52 @@ async def transcribe_audio(
             logger.warning(f"Failed to decode patient_id '{patient_id}': {e}")
             internal_patient_id = patient_id
 
-    # Stream to temp file to avoid loading entire file in memory
+    # Stream to temp file WITHOUT accumulating in memory
+    print("🔵 Step 4: Starting file streaming...")
+    upload_start_time = time.time()
     temp_file_path = None
-    audio_data = b""
+    file_size = 0
     audio_file_record = None  # Initialize outside try block for background task access
     try:
-        print("🔵 Writing upload to temp file (streaming 1MB chunks)...")
+        logger.info("Starting streaming upload to temp file (no memory accumulation)...")
+        print("🔵 Step 4a: Creating temp file...")
         ext = (audio_file.filename or 'audio').split('.')[-1]
         # Normalize common MPEG container cases
         if ext.lower() in {"mpeg", "mpg"}:
             ext = "mpeg"
         suffix = f".{ext}"
+        
+        # Stream directly to temp file - NO memory accumulation
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file_path = temp_file.name
+            print(f"🔵 Step 4b: Temp file created at {temp_file_path}, starting to read chunks...")
+            chunk_size = 1024 * 1024  # 1MB chunks for optimal performance
+            chunk_count = 0
             while True:
-                chunk = await audio_file.read(1024 * 1024)
+                print(f"🔵 Step 4c: Reading chunk {chunk_count}...")
+                chunk = await audio_file.read(chunk_size)
                 if not chunk:
+                    print(f"🔵 Step 4d: Finished reading all chunks (total: {chunk_count} chunks, {file_size} bytes)")
                     break
                 temp_file.write(chunk)
-                audio_data += chunk
-        print(f"🔵 Temp file created: {temp_file_path}")
-        print(f"🔵 Total bytes read: {len(audio_data)}")
+                file_size += len(chunk)  # Track size only, don't accumulate data
+                chunk_count += 1
+                if chunk_count % 10 == 0:  # Log every 10 chunks to avoid spam
+                    print(f"🔵 Step 4c: Read {chunk_count} chunks, {file_size} bytes so far...")
+        
+        upload_duration = time.time() - upload_start_time
+        logger.info(
+            f"Temp file created: {temp_file_path}, size={file_size} bytes "
+            f"({file_size / (1024*1024):.2f}MB), upload_duration={upload_duration:.2f}s"
+        )
+        print(f"🔵 Step 4e: Temp file created successfully in {upload_duration:.2f}s")
 
         # Mark visit as queued if possible (best-effort via use case during processing)
+        print("🔵 Step 5: Starting patient/visit validation...")
         try:
             # Check if patient and visit exist and are in correct status
             from clinicai.domain.value_objects.patient_id import PatientId
+            print(f"🔵 Step 5a: Looking up patient {internal_patient_id}...")
             patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
             if not patient:
                 raise HTTPException(
@@ -203,6 +229,7 @@ async def transcribe_audio(
                 )
             
             from ...domain.value_objects.visit_id import VisitId
+            print(f"🔵 Step 5b: Looking up visit {visit_id}...")
             visit_id_obj = VisitId(visit_id)
             visit = await visit_repo.find_by_patient_and_visit_id(
                 internal_patient_id, visit_id_obj
@@ -246,17 +273,28 @@ async def transcribe_audio(
                     )
             
             # Save audio file to database first (before queuing)
-            logger.info(f"Attempting to save audio file to database. Audio data size: {len(audio_data)} bytes")
-            audio_file_record = await audio_repo.create_audio_file(
-                audio_data=audio_data,
+            # Upload directly from temp file (streaming, no memory loading)
+            print("🔵 Step 6: Starting blob upload...")
+            blob_upload_start = time.time()
+            logger.info(f"Uploading audio file from temp file: {temp_file_path}, size={file_size} bytes")
+            print(f"🔵 Step 6a: Calling create_audio_file_from_path with file_path={temp_file_path}, size={file_size} bytes")
+            
+            repo_call_start = time.time()
+            audio_file_record = await audio_repo.create_audio_file_from_path(
+                file_path=temp_file_path,
                 filename=audio_file.filename or "unknown_audio",
                 content_type=audio_file.content_type or "audio/mpeg",
                 patient_id=internal_patient_id,
                 visit_id=visit_id,
                 audio_type="visit",
             )
-            logger.info(f"Audio file saved to database: {audio_file_record.audio_id}")
-            print(f"✅ Audio file saved to database: {audio_file_record.audio_id}")
+            repo_call_duration = time.time() - repo_call_start
+            blob_upload_duration = time.time() - blob_upload_start
+            logger.info(
+                f"Audio file saved to database: {audio_file_record.audio_id}, "
+                f"repo_call_duration={repo_call_duration:.2f}s, blob_upload_duration={blob_upload_duration:.2f}s"
+            )
+            print(f"✅ Audio file saved to database: {audio_file_record.audio_id} (repo_call={repo_call_duration:.3f}s, total={blob_upload_duration:.3f}s)")
 
             # Start transcription session
             visit.start_transcription(None)  # No file path needed
@@ -276,16 +314,20 @@ async def transcribe_audio(
                 )
             
             queue_service = get_azure_queue_service()
-            await queue_service.ensure_queue_exists()  # Ensure queue exists
+            # Note: Queue existence is ensured at startup, not per request
             
-            message_id = queue_service.enqueue_transcription_job(
+            message_id = await queue_service.enqueue_transcription_job(
                 patient_id=internal_patient_id,
                 visit_id=visit_id,
                 audio_file_id=audio_file_record.audio_id,
                 language=language
             )
             
-            logger.info(f"Transcription job enqueued: message_id={message_id}")
+            total_duration = time.time() - upload_start_time
+            logger.info(
+                f"Transcription job enqueued: message_id={message_id}, "
+                f"total_request_duration={total_duration:.2f}s, file_size={file_size} bytes"
+            )
             print(f"✅ Transcription job enqueued: message_id={message_id}")
             
         except HTTPException:
@@ -307,13 +349,17 @@ async def transcribe_audio(
                 logger.error(f"Failed to clean up temp file: {cleanup_error}")
                 print(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
-        return {
-            "status": "queued",
-            "patient_id": internal_patient_id,
-            "visit_id": visit_id,
-            "message_id": message_id,
-            "message": "Transcription queued successfully. Poll /notes/transcribe/status/{patient_id}/{visit_id} for status."
-        }
+        # Return 202 Accepted for async operation
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "status": "queued",
+                "patient_id": internal_patient_id,
+                "visit_id": visit_id,
+                "message_id": message_id,
+                "message": "Transcription queued successfully. Poll /notes/transcribe/status/{patient_id}/{visit_id} for status."
+            }
+        )
 
     except HTTPException:
         # Reraise HTTPException directly
@@ -654,18 +700,19 @@ async def get_vitals(
 
 
 @router.get(
-    "/{patient_id}/visits/{visit_id}/transcript",
+    "/{patient_id}/visits/{visit_id}/dialogue",
     response_model=ApiResponse[TranscriptionSessionDTO],
     status_code=status.HTTP_200_OK,
     tags=["Vitals and Transcript Generation"],
+    summary="Get transcript with doctor/patient dialogue",
     responses={
-        200: {"description": "Transcript returned"},
+        200: {"description": "Transcript dialogue returned"},
         404: {"model": ErrorResponse, "description": "Transcript not found"},
         422: {"model": ErrorResponse, "description": "Invalid input"},
     },
 )
-async def get_transcript(request: Request, patient_id: str, visit_id: str, patient_repo: PatientRepositoryDep, visit_repo: VisitRepositoryDep):
-    """Get transcript for a visit."""
+async def get_transcription_dialogue(request: Request, patient_id: str, visit_id: str, patient_repo: PatientRepositoryDep, visit_repo: VisitRepositoryDep):
+    """Get transcript + doctor/patient dialogue for a visit."""
     try:
         from ...domain.value_objects.patient_id import PatientId
         import urllib.parse

@@ -223,7 +223,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             raise
     
     async def _create_transcription_job(self, blob_url: str, language: str) -> str:
-        """Create Azure Speech transcription job."""
+        """Create Azure Speech transcription job with retry logic."""
         transcription_name = f"clinicai-transcription-{uuid.uuid4()}"
         
         payload = {
@@ -234,8 +234,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "diarizationEnabled": self._settings.azure_speech.enable_speaker_diarization,
                 "wordLevelTimestampsEnabled": True,
                 "punctuationMode": "DictatedAndAutomatic",
-                "profanityFilterMode": "Masked",
-                "channels": "Auto"
+                "profanityFilterMode": "Masked"
             }
         }
         
@@ -244,51 +243,113 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
-            url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
-            async with session.post(url, json=payload, headers=headers, timeout=60) as response:
-                if response.status not in (200, 201, 202):
-                    error_text = await response.text()
-                    logger.error(f"Failed to create transcription job: {response.status} {error_text}")
-                    raise ValueError(f"Failed to create transcription job: {response.status} {error_text}")
+        max_retries = 3
+        base_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
+                    async with session.post(url, json=payload, headers=headers) as response:
+                        if response.status not in (200, 201, 202):
+                            error_text = await response.text()
+                            logger.error(
+                                f"Failed to create transcription job: {response.status} {error_text} "
+                                f"(attempt {attempt + 1}/{max_retries})"
+                            )
+                            if attempt < max_retries - 1:
+                                delay = base_delay * (2 ** attempt)
+                                await asyncio.sleep(delay)
+                                continue
+                            raise ValueError(f"Failed to create transcription job: {response.status} {error_text}")
+                        
+                        location = response.headers.get("Location")
+                        if not location:
+                            raise ValueError("Azure Speech Service did not return transcription location URL")
+                        
+                        transcription_id = location.rstrip("/").split("/")[-1]
+                        logger.info(f"✅ Created transcription job: {transcription_id} (attempt {attempt + 1})")
+                        return transcription_id
+                        
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout creating transcription job (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                raise TimeoutError("Failed to create transcription job: timeout after 3 attempts")
                 
-                location = response.headers.get("Location")
-                if not location:
-                    raise ValueError("Azure Speech Service did not return transcription location URL")
-                
-                transcription_id = location.rstrip("/").split("/")[-1]
-                return transcription_id
+            except Exception as e:
+                logger.error(f"Error creating transcription job (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                raise
     
     async def _poll_transcription_status(self, transcription_id: str) -> Dict[str, Any]:
-        """Poll transcription job status until completion."""
+        """Poll transcription job status until completion with increased timeout."""
         status_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
-        poll_interval = self._settings.azure_speech.batch_polling_interval
+        poll_interval = max(3, self._settings.azure_speech.batch_polling_interval)  # Minimum 3 seconds
         timeout_seconds = self._settings.azure_speech.batch_max_wait_time
         start_time = time.time()
+        poll_count = 0
         
-        async with aiohttp.ClientSession() as session:
+        logger.info(f"Starting status polling for transcription: {transcription_id}, poll_interval={poll_interval}s")
+        
+        timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout per request (increased from 30s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
-                async with session.get(status_url, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"Failed to get transcription status: {response.status} {error_text}")
-                        raise ValueError(f"Failed to get transcription status: {response.status} {error_text}")
-                    
-                    status_data = await response.json()
-                    status = status_data.get("status")
-                    
-                    logger.info(f"Transcription status: {status}")
-                    
-                    if status in ("Succeeded", "Failed"):
-                        return status_data
-                    
+                poll_count += 1
+                try:
+                    async with session.get(status_url, headers=headers) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            logger.error(f"Failed to get transcription status: {response.status} {error_text}")
+                            raise ValueError(f"Failed to get transcription status: {response.status} {error_text}")
+                        
+                        status_data = await response.json()
+                        status = status_data.get("status")
+                        
+                        elapsed = time.time() - start_time
+                        logger.info(
+                            f"Transcription status poll #{poll_count}: status={status}, "
+                            f"elapsed={elapsed:.1f}s/{timeout_seconds}s"
+                        )
+                        
+                        if status in ("Succeeded", "Failed"):
+                            total_duration = time.time() - start_time
+                            logger.info(
+                                f"✅ Transcription job completed: {transcription_id}, "
+                                f"status={status}, total_duration={total_duration:.2f}s, "
+                                f"polls={poll_count}"
+                            )
+                            return status_data
+                        
+                        if time.time() - start_time > timeout_seconds:
+                            raise TimeoutError(
+                                f"Transcription job timed out after {timeout_seconds} seconds. "
+                                f"Last status: {status}, polls: {poll_count}"
+                            )
+                        
+                        await asyncio.sleep(poll_interval)
+                        
+                except asyncio.TimeoutError:
+                    elapsed = time.time() - start_time
+                    logger.warning(
+                        f"Timeout during status poll #{poll_count} for {transcription_id} "
+                        f"(elapsed: {elapsed:.1f}s)"
+                    )
+                    # Continue polling unless overall timeout exceeded
                     if time.time() - start_time > timeout_seconds:
                         raise TimeoutError(
-                            f"Transcription job timed out after {timeout_seconds} seconds. Last status: {status}"
+                            f"Transcription job timed out after {timeout_seconds} seconds. "
+                            f"Last poll timed out."
                         )
-                    
                     await asyncio.sleep(poll_interval)
+                    continue
     
     async def _get_transcription_results(self, transcription_id: str) -> List[Dict[str, Any]]:
         """Retrieve transcription results."""
@@ -331,32 +392,45 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         transcript_text = []
         structured_dialogue = []
         speaker_info = {"speakers": []}
+        seen_speakers = set()
         
         for result in results:
             recognized_phrases = result.get("recognizedPhrases", [])
-            combined_phrases = result.get("combinedRecognizedPhrases", [])
             
-            for phrase in combined_phrases:
-                text = phrase.get("display", "")
+            for phrase in recognized_phrases:
+                nbest = phrase.get("nBest", [])
+                if not nbest:
+                    continue
+                
+                best_result = nbest[0]
+                text = best_result.get("display") or best_result.get("lexical") or ""
+                if not text.strip():
+                    continue
+                
                 transcript_text.append(text)
                 
-                recognized_phrase = next(
-                    (rp for rp in recognized_phrases if rp.get("id") == phrase.get("id")), None
-                )
+                # Prefer diarization speaker ID; fallback to channel if missing
+                speaker_id = phrase.get("speaker")
+                if speaker_id is None:
+                    channel = phrase.get("channel", 0)
+                    speaker_id = channel + 1
                 
-                if recognized_phrase:
-                    channel = recognized_phrase.get("channel", 0)
-                    speaker = f"Speaker {channel + 1}"
-                    structured_dialogue.append(
-                        {
-                            "speaker": speaker,
-                            "text": text,
-                            "offset": recognized_phrase.get("offset"),
-                            "duration": recognized_phrase.get("duration"),
-                        }
-                    )
+                speaker_label = f"Speaker {speaker_id}"
+                seen_speakers.add(speaker_label)
+                
+                structured_dialogue.append(
+                    {
+                        "speaker": speaker_label,
+                        "text": text,
+                        "offset": phrase.get("offset"),
+                        "duration": phrase.get("duration"),
+                    }
+                )
         
-        speaker_info["speakers"] = [{"label": "Speaker 1"}, {"label": "Speaker 2"}]
+        if seen_speakers:
+            speaker_info["speakers"] = [{"label": label} for label in sorted(seen_speakers)]
+        else:
+            speaker_info["speakers"] = [{"label": "Speaker 1"}]
         
         return " ".join(transcript_text).strip(), structured_dialogue, speaker_info
     

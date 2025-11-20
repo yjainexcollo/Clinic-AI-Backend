@@ -7,6 +7,7 @@ import logging
 import sys
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -47,11 +48,12 @@ class TranscriptionWorker:
     async def initialize(self):
         """Initialize worker (database connections, etc.)."""
         # Ensure queue exists
-        await self.queue_service.ensure_queue_exists()
+        # Note: Queue existence is ensured at startup, not per worker run
         logger.info("✅ Transcription worker initialized")
     
     async def get_audio_data(self, audio_file_id: str) -> Optional[bytes]:
-        """Get audio file data from blob storage."""
+        """Get audio file data from blob storage with logging."""
+        download_start_time = time.time()
         try:
             audio_file = await self.audio_repo.get_audio_file_by_id(audio_file_id)
             if not audio_file:
@@ -67,26 +69,40 @@ class TranscriptionWorker:
                 logger.error(f"Blob reference {audio_file.blob_reference_id} not found")
                 return None
             
-            # Download from blob storage
+            # Download from blob storage (with timeout and retry handled in blob_service)
             from clinicai.adapters.storage.azure_blob_service import get_azure_blob_service
             blob_service = get_azure_blob_service()
-            # Use the blob path directly (container is already configured in blob_service)
             audio_data = await blob_service.download_file(blob_ref.blob_path)
+            
+            download_duration = time.time() - download_start_time
+            logger.info(
+                f"✅ Downloaded audio data: {audio_file_id}, "
+                f"size={len(audio_data)} bytes ({len(audio_data) / (1024*1024):.2f}MB), "
+                f"duration={download_duration:.2f}s"
+            )
             
             return audio_data
         except Exception as e:
-            logger.error(f"Failed to get audio data: {e}", exc_info=True)
+            download_duration = time.time() - download_start_time
+            logger.error(
+                f"Failed to get audio data: {e} (duration: {download_duration:.2f}s)",
+                exc_info=True
+            )
             return None
     
     async def process_job(self, job_data: dict, message_id: str, pop_receipt: str):
-        """Process a single transcription job."""
+        """Process a single transcription job with improved logging and error handling."""
+        job_start_time = time.time()
         patient_id = job_data["patient_id"]
         visit_id = job_data["visit_id"]
         audio_file_id = job_data["audio_file_id"]
         language = job_data.get("language", "en")
         retry_count = job_data.get("retry_count", 0)
         
-        logger.info(f"Processing transcription job: patient={patient_id}, visit={visit_id}, audio_file={audio_file_id}")
+        logger.info(
+            f"Processing transcription job: patient={patient_id}, visit={visit_id}, "
+            f"audio_file={audio_file_id}, language={language}, retry={retry_count}"
+        )
         print("🔵 === Worker: Processing transcription job ===")
         print(f"🔵 patient_id={patient_id}, visit_id={visit_id}, audio_file_id={audio_file_id}, language={language}, retry={retry_count}")
         
@@ -95,9 +111,17 @@ class TranscriptionWorker:
         
         try:
             # Get audio file data from blob storage
+            download_start = time.time()
             audio_data = await self.get_audio_data(audio_file_id)
+            download_duration = time.time() - download_start
+            
             if not audio_data:
                 raise ValueError(f"Failed to retrieve audio data for {audio_file_id}")
+            
+            logger.info(
+                f"Downloaded audio data: size={len(audio_data)} bytes, "
+                f"duration={download_duration:.2f}s"
+            )
             print(f"🔵 Worker: downloaded audio data size = {len(audio_data)} bytes")
             
             # Get audio file metadata to determine extension
@@ -110,6 +134,7 @@ class TranscriptionWorker:
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as temp_file:
                 temp_file.write(audio_data)
                 temp_file_path = temp_file.name
+            logger.info(f"Created temp file: {temp_file_path}")
             print(f"🔵 Worker: temp file created at {temp_file_path}")
             
             # Extend message visibility periodically during processing
@@ -118,7 +143,7 @@ class TranscriptionWorker:
                 while True:
                     await asyncio.sleep(300)  # Every 5 minutes
                     try:
-                        new_pop_receipt = self.queue_service.update_message_visibility(
+                        new_pop_receipt = await self.queue_service.update_message_visibility(
                             message_id,
                             pop_receipt,
                             visibility_timeout=self.settings.azure_queue.visibility_timeout
@@ -147,12 +172,44 @@ class TranscriptionWorker:
                     self.transcription_service
                 )
                 
-                # Process transcription (this can take 10+ minutes)
+                # Process transcription with timeout (this can take 10+ minutes)
+                transcription_start = time.time()
                 logger.info(f"Starting transcription processing for {patient_id}/{visit_id}")
                 print(f"🔵 Worker: starting transcription for {patient_id}/{visit_id}")
-                result = await use_case.execute(request)
-                logger.info(f"✅ Transcription completed: {result}")
+                
+                # Add timeout for transcription (30 minutes max)
+                try:
+                    result = await asyncio.wait_for(
+                        use_case.execute(request),
+                        timeout=1800.0  # 30 minutes
+                    )
+                except asyncio.TimeoutError:
+                    transcription_duration = time.time() - transcription_start
+                    total_duration = time.time() - job_start_time
+                    error_msg = (
+                        f"Transcription processing timed out after {transcription_duration:.2f}s "
+                        f"(total job duration: {total_duration:.2f}s)"
+                    )
+                    logger.error(f"❌ {error_msg}")
+                    raise TimeoutError(error_msg)
+                
+                transcription_duration = time.time() - transcription_start
+                total_duration = time.time() - job_start_time
+                
+                logger.info(
+                    f"✅ Transcription completed: {result}, "
+                    f"transcription_duration={transcription_duration:.2f}s, "
+                    f"total_job_duration={total_duration:.2f}s"
+                )
                 print(f"✅ Worker: transcription completed. duration={result.audio_duration}, words={result.word_count}")
+                
+                # Check if transcription actually failed
+                if result.transcription_status == "failed" or not result.transcript:
+                    error_msg = result.message or "Transcription returned empty result"
+                    logger.error(f"❌ Transcription failed: {error_msg}")
+                    logger.error(f"❌ Transcription status: {result.transcription_status}, transcript length: {len(result.transcript) if result.transcript else 0}")
+                    print(f"❌ Worker: transcription failed - {error_msg}")
+                    raise ValueError(f"Transcription failed: {error_msg}")
                 
                 # Update audio file with duration if we have the result
                 if result.audio_duration:
@@ -164,7 +221,7 @@ class TranscriptionWorker:
                     print(f"🔵 Worker: updated audio duration to {result.audio_duration} seconds")
                 
                 # Delete message from queue (job completed successfully)
-                self.queue_service.delete_message(message_id, pop_receipt)
+                await self.queue_service.delete_message(message_id, pop_receipt)
                 logger.info(f"✅ Job completed and removed from queue: {message_id}")
                 print(f"✅ Worker: job removed from queue: {message_id}")
                 
@@ -178,9 +235,13 @@ class TranscriptionWorker:
                         pass
                     
         except Exception as e:
+            total_duration = time.time() - job_start_time
             import traceback
             error_details = traceback.format_exc()
-            logger.error(f"❌ Transcription job failed: {e}", exc_info=True)
+            logger.error(
+                f"❌ Transcription job failed after {total_duration:.2f}s: {e}",
+                exc_info=True
+            )
             logger.error(f"Full error traceback:\n{error_details}")
             print(f"❌ Worker: transcription job failed: {str(e)}")
             print(f"❌ Full error traceback:\n{error_details}")
@@ -196,13 +257,13 @@ class TranscriptionWorker:
             if is_permanent_error:
                 # Permanent error - delete message immediately (no retries)
                 logger.warning(f"Permanent error detected ({type(e).__name__}), not retrying: {str(e)}")
-                self.queue_service.delete_message(message_id, pop_receipt)
+                await self.queue_service.delete_message(message_id, pop_receipt)
                 logger.error(f"❌ Job failed with permanent error, removed from queue")
             # Handle retries for transient errors
             elif retry_count < self.settings.azure_queue.max_retry_attempts:
                 # Re-enqueue with incremented retry count
                 job_data["retry_count"] = retry_count + 1
-                self.queue_service.enqueue_transcription_job(
+                await self.queue_service.enqueue_transcription_job(
                     job_data["patient_id"],
                     job_data["visit_id"],
                     job_data["audio_file_id"],
@@ -211,7 +272,7 @@ class TranscriptionWorker:
                 logger.info(f"Re-queued job for retry {retry_count + 1}/{self.settings.azure_queue.max_retry_attempts}")
             else:
                 # Max retries exceeded - delete message and mark as failed
-                self.queue_service.delete_message(message_id, pop_receipt)
+                await self.queue_service.delete_message(message_id, pop_receipt)
                 
                 # Mark visit transcription as failed
                 try:
@@ -242,8 +303,8 @@ class TranscriptionWorker:
         
         while True:
             try:
-                # Poll queue for messages
-                job = self.queue_service.dequeue_transcription_job()
+                # Poll queue for messages (non-blocking)
+                job = await self.queue_service.dequeue_transcription_job()
                 
                 if job:
                     await self.process_job(

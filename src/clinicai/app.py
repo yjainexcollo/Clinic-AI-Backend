@@ -547,6 +547,31 @@ def create_app() -> FastAPI:
     # This logs all PHI access with authenticated user IDs
     app.add_middleware(HIPAAAuditMiddleware)
     
+    # Add request timeout middleware (300s for transcription uploads)
+    @app.middleware("http")
+    async def timeout_middleware(request: Request, call_next):
+        """Add timeout to long-running requests (300 seconds for transcription uploads)."""
+        logger = logging.getLogger("clinicai")
+        # Only apply timeout to upload endpoints
+        if request.url.path in ["/notes/transcribe"]:
+            try:
+                response = await asyncio.wait_for(call_next(request), timeout=300.0)
+                return response
+            except asyncio.TimeoutError:
+                logger.error(f"Request timeout after 300s: {request.method} {request.url.path}")
+                return JSONResponse(
+                    status_code=504,
+                    content={
+                        "success": False,
+                        "error": "REQUEST_TIMEOUT",
+                        "error_type": "UPLOAD_TIMEOUT",
+                        "message": "Request timed out after 300 seconds. The file may be too large or the server is overloaded.",
+                        "details": {"timeout_seconds": 300, "retry": True}
+                    }
+                )
+        else:
+            return await call_next(request)
+    
     # Add performance tracking middleware
     app.add_middleware(PerformanceMiddleware)
     

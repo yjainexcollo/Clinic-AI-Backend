@@ -61,13 +61,38 @@ async def readiness_check(request: Request):
         checks["database"] = f"error: {str(e)[:50]}"
         all_ok = False
     
-    # Check Azure Blob Storage
+    # Check Azure Blob Storage connectivity
     try:
         from ...adapters.storage.azure_blob_service import get_azure_blob_service
+        import asyncio
         blob_service = get_azure_blob_service()
         # Quick check if client can be created
-        _ = blob_service.client
-        checks["azure_blob_storage"] = "ok"
+        client = blob_service.client
+        
+        # Test actual connectivity by getting account info (with timeout)
+        async def test_connectivity():
+            try:
+                from ...adapters.storage.azure_blob_service import run_blocking
+                # Try to get account properties (lightweight operation)
+                await asyncio.wait_for(
+                    run_blocking(
+                        lambda: client.get_account_information()
+                    ),
+                    timeout=10.0  # 10 second timeout for health check
+                )
+                return True
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("clinicai")
+                logger.error(f"Blob storage connectivity test failed: {e}")
+                return False
+        
+        connectivity_ok = await test_connectivity()
+        if connectivity_ok:
+            checks["azure_blob_storage"] = "ok"
+        else:
+            checks["azure_blob_storage"] = "connectivity_failed"
+            all_ok = False
     except Exception as e:
         checks["azure_blob_storage"] = f"error: {str(e)[:50]}"
         all_ok = False

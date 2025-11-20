@@ -3,6 +3,7 @@ Azure Queue Storage service for background job processing.
 """
 import json
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
 from azure.storage.queue import QueueServiceClient, QueueClient
@@ -11,6 +12,22 @@ from azure.core.exceptions import ResourceNotFoundError, ResourceExistsError
 from ...core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def run_blocking(func, *args, **kwargs):
+    """
+    Run a blocking function in an executor to avoid blocking the event loop.
+    
+    Args:
+        func: The blocking function to run
+        *args: Positional arguments for the function
+        **kwargs: Keyword arguments for the function
+        
+    Returns:
+        Result of the function call
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
 
 class AzureQueueService:
@@ -45,9 +62,9 @@ class AzureQueueService:
         return self._queue_client
     
     async def ensure_queue_exists(self) -> bool:
-        """Ensure the queue exists."""
+        """Ensure the queue exists (non-blocking)."""
         try:
-            self.queue_client.create_queue()
+            await run_blocking(self.queue_client.create_queue)
             logger.info(f"✅ Created queue: {self.settings.queue_name}")
             return True
         except ResourceExistsError:
@@ -57,7 +74,7 @@ class AzureQueueService:
             logger.error(f"❌ Failed to create queue: {e}")
             return False
     
-    def enqueue_transcription_job(
+    async def enqueue_transcription_job(
         self,
         patient_id: str,
         visit_id: str,
@@ -65,7 +82,7 @@ class AzureQueueService:
         language: str = "en"
     ) -> str:
         """
-        Enqueue a transcription job.
+        Enqueue a transcription job (non-blocking).
         
         Args:
             patient_id: Internal patient ID
@@ -87,8 +104,9 @@ class AzureQueueService:
         }
         
         try:
-            # Enqueue message (synchronous operation, but fast)
-            response = self.queue_client.send_message(
+            # Enqueue message (non-blocking)
+            response = await run_blocking(
+                self.queue_client.send_message,
                 json.dumps(message),
                 visibility_timeout=self.settings.visibility_timeout
             )
@@ -103,17 +121,19 @@ class AzureQueueService:
             logger.error(f"❌ Failed to enqueue transcription job: {e}")
             raise
     
-    def dequeue_transcription_job(self) -> Optional[Dict[str, Any]]:
+    async def dequeue_transcription_job(self) -> Optional[Dict[str, Any]]:
         """
-        Dequeue a transcription job.
+        Dequeue a transcription job (non-blocking).
         
         Returns:
             Dict with 'data', 'message_id', 'pop_receipt' or None
         """
         try:
-            messages = self.queue_client.receive_messages(
-                messages_per_page=1,
-                visibility_timeout=self.settings.visibility_timeout
+            messages = await run_blocking(
+                lambda: list(self.queue_client.receive_messages(
+                    messages_per_page=1,
+                    visibility_timeout=self.settings.visibility_timeout
+                ))
             )
             
             for message in messages:
@@ -126,8 +146,12 @@ class AzureQueueService:
                     }
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Failed to parse queue message: {e}")
-                    # Delete invalid message
-                    self.queue_client.delete_message(message.id, message.pop_receipt)
+                    # Delete invalid message (non-blocking)
+                    await run_blocking(
+                        self.queue_client.delete_message,
+                        message.id,
+                        message.pop_receipt
+                    )
                     continue
             
             return None
@@ -135,28 +159,33 @@ class AzureQueueService:
             logger.error(f"❌ Failed to dequeue transcription job: {e}")
             return None
     
-    def delete_message(self, message_id: str, pop_receipt: str) -> None:
-        """Delete a processed message from the queue."""
+    async def delete_message(self, message_id: str, pop_receipt: str) -> None:
+        """Delete a processed message from the queue (non-blocking)."""
         try:
-            self.queue_client.delete_message(message_id, pop_receipt)
+            await run_blocking(
+                self.queue_client.delete_message,
+                message_id,
+                pop_receipt
+            )
             logger.debug(f"✅ Deleted message: {message_id}")
         except Exception as e:
             logger.error(f"❌ Failed to delete message: {e}")
     
-    def update_message_visibility(
+    async def update_message_visibility(
         self,
         message_id: str,
         pop_receipt: str,
         visibility_timeout: int
     ) -> str:
         """
-        Update message visibility timeout (extend processing time).
+        Update message visibility timeout (extend processing time) (non-blocking).
         
         Returns:
             New pop_receipt
         """
         try:
-            response = self.queue_client.update_message(
+            response = await run_blocking(
+                self.queue_client.update_message,
                 message_id,
                 pop_receipt,
                 visibility_timeout=visibility_timeout
@@ -166,10 +195,10 @@ class AzureQueueService:
             logger.error(f"❌ Failed to update message visibility: {e}")
             raise
     
-    def get_queue_length(self) -> int:
-        """Get approximate number of messages in queue."""
+    async def get_queue_length(self) -> int:
+        """Get approximate number of messages in queue (non-blocking)."""
         try:
-            properties = self.queue_client.get_queue_properties()
+            properties = await run_blocking(self.queue_client.get_queue_properties)
             return properties.approximate_message_count
         except Exception as e:
             logger.error(f"❌ Failed to get queue length: {e}")

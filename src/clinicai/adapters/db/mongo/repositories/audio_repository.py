@@ -22,6 +22,84 @@ class AudioRepository:
         self.blob_service = get_azure_blob_service()
         self.blob_repo = BlobFileRepository()
 
+    async def create_audio_file_from_path(
+        self,
+        file_path: str,
+        filename: str,
+        content_type: str,
+        patient_id: Optional[str] = None,
+        visit_id: Optional[str] = None,
+        adhoc_id: Optional[str] = None,
+        audio_type: str = "adhoc",
+        duration_seconds: Optional[float] = None,
+    ) -> AudioFileMongo:
+        """Create a new audio file record with blob storage from file path (streaming, no memory)."""
+        import os
+        try:
+            print(f"🔵 [AudioRepo] Step 1: Creating audio file record for {filename}")
+            audio_id = str(uuid.uuid4())
+            file_size = os.path.getsize(file_path)
+            print(f"🔵 [AudioRepo] Step 2: File size = {file_size} bytes")
+            
+            # Upload to blob storage by streaming from file (no memory loading)
+            print(f"🔵 [AudioRepo] Step 3: Starting blob upload...")
+            blob_info = await self.blob_service.upload_file_from_path(
+                file_path=file_path,
+                filename=filename,
+                content_type=content_type,
+                file_type="audio",
+                patient_id=patient_id,
+                visit_id=visit_id,
+                adhoc_id=adhoc_id,
+                audio_type=audio_type,
+                duration_seconds=duration_seconds
+            )
+            print(f"🔵 [AudioRepo] Step 4: Blob upload completed, creating blob reference...")
+            
+            # Create blob reference
+            blob_reference = await self.blob_repo.create_blob_reference(
+                blob_path=blob_info["blob_path"],
+                container_name=blob_info["container_name"],
+                original_filename=filename,
+                content_type=content_type,
+                file_size=file_size,
+                blob_url=blob_info["blob_url"],
+                file_type="audio",
+                category=audio_type,
+                patient_id=patient_id,
+                visit_id=visit_id,
+                adhoc_id=adhoc_id,
+                metadata={
+                    "duration_seconds": duration_seconds,
+                    "audio_type": audio_type
+                }
+            )
+            print(f"🔵 [AudioRepo] Step 5: Blob reference created, creating audio file record...")
+            
+            # Create audio file record
+            audio_file = AudioFileMongo(
+                audio_id=audio_id,
+                filename=filename,
+                content_type=content_type,
+                file_size=file_size,
+                duration_seconds=duration_seconds,
+                blob_reference_id=blob_reference.file_id,
+                patient_id=patient_id,
+                visit_id=visit_id,
+                adhoc_id=adhoc_id,
+                audio_type=audio_type,
+            )
+            
+            print(f"🔵 [AudioRepo] Step 6: Inserting audio file record into database...")
+            await audio_file.insert()
+            logger.info(f"Created audio file with blob storage: {audio_id} ({filename})")
+            print(f"🔵 [AudioRepo] Step 7: Audio file record created successfully!")
+            return audio_file
+            
+        except Exception as e:
+            logger.error(f"Failed to create audio file: {e}")
+            raise
+
     async def create_audio_file(
         self,
         audio_data: bytes,

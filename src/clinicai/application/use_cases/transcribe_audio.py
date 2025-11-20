@@ -213,8 +213,21 @@ class TranscribeAudioUseCase:
             # Map speakers from Azure Speech Service (Speaker 1, Speaker 2) to Doctor/Patient
             LOGGER.info(f"Using pre-structured dialogue from Azure Speech Service ({len(pre_structured_dialogue)} turns)")
             from ...application.utils.speaker_mapping import map_speakers_to_doctor_patient
+            # Normalize Azure dialogue into {"Speaker 1": "text"} format expected by mapper
+            normalized_dialogue: List[Dict[str, str]] = []
+            for turn in pre_structured_dialogue:
+                if isinstance(turn, dict):
+                    speaker_label = turn.get("speaker")
+                    text = turn.get("text")
+                    if speaker_label and text:
+                        normalized_dialogue.append({speaker_label: text})
+                    else:
+                        normalized_dialogue.append(turn)
+                else:
+                    normalized_dialogue.append(turn)
+            
             structured_dialogue = map_speakers_to_doctor_patient(
-                pre_structured_dialogue,
+                normalized_dialogue,
                 speaker_info=speaker_info,
                 language=transcription_language
                     )
