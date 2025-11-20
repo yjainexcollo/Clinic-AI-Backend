@@ -367,7 +367,7 @@ pytest tests/integration/
 ### API Security
 - **Input Validation**: Comprehensive Pydantic schema validation
 - **Rate Limiting**: Configurable rate limits per endpoint
-- **Error Handling**: Secure error responses without sensitive data exposures
+- **Error Handling**: Secure error responses without sensitive data exposure
 
 ## 🚀 Deployment
 

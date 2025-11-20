@@ -71,6 +71,6 @@ jobs:
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
-          app-name: 'clinic-ai-backend-b4anbydmd2gfa4fd'
+          app-name: 'clinic-ai-backend'
           slot-name: 'Production'
           
