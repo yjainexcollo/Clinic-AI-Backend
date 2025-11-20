@@ -52,6 +52,15 @@ from .medical import (
     ActionPlanResponse
 )
 
+# Visit schemas
+from .visits import (
+    VisitListItemSchema,
+    VisitDetailSchema,
+    VisitListResponse,
+    TranscriptionSessionSchema,
+    SoapNoteSchema
+)
+
 # Health schemas
 # from .health import (
 #     HealthResponse,
@@ -99,6 +108,13 @@ __all__ = [
     "MedicalRecommendation",
     "ActionPlanRequest",
     "ActionPlanResponse",
+    
+    # Visits
+    "VisitListItemSchema",
+    "VisitDetailSchema",
+    "VisitListResponse",
+    "TranscriptionSessionSchema",
+    "SoapNoteSchema",
     
     # Health
     # "HealthResponse",

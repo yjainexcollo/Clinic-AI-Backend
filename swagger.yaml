@@ -371,6 +371,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /patients/{patient_id}/visits:
+    get:
+      tags: [Patient Management]
+      summary: Get all visits for a patient
+      operationId: list_patient_visits
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Patient ID (encoded)
+      responses:
+        '200':
+          description: List of visits retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_VisitListResponse'
+        '404':
+          description: Patient not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /patients/{patient_id}/visits/{visit_id}:
+    get:
+      tags: [Patient Management]
+      summary: Get full details of a specific visit
+      operationId: get_visit_detail
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Patient ID (encoded)
+        - name: visit_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Visit ID
+      responses:
+        '200':
+          description: Visit details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_VisitDetailSchema'
+        '404':
+          description: Patient or visit not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /intake/start:
     post:
       tags: [Intake]
@@ -1559,12 +1627,239 @@ components:
           additionalProperties:
             type: object
         language: {type: string, nullable: true}
-        confidence: {type: number, nullable: true}
-        duration: {type: number, nullable: true}
-        word_count: {type: integer, nullable: true}
-        model: {type: string, nullable: true}
-        filename: {type: string, nullable: true}
-        adhoc_id: {type: string, nullable: true}
+    VisitListItemSchema:
+      type: object
+      required: [visit_id, symptom, workflow_type, status, created_at, updated_at, has_transcript, has_soap, has_vitals, has_pre_visit_summary, has_post_visit_summary]
+      properties:
+        visit_id:
+          type: string
+          description: Visit ID
+        symptom:
+          type: string
+          description: Primary symptom
+        workflow_type:
+          type: string
+          description: Workflow type (scheduled or walk_in)
+        status:
+          type: string
+          description: Visit status
+        created_at:
+          type: string
+          format: date-time
+          description: Visit creation date
+        updated_at:
+          type: string
+          format: date-time
+          description: Visit last update date
+        has_transcript:
+          type: boolean
+          description: Whether transcript is available
+        has_soap:
+          type: boolean
+          description: Whether SOAP note is available
+        has_vitals:
+          type: boolean
+          description: Whether vitals are available
+        has_pre_visit_summary:
+          type: boolean
+          description: Whether pre-visit summary is available
+        has_post_visit_summary:
+          type: boolean
+          description: Whether post-visit summary is available
+    VisitListResponse:
+      type: object
+      required: [visits, total]
+      properties:
+        visits:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisitListItemSchema'
+        total:
+          type: integer
+          description: Total number of visits
+    TranscriptionSessionSchema:
+      type: object
+      properties:
+        audio_file_path:
+          type: string
+          nullable: true
+          description: Path to audio file
+        transcript:
+          type: string
+          nullable: true
+          description: Full transcript text
+        transcription_status:
+          type: string
+          default: pending
+          description: Status (pending, processing, completed, failed)
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Transcription start timestamp
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Transcription completion timestamp
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if transcription failed
+        audio_duration_seconds:
+          type: number
+          format: float
+          nullable: true
+          description: Audio duration in seconds
+        word_count:
+          type: integer
+          nullable: true
+          description: Word count in transcript
+        structured_dialogue:
+          type: array
+          nullable: true
+          description: Structured doctor/patient dialogue
+          items:
+            type: object
+            additionalProperties: true
+    SoapNoteSchema:
+      type: object
+      required: [subjective, objective, assessment, plan, highlights, red_flags, generated_at]
+      properties:
+        subjective:
+          type: string
+          description: Subjective findings
+        objective:
+          type: object
+          description: Objective findings and vitals
+          additionalProperties: true
+        assessment:
+          type: string
+          description: Assessment and diagnosis
+        plan:
+          type: string
+          description: Treatment plan
+        highlights:
+          type: array
+          items:
+            type: string
+          description: Key highlights
+        red_flags:
+          type: array
+          items:
+            type: string
+          description: Red flag symptoms
+        generated_at:
+          type: string
+          format: date-time
+          description: SOAP note generation timestamp
+        model_info:
+          type: object
+          nullable: true
+          description: AI model information
+          additionalProperties: true
+        confidence_score:
+          type: number
+          format: float
+          nullable: true
+          description: Confidence score
+    VisitDetailSchema:
+      type: object
+      required: [visit_id, patient_id, symptom, workflow_type, status, created_at, updated_at, audio_files]
+      properties:
+        visit_id:
+          type: string
+          description: Visit ID
+        patient_id:
+          type: string
+          description: Patient ID
+        symptom:
+          type: string
+          description: Primary symptom
+        workflow_type:
+          type: string
+          description: Workflow type (scheduled or walk_in)
+        status:
+          type: string
+          description: Visit status
+        created_at:
+          type: string
+          format: date-time
+          description: Visit creation date
+        updated_at:
+          type: string
+          format: date-time
+          description: Visit last update date
+        intake_session:
+          type: object
+          nullable: true
+          description: Intake session data
+          additionalProperties: true
+        pre_visit_summary:
+          type: object
+          nullable: true
+          description: Pre-visit summary
+          additionalProperties: true
+        transcription_session:
+          $ref: '#/components/schemas/TranscriptionSessionSchema'
+          nullable: true
+          description: Transcription session data
+        soap_note:
+          $ref: '#/components/schemas/SoapNoteSchema'
+          nullable: true
+          description: SOAP note
+        vitals:
+          type: object
+          nullable: true
+          description: Vitals data
+          additionalProperties: true
+        post_visit_summary:
+          type: object
+          nullable: true
+          description: Post-visit summary
+          additionalProperties: true
+        audio_files:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: Associated audio files
+    ApiResponse_VisitListResponse:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Visits retrieved successfully
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          $ref: '#/components/schemas/VisitListResponse'
+    ApiResponse_VisitDetailSchema:
+      type: object
+      required: [success, message, timestamp, request_id, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Visit details retrieved successfully
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+        data:
+          $ref: '#/components/schemas/VisitDetailSchema'
     StructureTextRequest:
       type: object
       required: [transcript]
@@ -1609,6 +1904,8 @@ tags:
     description: Health and readiness checks
   - name: Patients
     description: Patient management and intake
+  - name: Patient Management
+    description: Patient visit management and details
   - name: Intake
     description: Intake session management
   - name: Workflow

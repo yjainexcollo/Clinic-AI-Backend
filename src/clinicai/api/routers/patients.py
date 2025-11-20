@@ -51,7 +51,12 @@ from ..schemas import (
     IntakeSummarySchema,
     PatientWithVisitsSchema,
     PatientListResponse,
-    LatestVisitInfo
+    LatestVisitInfo,
+    VisitListItemSchema,
+    VisitDetailSchema,
+    VisitListResponse,
+    TranscriptionSessionSchema,
+    SoapNoteSchema
 )
 from fastapi import UploadFile, File, Form
 from fastapi.responses import Response
@@ -1449,5 +1454,350 @@ async def get_vitals(
     except Exception as e:
         logger.error("Unhandled error in get_vitals", exc_info=True)
         return fail(request, error="INTERNAL_ERROR", message=str(e))
+
+
+@router.get(
+    "/{patient_id}/visits",
+    response_model=ApiResponse[VisitListResponse],
+    status_code=status.HTTP_200_OK,
+    tags=["Patient Management"],
+    summary="Get all visits for a patient",
+    responses={
+        200: {"description": "List of visits retrieved successfully"},
+        404: {"model": ErrorResponse, "description": "Patient not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_patient_visits(
+    request: Request,
+    patient_id: str,
+    patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
+):
+    """
+    Get all visits for a specific patient.
+    
+    Returns a list of visits with summary information including:
+    - Visit ID, status, workflow type
+    - Timestamps
+    - Flags indicating what data is available (transcript, SOAP, vitals, etc.)
+    """
+    try:
+        from ...domain.value_objects.patient_id import PatientId
+        import urllib.parse
+        
+        # URL decode the patient_id in case it's URL encoded
+        decoded_path_param = urllib.parse.unquote(patient_id)
+        
+        # Check if this looks like an internal patient ID (format: name_mobile)
+        # If it contains underscore and the part after underscore is all digits, treat as internal ID
+        if '_' in decoded_path_param:
+            parts = decoded_path_param.split('_', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                # This looks like an internal patient ID, skip decryption
+                internal_patient_id = decoded_path_param
+                logger.debug(f"Using internal patient ID: {internal_patient_id}")
+            else:
+                # Try to decrypt as opaque token
+                try:
+                    internal_patient_id = decode_patient_id(decoded_path_param)
+                except Exception as e:
+                    logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                    internal_patient_id = decoded_path_param
+        else:
+            # Try to decrypt as opaque token
+            try:
+                internal_patient_id = decode_patient_id(decoded_path_param)
+            except Exception as e:
+                logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                internal_patient_id = decoded_path_param
+        
+        # Create PatientId value object with proper error handling
+        try:
+            patient_id_obj = PatientId(internal_patient_id)
+        except ValueError as ve:
+            logger.error(f"Invalid patient ID format: {ve}")
+            return fail(
+                request,
+                error="INVALID_PATIENT_ID",
+                message=f"Invalid patient ID format: {str(ve)}",
+                status_message=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        
+        # Verify patient exists
+        patient = await patient_repo.find_by_id(patient_id_obj)
+        if not patient:
+            return fail(
+                request,
+                error="PATIENT_NOT_FOUND",
+                message=f"Patient {patient_id} not found",
+                status_message=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get all visits for this patient
+        visits = await visit_repo.find_by_patient_id(internal_patient_id)
+        
+        # Convert to schema
+        visit_items = []
+        for visit in visits:
+            # Ensure all boolean values are explicitly converted to bool
+            # Python's 'and' operator in is_transcription_complete() can return None
+            # when transcription_session is None, so we explicitly handle None cases
+            try:
+                transcript_result = visit.is_transcription_complete()
+                has_transcript = transcript_result if isinstance(transcript_result, bool) else False
+            except (AttributeError, TypeError):
+                has_transcript = False
+            
+            try:
+                soap_result = visit.is_soap_generated()
+                has_soap = soap_result if isinstance(soap_result, bool) else False
+            except (AttributeError, TypeError):
+                has_soap = False
+            
+            try:
+                has_vitals = bool(visit.vitals is not None)
+            except (AttributeError, TypeError):
+                has_vitals = False
+            
+            try:
+                pre_visit_result = visit.has_pre_visit_summary()
+                has_pre_visit_summary = pre_visit_result if isinstance(pre_visit_result, bool) else False
+            except (AttributeError, TypeError):
+                has_pre_visit_summary = False
+            
+            try:
+                post_visit_result = visit.has_post_visit_summary()
+                has_post_visit_summary = post_visit_result if isinstance(post_visit_result, bool) else False
+            except (AttributeError, TypeError):
+                has_post_visit_summary = False
+            
+            visit_items.append(VisitListItemSchema(
+                visit_id=visit.visit_id.value,
+                symptom=visit.symptom or "",
+                workflow_type=visit.workflow_type.value,
+                status=visit.status,
+                created_at=visit.created_at,
+                updated_at=visit.updated_at,
+                has_transcript=has_transcript,
+                has_soap=has_soap,
+                has_vitals=has_vitals,
+                has_pre_visit_summary=has_pre_visit_summary,
+                has_post_visit_summary=has_post_visit_summary,
+            ))
+        
+        return ok(
+            request,
+            data=VisitListResponse(
+                visits=visit_items,
+                total=len(visit_items)
+            ),
+            message="Visits retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error listing patient visits: {e}", exc_info=True)
+        return fail(request, error="INTERNAL_ERROR", message=f"An unexpected error occurred: {str(e)}")
+
+
+@router.get(
+    "/{patient_id}/visits/{visit_id}",
+    response_model=ApiResponse[VisitDetailSchema],
+    status_code=status.HTTP_200_OK,
+    tags=["Patient Management"],
+    summary="Get full details of a specific visit",
+    responses={
+        200: {"description": "Visit details retrieved successfully"},
+        404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_visit_detail(
+    request: Request,
+    patient_id: str,
+    visit_id: str,
+    patient_repo: PatientRepositoryDep,
+    visit_repo: VisitRepositoryDep,
+):
+    """
+    Get full details of a specific visit.
+    
+    Returns complete visit information including:
+    - Visit metadata (ID, status, timestamps, workflow type)
+    - Intake session (if scheduled workflow)
+    - Pre-visit summary
+    - Transcription data (transcript, structured dialogue, audio file info)
+    - SOAP note
+    - Vitals
+    - Post-visit summary
+    - Associated audio files
+    """
+    try:
+        from ...domain.value_objects.patient_id import PatientId
+        from ...domain.value_objects.visit_id import VisitId
+        from ...adapters.db.mongo.repositories.audio_repository import AudioRepository
+        import urllib.parse
+        
+        # URL decode the patient_id in case it's URL encoded
+        decoded_path_param = urllib.parse.unquote(patient_id)
+        
+        # Check if this looks like an internal patient ID (format: name_mobile)
+        # If it contains underscore and the part after underscore is all digits, treat as internal ID
+        if '_' in decoded_path_param:
+            parts = decoded_path_param.split('_', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                # This looks like an internal patient ID, skip decryption
+                internal_patient_id = decoded_path_param
+                logger.debug(f"Using internal patient ID: {internal_patient_id}")
+            else:
+                # Try to decrypt as opaque token
+                try:
+                    internal_patient_id = decode_patient_id(decoded_path_param)
+                except Exception as e:
+                    logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                    internal_patient_id = decoded_path_param
+        else:
+            # Try to decrypt as opaque token
+            try:
+                internal_patient_id = decode_patient_id(decoded_path_param)
+            except Exception as e:
+                logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
+                internal_patient_id = decoded_path_param
+        
+        # Create PatientId value object with proper error handling
+        try:
+            patient_id_obj = PatientId(internal_patient_id)
+        except ValueError as ve:
+            logger.error(f"Invalid patient ID format: {ve}")
+            return fail(
+                request,
+                error="INVALID_PATIENT_ID",
+                message=f"Invalid patient ID format: {str(ve)}",
+                status_message=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        
+        # Verify patient exists
+        patient = await patient_repo.find_by_id(patient_id_obj)
+        if not patient:
+            return fail(
+                request,
+                error="PATIENT_NOT_FOUND",
+                message=f"Patient {patient_id} not found",
+                status_message=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get visit
+        visit_id_obj = VisitId(visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        if not visit:
+            return fail(
+                request,
+                error="VISIT_NOT_FOUND",
+                message=f"Visit {visit_id} not found for patient {patient_id}",
+                status_message=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Format intake session
+        intake_session_data = None
+        if visit.intake_session:
+            intake_session_data = {
+                "symptom": visit.symptom,
+                "questions_asked": [
+                    {
+                        "question_id": qa.question_id.value,
+                        "question": qa.question,
+                        "answer": qa.answer,
+                        "timestamp": qa.timestamp.isoformat(),
+                        "question_number": qa.question_number,
+                    }
+                    for qa in visit.intake_session.questions_asked
+                ],
+                "total_questions": visit.intake_session.current_question_count,
+                "max_questions": visit.intake_session.max_questions,
+                "status": visit.intake_session.status,
+                "started_at": visit.intake_session.started_at.isoformat(),
+                "completed_at": visit.intake_session.completed_at.isoformat() if visit.intake_session.completed_at else None,
+                "pending_question": visit.intake_session.pending_question,
+            }
+        
+        # Format transcription session
+        transcription_session_data = None
+        if visit.transcription_session:
+            transcription_session_data = TranscriptionSessionSchema(
+                audio_file_path=visit.transcription_session.audio_file_path,
+                transcript=visit.transcription_session.transcript,
+                transcription_status=visit.transcription_session.transcription_status,
+                started_at=visit.transcription_session.started_at.isoformat() if visit.transcription_session.started_at else None,
+                completed_at=visit.transcription_session.completed_at.isoformat() if visit.transcription_session.completed_at else None,
+                error_message=visit.transcription_session.error_message,
+                audio_duration_seconds=visit.transcription_session.audio_duration_seconds,
+                word_count=visit.transcription_session.word_count,
+                structured_dialogue=visit.transcription_session.structured_dialogue,
+            )
+        
+        # Format SOAP note
+        soap_note_data = None
+        if visit.soap_note:
+            soap_note_data = SoapNoteSchema(
+                subjective=visit.soap_note.subjective,
+                objective=visit.soap_note.objective,
+                assessment=visit.soap_note.assessment,
+                plan=visit.soap_note.plan,
+                highlights=visit.soap_note.highlights,
+                red_flags=visit.soap_note.red_flags,
+                generated_at=visit.soap_note.generated_at.isoformat(),
+                model_info=visit.soap_note.model_info,
+                confidence_score=visit.soap_note.confidence_score,
+            )
+        
+        # Get associated audio files
+        audio_repo = AudioRepository()
+        audio_files = await audio_repo.list_audio_files(
+            patient_id=internal_patient_id,
+            visit_id=visit_id,
+            audio_type="visit",
+            limit=100,
+            offset=0
+        )
+        
+        audio_files_data = []
+        for audio_file in audio_files:
+            audio_files_data.append({
+                "audio_id": audio_file.audio_id,
+                "filename": audio_file.filename,
+                "content_type": audio_file.content_type,
+                "file_size": audio_file.file_size,
+                "duration_seconds": audio_file.duration_seconds,
+                "created_at": audio_file.created_at.isoformat() if audio_file.created_at else None,
+                "blob_reference_id": audio_file.blob_reference_id,
+            })
+        
+        # Build response
+        visit_detail = VisitDetailSchema(
+            visit_id=visit.visit_id.value,
+            patient_id=encode_patient_id(internal_patient_id),
+            symptom=visit.symptom or "",
+            workflow_type=visit.workflow_type.value,
+            status=visit.status,
+            created_at=visit.created_at,
+            updated_at=visit.updated_at,
+            intake_session=intake_session_data,
+            pre_visit_summary=visit.pre_visit_summary,
+            transcription_session=transcription_session_data,
+            soap_note=soap_note_data,
+            vitals=visit.vitals,
+            post_visit_summary=visit.post_visit_summary,
+            audio_files=audio_files_data,
+        )
+        
+        return ok(
+            request,
+            data=visit_detail,
+            message="Visit details retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting visit detail: {e}", exc_info=True)
+        return fail(request, error="INTERNAL_ERROR", message=f"An unexpected error occurred: {str(e)}")
 
  
