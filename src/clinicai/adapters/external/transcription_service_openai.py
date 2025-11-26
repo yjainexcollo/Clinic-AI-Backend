@@ -3,13 +3,12 @@ OpenAI Whisper API-based transcription service.
 Fits low-memory Cloud Run by offloading STT to OpenAI.
 """
 
-import os
 from typing import Dict, Any
 from pathlib import Path
 
 from clinicai.application.ports.services.transcription_service import TranscriptionService
 from clinicai.core.config import get_settings
-from clinicai.core.helicone_client import create_helicone_client
+from clinicai.core.ai_factory import get_ai_client
 
 
 class OpenAITranscriptionService(TranscriptionService):
@@ -34,8 +33,8 @@ class OpenAITranscriptionService(TranscriptionService):
                 "Azure OpenAI Whisper deployment name is required. Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
             )
         
-        # Use Azure OpenAI client (no fallback)
-        self._client = create_helicone_client()
+        # Use centralized Azure AI client (no fallback)
+        self._client = get_ai_client()
 
     async def transcribe_audio(
         self,
@@ -61,41 +60,11 @@ class OpenAITranscriptionService(TranscriptionService):
         
         try:
             with open(audio_file_path, "rb") as f:
-                # Determine which model to use based on client type
-                # Azure OpenAI client uses whisper_deployment_name internally, doesn't accept model parameter
-                # Standard OpenAI client accepts model parameter
-                azure_openai_configured = (
-                    self._settings.azure_openai.endpoint and 
-                    self._settings.azure_openai.api_key
+                resp = await self._client.transcribe_whisper(
+                    file=f,
+                    language=whisper_language,
                 )
-                
-                # Check if client is Azure OpenAI (has whisper_deployment_name attribute)
-                is_azure_client = hasattr(self._client, 'whisper_deployment_name')
-                
-                if is_azure_client:
-                    # Azure OpenAI client - don't pass model, it uses whisper_deployment_name internally
-                    resp, metrics = await self._client.transcription(
-                        file=f,
-                        language=whisper_language,
-                        user_id=None,  # Optional: add user tracking if needed
-                        patient_id=None,  # Optional: add patient tracking if needed
-                        session_id=None  # Optional: add session tracking if needed
-                    )
-                    model_name = f"azure-{self._client.whisper_deployment_name}"
-                else:
-                    # Standard OpenAI client - pass model parameter
-                    resp, metrics = await self._client.transcription(
-                        model="whisper-1",
-                        file=f,
-                        language=whisper_language,
-                        user_id=None,  # Optional: add user tracking if needed
-                        patient_id=None,  # Optional: add patient tracking if needed
-                        session_id=None  # Optional: add session tracking if needed
-                    )
-                    model_name = "openai-whisper-1"
-            
-            # Log metrics
-            logger.info(f"[TranscriptionService] Transcription metrics: {metrics}")
+                model_name = f"azure-{self._settings.azure_openai.whisper_deployment_name}"
             
             text = (resp.text or "").strip()
             return {

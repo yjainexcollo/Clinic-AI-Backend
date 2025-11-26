@@ -22,7 +22,7 @@ from enum import Enum
 
 from clinicai.application.ports.services.question_service import QuestionService
 from clinicai.core.config import get_settings
-from clinicai.core.helicone_client import create_helicone_client
+from clinicai.core.ai_factory import get_ai_client
 
 
 logger = logging.getLogger("clinicai")
@@ -343,7 +343,7 @@ CRITICAL SAFETY RULES (do not violate):
 Return ONLY the JSON, no additional text."""
 
         try:
-            response, metrics = await self._client.chat_completion(
+            response = await self._client.chat(
                 model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -351,11 +351,6 @@ Return ONLY the JSON, no additional text."""
                 ],
                 max_tokens=800,
                 temperature=0.2,  # Low temperature for consistency
-                prompt_name="medical_context_analyzer",
-                custom_properties={
-                    "agent": "context_analyzer",
-                    "chief_complaint": chief_complaint
-                }
             )
             
             # Extract text from response object
@@ -728,7 +723,7 @@ KEEP information_gaps with at least 2-3 topics until the patient has answered at
 Return ONLY the JSON, no additional text."""
 
         try:
-            response, metrics = await self._client.chat_completion(
+            response = await self._client.chat(
                 model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -736,12 +731,6 @@ Return ONLY the JSON, no additional text."""
                 ],
                 max_tokens=600,
                 temperature=0.1,  # Very low for consistency
-                prompt_name="answer_extractor",
-                custom_properties={
-                    "agent": "answer_extractor",
-                    "qa_count": len(all_qa),
-                    "total_questions": len(asked_questions)
-                }
             )
             
             # Extract text from response object
@@ -1122,7 +1111,7 @@ Example of correct response: What medications are you currently taking?
 Generate THE NEXT most important question now:"""
 
         try:
-            response, metrics = await self._client.chat_completion(
+            response = await self._client.chat(
                 model=self._settings.openai.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -1130,11 +1119,6 @@ Generate THE NEXT most important question now:"""
                 ],
                 max_tokens=200,  # Increased to avoid truncation
                 temperature=0.2,  # Lower for stricter adherence to rules and less creativity
-                prompt_name="question_generator",
-                custom_properties={
-                    "agent": "question_generator",
-                    "question_number": current_count + 1
-                }
             )
             
             # Extract text from response object
@@ -1444,8 +1428,8 @@ class OpenAIQuestionService(QuestionService):
                 "Azure OpenAI Whisper deployment name is required. Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
             )
         
-        # Initialize Azure OpenAI client (no fallback)
-        self._client = create_helicone_client()
+        # Initialize centralized Azure AI client (no fallback)
+        self._client = get_ai_client()
         
         # Initialize agents
         self._context_analyzer = MedicalContextAnalyzer(self._client, self._settings)
@@ -1456,32 +1440,28 @@ class OpenAIQuestionService(QuestionService):
         logger.info("Multi-Agent Question Service initialized")
     
     async def _chat_completion(
-        self, messages: List[Dict[str, str]], max_tokens: int = 64, temperature: float = 0.3,
-        patient_id: str = None, prompt_name: str = None
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 64,
+        temperature: float = 0.3,
+        patient_id: str = None,
+        prompt_name: str = None,
     ) -> str:
         """Helper method for direct chat completion (used by other methods)"""
         try:
             if self._debug_prompts:
                 logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
 
-            # Use Helicone client with tracking
-            resp, metrics = await self._client.chat_completion(
-                model=self._settings.openai.model,
+            resp = await self._client.chat(
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                patient_id=patient_id,
-                prompt_name=prompt_name or "question_service",
-                custom_properties={
-                    "service": "question_generation",
-                    "message_count": len(messages)
-                }
+                model=self._settings.openai.model,
             )
             output = resp.choices[0].message.content.strip()
 
             if self._debug_prompts:
                 logger.debug("[QuestionService] Received response: %s", output)
-                logger.debug(f"[QuestionService] Metrics: {metrics}")
 
             return output
         except Exception:

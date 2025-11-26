@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 
 from ...core.config import get_settings
 from ...application.ports.services.action_plan_service import ActionPlanService
-from ...core.helicone_client import create_helicone_client
+from ...core.ai_factory import get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ class OpenAIActionPlanService(ActionPlanService):
 
     def __init__(self):
         self.settings = get_settings()
-        # Use Helicone client for AI observability
-        self.client = create_helicone_client()
+        # Use centralized Azure AI client
+        self.client = get_ai_client()
 
     async def generate_action_plan(
         self, 
@@ -40,27 +40,17 @@ class OpenAIActionPlanService(ActionPlanService):
                 system_prompt = self._get_english_system_prompt()
                 user_prompt = self._get_english_user_prompt(transcript, structured_dialogue)
 
-            # Call Azure OpenAI API with Helicone tracking
+            # Call Azure OpenAI API
             # Note: patient_id is not needed for adhoc flows - it's optional and defaults to None
             # Use Azure OpenAI deployment name instead of model
-            response, metrics = await self.client.chat_completion(
+            response = await self.client.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,  # Lower temperature for more consistent medical recommendations
                 max_tokens=2000,
-                # patient_id is not passed - this is for adhoc transcripts (no patient)
-                prompt_name="action_plan_generation",
-                custom_properties={
-                    "service": "action_plan",
-                    "language": language,
-                    "flow_type": "adhoc"  # Mark this as adhoc flow
-                }
             )
-            
-            # Log metrics
-            logger.info(f"[ActionPlanService] Action plan generation metrics: {metrics}")
 
             # Parse the response
             content = response.choices[0].message.content

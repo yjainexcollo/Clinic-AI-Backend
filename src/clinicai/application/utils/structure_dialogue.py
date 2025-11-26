@@ -9,6 +9,10 @@ from typing import List, Dict, Optional
 import asyncio
 import re as _re
 
+from clinicai.core.ai_client import AzureAIClient
+from clinicai.core.ai_factory import get_ai_client
+from clinicai.core.config import get_settings
+
 
 async def structure_dialogue_from_text(
     raw: str, 
@@ -39,36 +43,22 @@ async def structure_dialogue_from_text(
     if not raw:
         return None
     try:
-        # Require Azure OpenAI - no fallback to standard OpenAI
-        from openai import AsyncAzureOpenAI  # type: ignore
-        from clinicai.core.config import get_settings
-        
         settings = get_settings()
-        
-        # Require Azure OpenAI - no fallback to standard OpenAI
+
+        deployment_name = model or settings.azure_openai.deployment_name
+
         if azure_endpoint and azure_api_key:
-            # Use Azure OpenAI from parameters
-            client = AsyncAzureOpenAI(
+            # Create a dedicated client with the provided credentials
+            client = AzureAIClient(
+                endpoint=azure_endpoint,
                 api_key=azure_api_key,
                 api_version=settings.azure_openai.api_version,
-                azure_endpoint=azure_endpoint
+                deployment_name=deployment_name,
+                whisper_deployment_name=settings.azure_openai.whisper_deployment_name,
             )
-            deployment_name = model  # model parameter is actually deployment name for Azure
-        elif settings.azure_openai.endpoint and settings.azure_openai.api_key:
-            # Use Azure OpenAI from settings
-            client = AsyncAzureOpenAI(
-                api_key=settings.azure_openai.api_key,
-                api_version=settings.azure_openai.api_version,
-                azure_endpoint=settings.azure_openai.endpoint
-            )
-            deployment_name = settings.azure_openai.deployment_name
         else:
-            # Azure OpenAI is required - raise error instead of falling back
-            raise ValueError(
-                "Azure OpenAI is required. Please provide azure_endpoint and azure_api_key parameters, "
-                "or configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in settings. "
-                "Fallback to standard OpenAI is disabled for data security."
-            )
+            # Use shared factory client (configured via settings/env)
+            client = get_ai_client()
 
         # Language-aware system prompt
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
@@ -454,7 +444,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
 
             async def _call_openai() -> str:
                 try:
-                    resp = await client.chat.completions.create(
+                    resp = await client.chat(
                         model=deployment_name,
                         messages=[
                             {"role": "system", "content": system_prompt},
@@ -466,7 +456,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                     )
                 except Exception:
                     # Fallback without response_format if unsupported
-                    resp = await client.chat.completions.create(
+                    resp = await client.chat(
                         model=deployment_name,
                         messages=[
                             {"role": "system", "content": system_prompt},
@@ -517,7 +507,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                         "OUTPUT: Valid JSON array starting with [ and ending with ]"
                     )
                 try:
-                    resp = await client.chat.completions.create(
+                    resp = await client.chat(
                         model=deployment_name,
                         messages=[
                             {"role": "system", "content": system_prompt},
@@ -528,7 +518,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                         response_format={"type": "json_object"},
                     )
                 except Exception:
-                    resp = await client.chat.completions.create(
+                    resp = await client.chat(
                         model=deployment_name,
                         messages=[
                             {"role": "system", "content": system_prompt},

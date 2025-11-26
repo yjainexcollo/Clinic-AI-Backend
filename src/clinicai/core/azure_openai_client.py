@@ -1,5 +1,5 @@
 """
-Azure OpenAI client with Helicone support for AI observability.
+Azure OpenAI client for AI operations.
 Tracks all prompts, responses, tokens, latency, and costs
 """
 import os
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class AzureOpenAIClient:
     """
-    Azure OpenAI client with Helicone monitoring and comprehensive tracking
+    Azure OpenAI client with comprehensive tracking
     """
     
     def __init__(
@@ -24,13 +24,11 @@ class AzureOpenAIClient:
         api_version: str,
         deployment_name: str,
         whisper_deployment_name: Optional[str] = None,
-        helicone_api_key: Optional[str] = None,
         environment: str = "production",
         enable_cache: bool = False
     ):
         self.deployment_name = deployment_name
         self.whisper_deployment_name = whisper_deployment_name or "whisper"
-        self.helicone_enabled = helicone_api_key is not None
         self.environment = environment
         self.api_version = api_version  # Store API version
         self.api_key = api_key  # Store API key for recreating client if needed
@@ -39,35 +37,14 @@ class AzureOpenAIClient:
         normalized_endpoint = endpoint.rstrip("/") if endpoint else endpoint
         self.endpoint = normalized_endpoint  # Store normalized endpoint for error messages
         
-        # Build headers for Helicone
-        self.default_headers = {}
-        if self.helicone_enabled:
-            self.default_headers = {
-                "Helicone-Auth": f"Bearer {helicone_api_key}",
-                "Helicone-Property-Environment": environment,
-                "Helicone-Property-App": "clinic-ai",
-                "Helicone-Cache-Enabled": "true" if enable_cache else "false",
-            }
-            logger.info("✅ Azure OpenAI with Helicone AI observability enabled")
-        
-        # Initialize Azure OpenAI client (Azure SDK does not allow base_url with azure_endpoint)
-        helicone_base_url = os.getenv("HELICONE_BASE_URL")
-        if helicone_base_url:
-            logger.info(
-                "🔁 HELICONE_BASE_URL is set (%s); "
-                "ensure your Azure OpenAI endpoint is configured to route through Helicone.",
-                helicone_base_url,
-            )
-        
+        # Initialize Azure OpenAI client
         self.client = AsyncAzureOpenAI(
             api_key=api_key,
             api_version=api_version,
             azure_endpoint=normalized_endpoint,
-            default_headers=self.default_headers if self.default_headers else None,
         )
         
-        if not self.helicone_enabled:
-            logger.warning("⚠️  Helicone disabled - no AI observability")
+        logger.info("✅ Azure OpenAI client initialized")
     
     async def chat_completion(
         self,
@@ -92,30 +69,6 @@ class AzureOpenAIClient:
         """
         start_time = time.time()
         
-        # Build Helicone headers
-        extra_headers = {}
-        if self.helicone_enabled:
-            # User tracking
-            if user_id:
-                extra_headers["Helicone-User-Id"] = user_id
-            if patient_id:
-                extra_headers["Helicone-Property-Patient-Id"] = patient_id
-            if session_id:
-                extra_headers["Helicone-Session-Id"] = session_id
-            
-            # Prompt tracking
-            if prompt_name:
-                extra_headers["Helicone-Prompt-Id"] = prompt_name
-            
-            # Custom properties for filtering/analytics
-            if custom_properties:
-                for key, value in custom_properties.items():
-                    extra_headers[f"Helicone-Property-{key}"] = str(value)
-            
-            # Default properties
-            extra_headers["Helicone-Property-Model"] = self.deployment_name
-            extra_headers["Helicone-Property-Temperature"] = str(temperature)
-        
         # Retry logic for rate limits and transient errors
         max_retries = 3
         base_delay = 1.0  # Start with 1 second delay
@@ -128,7 +81,6 @@ class AzureOpenAIClient:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    extra_headers=extra_headers if extra_headers else None,
                     **kwargs
                 )
                 
@@ -209,8 +161,7 @@ class AzureOpenAIClient:
                             temp_client = AsyncAzureOpenAI(
                                 api_key=self.api_key,
                                 api_version=alt_version,
-                                azure_endpoint=self.endpoint,
-                                default_headers=self.default_headers if self.default_headers else None
+                                azure_endpoint=self.endpoint
                             )
                             
                             # Try the call with alternative version
@@ -219,7 +170,6 @@ class AzureOpenAIClient:
                                 messages=messages,
                                 temperature=temperature,
                                 max_tokens=max_tokens,
-                                extra_headers=extra_headers if extra_headers else None,
                                 **kwargs
                             )
                             
@@ -303,18 +253,6 @@ class AzureOpenAIClient:
         """
         start_time = time.time()
         
-        extra_headers = {}
-        if self.helicone_enabled:
-            if user_id:
-                extra_headers["Helicone-User-Id"] = user_id
-            if patient_id:
-                extra_headers["Helicone-Property-Patient-Id"] = patient_id
-            if session_id:
-                extra_headers["Helicone-Session-Id"] = session_id
-            
-            extra_headers["Helicone-Property-Model"] = self.whisper_deployment_name
-            extra_headers["Helicone-Property-Type"] = "transcription"
-        
         # Retry logic for rate limits and transient errors
         max_retries = 3
         base_delay = 1.0  # Start with 1 second delay
@@ -326,7 +264,6 @@ class AzureOpenAIClient:
                     model=self.whisper_deployment_name,  # Use whisper deployment for transcription
                     file=file,
                     language=language,
-                    extra_headers=extra_headers if extra_headers else None,
                     **kwargs
                 )
                 
@@ -543,11 +480,10 @@ async def validate_azure_openai_deployment(
 
 # Factory function
 def create_azure_openai_client(enable_cache: bool = False) -> AzureOpenAIClient:
-    """Create Azure OpenAI client with Helicone support"""
+    """Create Azure OpenAI client"""
     from .config import get_settings
     
     settings = get_settings()
-    helicone_key = os.environ.get("HELICONE_API_KEY")
     
     if not settings.azure_openai.endpoint or not settings.azure_openai.api_key:
         raise ValueError(
@@ -562,7 +498,6 @@ def create_azure_openai_client(enable_cache: bool = False) -> AzureOpenAIClient:
         api_version=settings.azure_openai.api_version,
         deployment_name=settings.azure_openai.deployment_name,
         whisper_deployment_name=settings.azure_openai.whisper_deployment_name,
-        helicone_api_key=helicone_key,
         environment=settings.app_env,
         enable_cache=enable_cache
     )
