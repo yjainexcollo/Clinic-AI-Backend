@@ -733,13 +733,21 @@ async def get_intake_medication_image_content(
 async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     try:
+        original_patient_id = patient_id
         try:
             internal_patient_id = decode_patient_id(patient_id)
         except Exception:
             internal_patient_id = patient_id
+        candidate_patient_ids = {str(internal_patient_id), str(original_patient_id)}
+        try:
+            candidate_patient_ids.add(encode_patient_id(str(internal_patient_id)))
+        except Exception:
+            pass
         docs = await MedicationImageMongo.find(
-            MedicationImageMongo.patient_id == str(internal_patient_id),
-            MedicationImageMongo.visit_id == str(visit_id),
+            {
+                "patient_id": {"$in": list(candidate_patient_ids)},
+                "visit_id": str(visit_id),
+            }
         ).to_list()
         return ok(request, data={
             "patient_id": internal_patient_id,

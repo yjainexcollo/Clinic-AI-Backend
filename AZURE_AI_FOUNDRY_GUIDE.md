@@ -114,7 +114,6 @@ Azure AI Foundry (formerly Azure AI Studio) is Microsoft's comprehensive platfor
 │  │  Service Layer                                       │   │
 │  │  ├─ OpenAISoapService (SOAP generation)            │   │
 │  │  ├─ OpenAIQuestionService (adaptive intake)        │   │
-│  │  ├─ OpenAIActionPlanService (action plans)         │   │
 │  │  └─ AzureSpeechService (transcription)             │   │
 │  └────────────────┬────────────────────────────────────┘   │
 │                   │                                          │
@@ -132,8 +131,8 @@ Azure AI Foundry (formerly Azure AI Studio) is Microsoft's comprehensive platfor
 │                    Azure OpenAI Service                       │
 │  ┌──────────────────────────────────────────────────┐       │
 │  │  Deployment: gpt-4o-mini                         │       │
-│  │  API Version: 2024-12-01-preview                 │       │
-│  │  Endpoint: https://xxx.openai.azure.com          │       │
+│  │  API Version: 2025-01-01-preview                 │       │
+│  │  Endpoint: https://clinicai-openai.openai.azure.com │     │
 │  └─────────────────┬────────────────────────────────┘       │
 └────────────────────┼───────────────────────────────────────────┘
                      │ Automatic Diagnostic Logs
@@ -180,7 +179,7 @@ Azure AI Foundry (formerly Azure AI Studio) is Microsoft's comprehensive platfor
 **SKU**: Standard (S0)
 
 **Configuration**:
-- Deployment: `gpt-4o-mini` or `gpt-4`
+- Deployment: `gpt-4o-mini` (single deployment used by all workloads)
 - Provisioned Throughput: Optional (for guaranteed capacity)
 - Network Access: Public (or private endpoint for production)
 - Managed Identity: Enable for keyless access (optional)
@@ -273,13 +272,13 @@ Azure AI Foundry (formerly Azure AI Studio) is Microsoft's comprehensive platfor
 # ============================================================================
 
 # Azure OpenAI endpoint (WITHOUT trailing slash)
-AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com
+AZURE_OPENAI_ENDPOINT=https://clinicai-openai.openai.azure.com
 
 # Azure OpenAI API key (from Azure Portal > Keys and Endpoint)
 AZURE_OPENAI_API_KEY=your_api_key_here
 
 # API version - use latest preview for newest features
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
 # Chat deployment name (must match deployment in Azure Portal)
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
@@ -378,7 +377,7 @@ AZURE_BLOB_CONTAINER_NAME=clinicaiblobstorage
    - **Subscription**: Your subscription
    - **Resource Group**: `clinic-ai-prod` (or create new)
    - **Region**: `East US` (or preferred region)
-   - **Name**: `azure-openai-clinicai`
+   - **Name**: `clinicai-openai`
    - **Pricing tier**: `Standard S0`
 5. Click **Review + Create** → **Create**
 
@@ -388,7 +387,7 @@ AZURE_BLOB_CONTAINER_NAME=clinicaiblobstorage
 # Set variables
 RESOURCE_GROUP="clinic-ai-prod"
 LOCATION="eastus"
-OPENAI_NAME="azure-openai-clinicai"
+OPENAI_NAME="clinicai-openai"
 
 # Create resource group
 az group create \
@@ -558,9 +557,9 @@ az webapp config appsettings set \
   --name $APP_NAME \
   --resource-group $RESOURCE_GROUP \
   --settings \
-    AZURE_OPENAI_ENDPOINT="https://azure-openai-clinicai.openai.azure.com" \
+    AZURE_OPENAI_ENDPOINT="https://clinicai-openai.openai.azure.com" \
     AZURE_OPENAI_API_KEY="@Microsoft.KeyVault(SecretUri=https://your-keyvault.vault.azure.net/secrets/AZURE-OPENAI-API-KEY/)" \
-    AZURE_OPENAI_API_VERSION="2024-12-01-preview" \
+    AZURE_OPENAI_API_VERSION="2025-01-01-preview" \
     AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini" \
     APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=xxx;..." \
     MONGO_URI="@Microsoft.KeyVault(SecretUri=...)" \
@@ -582,8 +581,8 @@ python scripts/verify_foundry.py
 Expected output:
 ```
 ✅ Client initialized successfully
-📍 Endpoint: https://azure-openai-clinicai.openai.azure.com
-🔖 API Version: 2024-12-01-preview
+📍 Endpoint: https://clinicai-openai.openai.azure.com
+🔖 API Version: 2025-01-01-preview
 
 🚀 Sending test request to Azure OpenAI…
 ✅ Response: OK
@@ -768,15 +767,13 @@ AzureDiagnostics
 ### 1. Token Usage Optimization
 
 **Strategies**:
-- ✅ Use `gpt-4o-mini` instead of `gpt-4` (75% cheaper)
+- ✅ Standardize on `gpt-4o-mini` for every workflow (already provisioned)
 - ✅ Reduce `max_tokens` parameter
 - ✅ Implement prompt caching
 - ✅ Use system messages efficiently
 
-**Example Savings**:
-- 1M tokens with gpt-4: ~$30
+**Example Cost**:
 - 1M tokens with gpt-4o-mini: ~$0.75
-- **Savings**: ~$29.25 per 1M tokens
 
 ### 2. Log Retention
 
