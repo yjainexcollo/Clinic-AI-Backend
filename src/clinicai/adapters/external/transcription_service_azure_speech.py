@@ -20,6 +20,45 @@ from clinicai.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+# Custom exception classes for better error handling
+class AzureSpeechTranscriptionError(Exception):
+    """Base exception for Azure Speech transcription errors"""
+    def __init__(self, message: str, error_code: str = None, details: dict = None):
+        self.error_code = error_code or "TRANSCRIPTION_ERROR"
+        self.details = details or {}
+        super().__init__(message)
+
+
+class AzureSpeechTimeoutError(AzureSpeechTranscriptionError):
+    """Transcription timeout"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="TRANSCRIPTION_TIMEOUT", details=kwargs)
+
+
+class AzureSpeechInvalidAudioError(AzureSpeechTranscriptionError):
+    """Invalid audio format or corrupted file"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="INVALID_AUDIO", details=kwargs)
+
+
+class AzureSpeechEmptyTranscriptError(AzureSpeechTranscriptionError):
+    """Transcription returned empty result"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="EMPTY_TRANSCRIPT", details=kwargs)
+
+
+class AzureSpeechBlobUploadError(AzureSpeechTranscriptionError):
+    """Failed to upload audio to blob storage"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="BLOB_UPLOAD_FAILED", details=kwargs)
+
+
+class AzureSpeechAPIError(AzureSpeechTranscriptionError):
+    """Azure Speech API returned an error"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="API_ERROR", details=kwargs)
+
+
 class AzureSpeechTranscriptionService(TranscriptionService):
     """
     Azure Speech Service transcription with speaker diarization.
@@ -87,6 +126,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         medical_context: bool,
     ) -> Dict[str, Any]:
         """Batch transcription with speaker diarization using REST API."""
+        transcription_id = None
         try:
             # Map language codes
             language_map = {
@@ -102,54 +142,99 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             with open(audio_file_path, "rb") as audio_file:
                 audio_data = audio_file.read()
             
+            # Validate audio data
+            if not audio_data or len(audio_data) == 0:
+                raise AzureSpeechInvalidAudioError(
+                    "Audio file is empty or could not be read",
+                    file_path=audio_file_path,
+                    file_size=0
+                )
+            
             # Upload audio to Azure Blob Storage and get SAS URL
-            blob_url = await self._upload_audio_to_blob(audio_file_path, audio_data)
+            try:
+                blob_url = await self._upload_audio_to_blob(audio_file_path, audio_data)
+            except Exception as e:
+                raise AzureSpeechBlobUploadError(
+                    f"Failed to upload audio to blob storage: {str(e)}",
+                    file_path=audio_file_path,
+                    file_size=len(audio_data),
+                    original_error=str(e)
+                )
             
             # Create transcription job
-            transcription_id = await self._create_transcription_job(blob_url, speech_language)
-            
-            logger.info(f"Batch transcription job created: {transcription_id}")
+            try:
+                transcription_id = await self._create_transcription_job(blob_url, speech_language)
+                logger.info(f"Batch transcription job created: {transcription_id}")
+            except Exception as e:
+                raise AzureSpeechAPIError(
+                    f"Failed to create transcription job: {str(e)}",
+                    file_path=audio_file_path,
+                    language=speech_language,
+                    original_error=str(e)
+                )
             
             # Poll for completion
-            transcription_status = await self._poll_transcription_status(transcription_id)
+            try:
+                transcription_status = await self._poll_transcription_status(transcription_id)
+            except TimeoutError as e:
+                raise AzureSpeechTimeoutError(
+                    str(e),
+                    transcription_id=transcription_id,
+                    file_path=audio_file_path
+                )
             
             if transcription_status["status"] != "Succeeded":
-                error_msg = f"Transcription failed with status: {transcription_status['status']}"
-                if transcription_status.get("error"):
-                    error_msg += f", error: {transcription_status['error']}"
-                raise ValueError(error_msg)
+                error_details = transcription_status.get("error", {})
+                error_message = error_details.get("message", "Unknown error") if isinstance(error_details, dict) else str(error_details)
+                raise AzureSpeechAPIError(
+                    f"Transcription failed with status: {transcription_status['status']} - {error_message}",
+                    transcription_id=transcription_id,
+                    status=transcription_status["status"],
+                    error_details=error_details
+                )
             
             # Get transcription results
             results = await self._get_transcription_results(transcription_id)
             logger.info(f"Retrieved {len(results)} result files from transcription job")
             
             if not results:
-                logger.error("No transcription results returned from Azure Speech Service")
-                raise ValueError("No transcription results returned from Azure Speech Service")
+                raise AzureSpeechEmptyTranscriptError(
+                    "No transcription results returned from Azure Speech Service",
+                    transcription_id=transcription_id,
+                    file_path=audio_file_path
+                )
             
             # Log first result structure for debugging
-            print("🔵 === Azure Speech Service Results Debug ===")
-            print(f"🔵 Number of result files: {len(results)}")
+            logger.debug(f"🔵 === Azure Speech Service Results Debug ===")
+            logger.debug(f"🔵 Number of result files: {len(results)}")
             if results:
-                print(f"🔵 First result keys: {list(results[0].keys())}")
-                logger.info(f"First result keys: {list(results[0].keys())}")
+                logger.debug(f"🔵 First result keys: {list(results[0].keys())}")
                 if "recognizedPhrases" in results[0]:
-                    print(f"🔵 Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
-                    logger.info(f"Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
-                    if results[0]['recognizedPhrases']:
-                        print(f"🔵 First phrase keys: {list(results[0]['recognizedPhrases'][0].keys())}")
-                        print(f"🔵 First phrase sample: {str(results[0]['recognizedPhrases'][0])[:200]}")
+                    logger.debug(f"🔵 Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
                 if "combinedRecognizedPhrases" in results[0]:
-                    print(f"🔵 Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
-                    logger.info(f"Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
+                    logger.debug(f"🔵 Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
             
             # Process results to extract transcript and speaker information
             transcript_text, structured_dialogue, speaker_info = self._process_transcription_results(results)
-            print("🔵 === Processing Complete ===")
-            print(f"🔵 Transcript length: {len(transcript_text)} characters")
-            print(f"🔵 Structured dialogue turns: {len(structured_dialogue)}")
-            print(f"🔵 Speaker info: {speaker_info}")
             logger.info(f"Processed transcript: {len(transcript_text)} characters, {len(structured_dialogue)} dialogue turns")
+            
+            # Check for null characters or corrupted transcript
+            if "\x00" in transcript_text or "\0" in transcript_text:
+                raise AzureSpeechInvalidAudioError(
+                    "Transcription contains null characters - audio file may be corrupted",
+                    file_path=audio_file_path,
+                    transcript_preview=transcript_text[:100],
+                    transcription_id=transcription_id
+                )
+            
+            # Check for empty transcript
+            if not transcript_text or transcript_text.strip() == "":
+                raise AzureSpeechEmptyTranscriptError(
+                    "Azure Speech Service returned empty transcript",
+                    transcription_id=transcription_id,
+                    file_path=audio_file_path,
+                    duration=self._extract_duration(results)
+                )
             
             # Clean up transcription job
             try:
@@ -167,11 +252,57 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "word_count": len(transcript_text.split()) if transcript_text else 0,
                 "language": language,
                 "model": "azure-speech-batch",
+                "transcription_id": transcription_id,  # Include for tracking
+                "error": None  # No error
             }
             
+        except AzureSpeechTranscriptionError as e:
+            # Structured error with error code
+            logger.error(
+                f"Azure Speech transcription failed: {e.error_code}",
+                extra={
+                    "error_code": e.error_code,
+                    "error_msg": str(e),
+                    "details": e.details,
+                    "transcription_id": transcription_id,
+                }
+            )
+            # Return structured error response instead of raising
+            return {
+                "transcript": "",
+                "structured_dialogue": [],
+                "speaker_labels": {},
+                "confidence": 0.0,
+                "duration": 0.0,
+                "word_count": 0,
+                "language": language,
+                "model": "azure-speech-batch",
+                "transcription_id": transcription_id,
+                "error": {
+                    "code": e.error_code,
+                    "message": str(e),
+                    "details": e.details
+                }
+            }
         except Exception as e:
-            logger.error(f"Azure Speech Service batch transcription failed: {e}", exc_info=True)
-            raise ValueError(f"Transcription failed: {str(e)}")
+            logger.error(f"Unexpected error in Azure Speech transcription: {e}", exc_info=True)
+            # Return structured error response for unexpected errors
+            return {
+                "transcript": "",
+                "structured_dialogue": [],
+                "speaker_labels": {},
+                "confidence": 0.0,
+                "duration": 0.0,
+                "word_count": 0,
+                "language": language,
+                "model": "azure-speech-batch",
+                "transcription_id": transcription_id,
+                "error": {
+                    "code": "UNKNOWN_ERROR",
+                    "message": str(e),
+                    "details": {"type": type(e).__name__}
+                }
+            }
     
     async def _upload_audio_to_blob(self, audio_file_path: str, audio_data: bytes) -> str:
         """Upload audio file to Azure Blob Storage and return SAS URL."""

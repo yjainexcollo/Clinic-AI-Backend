@@ -1750,27 +1750,7 @@ async def get_visit_detail(
                 confidence_score=visit.soap_note.confidence_score,
             )
         
-        # Get associated audio files
-        audio_repo = AudioRepository()
-        audio_files = await audio_repo.list_audio_files(
-            patient_id=internal_patient_id,
-            visit_id=visit_id,
-            audio_type="visit",
-            limit=100,
-            offset=0
-        )
-        
-        audio_files_data = []
-        for audio_file in audio_files:
-            audio_files_data.append({
-                "audio_id": audio_file.audio_id,
-                "filename": audio_file.filename,
-                "content_type": audio_file.content_type,
-                "file_size": audio_file.file_size,
-                "duration_seconds": audio_file.duration_seconds,
-                "created_at": audio_file.created_at.isoformat() if audio_file.created_at else None,
-                "blob_reference_id": audio_file.blob_reference_id,
-            })
+        # Note: Audio files are stored internally for transcription but not exposed in API
         
         # Build response
         visit_detail = VisitDetailSchema(
@@ -1787,7 +1767,6 @@ async def get_visit_detail(
             soap_note=soap_note_data,
             vitals=visit.vitals,
             post_visit_summary=visit.post_visit_summary,
-            audio_files=audio_files_data,
         )
         
         return ok(

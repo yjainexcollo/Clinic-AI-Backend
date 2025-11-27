@@ -1423,11 +1423,6 @@ class OpenAIQuestionService(QuestionService):
                 "Azure OpenAI deployment name is required. Please set AZURE_OPENAI_DEPLOYMENT_NAME."
             )
         
-        if not self._settings.azure_openai.whisper_deployment_name:
-            raise ValueError(
-                "Azure OpenAI Whisper deployment name is required. Please set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
-            )
-        
         # Initialize centralized Azure AI client (no fallback)
         self._client = get_ai_client()
         

@@ -10,11 +10,8 @@ from fastapi.responses import JSONResponse, FileResponse
 import logging
 import os
 
-from .api.routers import health, patients, notes, workflow, debug
+from .api.routers import health, patients, notes, workflow
 from .api.routers import doctor as doctor_router
-from .api.routers import transcription as transcription_router
-from .api.routers import audio as audio_router
-from .api.routers import intake as intake_router
 from .core.config import get_settings
 from .domain.errors import DomainError
 from .core.hipaa_audit import get_audit_logger
@@ -68,7 +65,6 @@ async def lifespan(app: FastAPI):
                 PatientMongo,
                 VisitMongo,
                 MedicationImageMongo,
-                AdhocTranscriptMongo,
                 DoctorPreferencesMongo,
                 AudioFileMongo,
             )
@@ -98,7 +94,7 @@ async def lifespan(app: FastAPI):
             db = client[db_name]
             await init_beanie(
                 database=db,
-                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, AdhocTranscriptMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference],
+                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference],
             )
             msg = "✅ Database connection established"
             print(msg, flush=True)
@@ -611,13 +607,9 @@ def create_app() -> FastAPI:
     # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Transcription → Audio → Doctor → Debug
     app.include_router(health.router)
     app.include_router(patients.router)
-    app.include_router(intake_router.router, include_in_schema=False)
     app.include_router(workflow.router)
     app.include_router(notes.router)
-    app.include_router(transcription_router.router, include_in_schema=False)
-    app.include_router(audio_router.router)
     app.include_router(doctor_router.router, include_in_schema=False)
-    app.include_router(debug.router, include_in_schema=False)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)

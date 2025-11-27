@@ -114,10 +114,10 @@ class HIPAAAuditLogger:
         
         timestamp = datetime.utcnow()
         
-        # Create audit entry
+        # Create audit entry with ISO format timestamps for consistent checksums
         audit_entry = {
             "audit_id": str(ObjectId()),
-            "timestamp": timestamp,
+            "timestamp": timestamp.isoformat(),  # Store as ISO string
             "user_id": user_id or "anonymous",
             "action": action,
             "resource_type": resource_type,
@@ -131,8 +131,8 @@ class HIPAAAuditLogger:
             "request_id": request_id,
             "session_id": session_id,
             "details": details or {},
-            "retention_date": timestamp + timedelta(days=2190),  # 6 years
-            "created_at": timestamp,
+            "retention_date": (timestamp + timedelta(days=2190)).isoformat(),  # Store as ISO string
+            "created_at": timestamp.isoformat(),  # Store as ISO string
             "immutable": True,  # Mark as immutable
             "checksum": None  # Will be added below
         }
@@ -175,9 +175,19 @@ class HIPAAAuditLogger:
     
     def _calculate_checksum(self, entry: dict) -> str:
         """Calculate SHA-256 checksum for integrity verification"""
-        # Remove checksum field itself
-        entry_copy = {k: v for k, v in entry.items() if k != "checksum"}
-        entry_json = json.dumps(entry_copy, sort_keys=True, default=str)
+        # Remove MongoDB-added fields and checksum itself
+        excluded_fields = {"checksum", "_id"}
+        entry_copy = {k: v for k, v in entry.items() if k not in excluded_fields}
+        
+        # Normalize datetime objects to ISO format strings for consistent serialization
+        normalized_entry = {}
+        for k, v in entry_copy.items():
+            if isinstance(v, datetime):
+                normalized_entry[k] = v.isoformat()
+            else:
+                normalized_entry[k] = v
+        
+        entry_json = json.dumps(normalized_entry, sort_keys=True, default=str)
         return hashlib.sha256(entry_json.encode()).hexdigest()
     
     async def _fallback_log(self, data: dict) -> str:
@@ -221,14 +231,53 @@ class HIPAAAuditLogger:
         if not self._initialized:
             return False
         
-        entry = await self.audit_collection.find_one({"audit_id": audit_id})
+        # Try to find by MongoDB _id first (what log_phi_access returns)
+        try:
+            from bson import ObjectId
+            entry = await self.audit_collection.find_one({"_id": ObjectId(audit_id)})
+        except Exception:
+            # Fallback: try as audit_id field (custom field)
+            entry = await self.audit_collection.find_one({"audit_id": audit_id})
+        
         if not entry:
+            logger.warning(f"Audit entry not found for audit_id: {audit_id}")
             return False
         
         stored_checksum = entry.get("checksum")
+        if not stored_checksum:
+            logger.warning(f"No checksum found in audit entry: {audit_id}")
+            return False
+        
+        # Debug: Log the entry structure
+        logger.debug(f"Verifying audit {audit_id}: Entry has {len(entry)} fields")
+        logger.debug(f"Entry fields: {list(entry.keys())}")
+        
         calculated_checksum = self._calculate_checksum(entry)
         
-        return stored_checksum == calculated_checksum
+        is_valid = stored_checksum == calculated_checksum
+        if not is_valid:
+            # Debug: Show what fields are in the entry
+            excluded_fields = {"checksum", "_id"}
+            entry_for_checksum = {k: v for k, v in entry.items() if k not in excluded_fields}
+            
+            # Print to console for immediate visibility
+            print(f"❌ Audit integrity mismatch!")
+            print(f"   audit_id: {audit_id}")
+            print(f"   Stored:  {stored_checksum}")
+            print(f"   Calculated: {calculated_checksum}")
+            print(f"   Entry has {len(entry)} fields: {list(entry.keys())}")
+            
+            # Check datetime types
+            for k, v in entry.items():
+                if k in ["timestamp", "retention_date", "created_at"]:
+                    print(f"   {k}: {type(v).__name__} = {v}")
+            
+            logger.error(
+                f"Audit integrity violation detected! audit_id={audit_id}, "
+                f"stored={stored_checksum}, calculated={calculated_checksum}"
+            )
+        
+        return is_valid
 
 
 # Global instance

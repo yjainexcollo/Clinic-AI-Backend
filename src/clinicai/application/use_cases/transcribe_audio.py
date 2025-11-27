@@ -193,6 +193,32 @@ class TranscribeAudioUseCase:
                 medical_context=True
             )
 
+            # Check for transcription errors
+            if transcription_result.get("error"):
+                error_info = transcription_result["error"]
+                error_code = error_info.get("code", "UNKNOWN_ERROR")
+                error_message = error_info.get("message", "Transcription failed")
+                error_details = error_info.get("details", {})
+                
+                LOGGER.error(
+                    f"Transcription failed: {error_code} - {error_message}",
+                    extra={
+                        "error_code": error_code,
+                        "error_details": error_details,
+                        "visit_id": visit.visit_id,
+                        "patient_id": visit.patient_id
+                    }
+                )
+                
+                # Mark visit transcription as failed with error info
+                visit.mark_transcription_failed(
+                    error_message=f"{error_code}: {error_message}"
+                )
+                await self._visit_repository.save(visit)
+                
+                # Raise with detailed error information
+                raise ValueError(f"Transcription failed: {error_message} (code: {error_code})")
+
             raw_transcript = transcription_result.get("transcript", "") or ""
             LOGGER.info(f"Transcription completed. Transcript length: {len(raw_transcript)} characters")
             LOGGER.info(f"Raw transcript preview: {raw_transcript[:300]}...")

@@ -220,9 +220,8 @@ class AzureOpenAISettings(BaseSettings):
     
     endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
     api_key: str = Field(default="", description="Azure OpenAI API key")
-    api_version: str = Field(default="2024-07-18", description="Azure OpenAI API version")
+    api_version: str = Field(default="2024-12-01-preview", description="Azure OpenAI API version")
     deployment_name: str = Field(default="gpt-4o-mini", description="Azure OpenAI chat deployment name")
-    whisper_deployment_name: str = Field(default="whisper", description="Azure OpenAI Whisper deployment name for transcription")
     
     @validator("endpoint")
     def validate_endpoint(cls, v: str) -> str:
@@ -338,7 +337,6 @@ class Settings(BaseSettings):
                     "AZURE_OPENAI_API_KEY": key_vault.get_secret("AZURE-OPENAI-API-KEY"),
                     "AZURE_OPENAI_API_VERSION": key_vault.get_secret("AZURE-OPENAI-API-VERSION"),
                     "AZURE_OPENAI_DEPLOYMENT_NAME": key_vault.get_secret("AZURE-OPENAI-DEPLOYMENT-NAME"),
-                    "AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME": key_vault.get_secret("AZURE-OPENAI-WHISPER-DEPLOYMENT-NAME"),
                 }
                 # Only use Key Vault values if they exist (don't override env vars that are already set)
                 for key, value in key_vault_secrets.items():

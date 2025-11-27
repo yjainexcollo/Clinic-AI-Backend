@@ -15,11 +15,9 @@ A comprehensive medical consultation platform that provides AI-powered patient i
 
 ### Advanced Features
 - **Structured Dialogue**: Clean PII and structure transcripts into Doctor/Patient conversations
-- **Action Plans**: Generate comprehensive treatment plans from consultation transcripts
 - **Vitals Management**: Store and retrieve objective patient vitals data
-- **Image Management**: Upload, store, and analyze medication images with OCR
-- **Audio Management**: Comprehensive audio file storage and streaming capabilities
-- **Background Processing**: Asynchronous task processing for transcription and analysis
+- **Image Management**: Upload, store image
+- **Background Processing**: Asynchronous task processing for transcription
 
 ## 🏗️ Architecture
 
@@ -236,19 +234,9 @@ backend/
 #### Prescription Analysis
 - `POST /prescriptions/upload` - Upload and analyze prescription images
 
-#### Audio Management
-- `GET /audio/` - List audio files
-- `GET /audio/{audio_id}/stream` - Stream audio for playback
-- `DELETE /audio/{audio_id}` - Delete audio file
-
 #### Doctor Preferences
 - `GET /doctor/preferences` - Get doctor preferences
 - `POST /doctor/preferences` - Save doctor preferences
-
-#### Ad-hoc Services
-- `POST /transcription` - Ad-hoc audio transcription
-- `POST /adhoc/action-plan` - Generate action plan
-- `GET /adhoc/{adhoc_id}/action-plan` - Get action plan
 
 ### Request/Response Examples
 

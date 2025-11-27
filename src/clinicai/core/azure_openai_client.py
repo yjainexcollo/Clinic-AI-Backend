@@ -23,12 +23,10 @@ class AzureOpenAIClient:
         api_key: str,
         api_version: str,
         deployment_name: str,
-        whisper_deployment_name: Optional[str] = None,
         environment: str = "production",
         enable_cache: bool = False
     ):
         self.deployment_name = deployment_name
-        self.whisper_deployment_name = whisper_deployment_name or "whisper"
         self.environment = environment
         self.api_version = api_version  # Store API version
         self.api_key = api_key  # Store API key for recreating client if needed
@@ -236,109 +234,6 @@ class AzureOpenAIClient:
                         f"Please verify your Azure OpenAI configuration and deployment status."
                     ) from e
     
-    async def transcription(
-        self,
-        file,
-        language: Optional[str] = None,
-        user_id: Optional[str] = None,
-        patient_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        **kwargs
-    ) -> tuple:
-        """
-        Audio transcription with tracking
-        
-        Returns:
-            tuple: (transcription, metrics)
-        """
-        start_time = time.time()
-        
-        # Retry logic for rate limits and transient errors
-        max_retries = 3
-        base_delay = 1.0  # Start with 1 second delay
-        
-        for attempt in range(max_retries):
-            try:
-                # Azure OpenAI Whisper API - use whisper deployment name, not chat deployment
-                response = await self.client.audio.transcriptions.create(
-                    model=self.whisper_deployment_name,  # Use whisper deployment for transcription
-                    file=file,
-                    language=language,
-                    **kwargs
-                )
-                
-                latency = time.time() - start_time
-                metrics = {
-                    "latency_ms": round(latency * 1000, 2),
-                    "deployment": self.whisper_deployment_name,
-                    "type": "transcription",
-                    "text_length": len(response.text) if hasattr(response, 'text') else 0
-                }
-                
-                logger.info(
-                    f"AI_TRANSCRIPTION: deployment={self.whisper_deployment_name} latency={metrics['latency_ms']}ms "
-                    f"text_length={metrics['text_length']} patient={patient_id}"
-                )
-                
-                return response, metrics
-                
-            except Exception as e:
-                latency = time.time() - start_time
-                error_str = str(e).lower()
-                
-                # Check if it's a rate limit error (429)
-                is_rate_limit = (
-                    "429" in str(e) or 
-                    "rate limit" in error_str or 
-                    "too many requests" in error_str or
-                    "quota" in error_str
-                )
-                
-                # Check if it's a transient error (5xx)
-                is_transient = (
-                    "500" in str(e) or 
-                    "502" in str(e) or 
-                    "503" in str(e) or
-                    "504" in str(e) or
-                    "timeout" in error_str or
-                    "connection" in error_str
-                )
-                
-                # Retry on rate limits or transient errors
-                if (is_rate_limit or is_transient) and attempt < max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(
-                        f"Azure OpenAI transcription error (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {delay}s... (latency: {latency:.2f}s)"
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                
-                # Don't retry on other errors or if we've exhausted retries
-                error_type = "rate_limit" if is_rate_limit else ("transient" if is_transient else "permanent")
-                logger.error(
-                    f"Azure OpenAI transcription error ({error_type}): {e} "
-                    f"(deployment={self.whisper_deployment_name}, attempt={attempt + 1}, latency: {latency:.2f}s)"
-                )
-                
-                # Provide specific error messages
-                if is_rate_limit:
-                    raise ValueError(
-                        f"Azure OpenAI Whisper rate limit exceeded. Please try again later. "
-                        f"Deployment: {self.whisper_deployment_name}, Error: {str(e)}"
-                    ) from e
-                elif is_transient:
-                    raise ValueError(
-                        f"Azure OpenAI Whisper service temporarily unavailable. Please try again. "
-                        f"Deployment: {self.whisper_deployment_name}, Error: {str(e)}"
-                    ) from e
-                else:
-                    raise ValueError(
-                        f"Azure OpenAI transcription error: {str(e)}. "
-                        f"Deployment: {self.whisper_deployment_name}, "
-                        f"Please verify your Azure OpenAI Whisper deployment configuration."
-                    ) from e
     
     def _calculate_metrics(self, response, latency: float) -> Dict[str, Any]:
         """Calculate comprehensive metrics for AI call"""
@@ -497,7 +392,6 @@ def create_azure_openai_client(enable_cache: bool = False) -> AzureOpenAIClient:
         api_key=settings.azure_openai.api_key,
         api_version=settings.azure_openai.api_version,
         deployment_name=settings.azure_openai.deployment_name,
-        whisper_deployment_name=settings.azure_openai.whisper_deployment_name,
         environment=settings.app_env,
         enable_cache=enable_cache
     )

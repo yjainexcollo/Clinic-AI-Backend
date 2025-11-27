@@ -126,10 +126,9 @@ async def readiness_check(request: Request):
         # Check Azure OpenAI configuration
         try:
             # Verify deployment names are configured
-            if settings.azure_openai.deployment_name and settings.azure_openai.whisper_deployment_name:
+            if settings.azure_openai.deployment_name:
                 checks["azure_openai"] = "configured"
                 checks["azure_openai_chat_deployment"] = settings.azure_openai.deployment_name
-                checks["azure_openai_whisper_deployment"] = settings.azure_openai.whisper_deployment_name
                 checks["azure_openai_api_version"] = settings.azure_openai.api_version
             else:
                 checks["azure_openai"] = "partially_configured"

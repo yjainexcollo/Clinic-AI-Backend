@@ -186,34 +186,8 @@ class MedicationImageMongo(Document):
         indexes = ["patient_id", "visit_id", "uploaded_at"]
 
 
-class AdhocTranscriptMongo(Document):
-    """MongoDB model for ad-hoc (patientless) transcripts."""
-    transcript: str = Field(..., description="Raw transcribed text")
-    structured_dialogue: Optional[list[dict]] = Field(None, description="Ordered Doctor/Patient turns")
-    language: Optional[str] = Field(None)
-    confidence: Optional[float] = Field(None)
-    duration: Optional[float] = Field(None)
-    word_count: Optional[int] = Field(None)
-    model: Optional[str] = Field(None)
-    filename: Optional[str] = Field(None)
-    audio_file_path: Optional[str] = Field(None, description="Path to stored audio file")
-    
-    # Action and Plan fields
-    action_plan: Optional[dict] = Field(None, description="Generated Action and Plan from transcript")
-    action_plan_status: str = Field(default="pending", description="Status: pending, processing, completed, failed")
-    action_plan_started_at: Optional[datetime] = Field(None, description="When action plan generation started")
-    action_plan_completed_at: Optional[datetime] = Field(None, description="When action plan generation completed")
-    action_plan_error_message: Optional[str] = Field(None, description="Error message if action plan generation failed")
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-    class Settings:
-        name = "adhoc_transcripts"
-        indexes = ["created_at"]
-
-
 class AudioFileMongo(Document):
-    """MongoDB model for audio files with blob storage reference."""
+    """MongoDB model for audio files with blob storage reference (internal use for transcription)."""
     audio_id: str = Field(..., description="Unique audio file ID", unique=True)
     filename: str = Field(..., description="Original filename")
     content_type: str = Field(..., description="MIME type of the audio file")
@@ -227,7 +201,7 @@ class AudioFileMongo(Document):
     patient_id: Optional[str] = Field(None, description="Patient ID if linked to a patient")
     visit_id: Optional[str] = Field(None, description="Visit ID if linked to a visit")
     adhoc_id: Optional[str] = Field(None, description="Adhoc transcript ID if linked to adhoc transcript")
-    audio_type: str = Field(default="adhoc", description="Type: adhoc, visit, or other")
+    audio_type: str = Field(default="visit", description="Type: visit or other (adhoc deprecated)")
     
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -239,7 +213,6 @@ class AudioFileMongo(Document):
             "audio_id",
             "patient_id", 
             "visit_id",
-            "adhoc_id",
             "audio_type",
             "created_at"
         ]

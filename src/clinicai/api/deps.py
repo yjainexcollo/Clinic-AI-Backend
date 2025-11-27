@@ -19,17 +19,13 @@ from ..adapters.db.mongo.repositories.audio_repository import (
     AudioRepository,
 )
 from ..adapters.external.question_service_openai import OpenAIQuestionService
-from ..adapters.external.transcription_service_openai import OpenAITranscriptionService
-# Conditional import for local Whisper - only import if needed
-# from ..adapters.external.transcription_service_whisper import WhisperTranscriptionService
+# Note: Azure Speech Service is used for transcription (not Whisper)
 from ..adapters.external.soap_service_openai import OpenAISoapService
-from ..adapters.services.action_plan_service import OpenAIActionPlanService
 from ..application.ports.repositories.patient_repo import PatientRepository
 from ..application.ports.repositories.visit_repo import VisitRepository
 from ..application.ports.services.question_service import QuestionService
 from ..application.ports.services.transcription_service import TranscriptionService
 from ..application.ports.services.soap_service import SoapService
-from ..application.ports.services.action_plan_service import ActionPlanService
 from ..core.auth import get_auth_service
 from fastapi import Request
 
@@ -49,7 +45,7 @@ def get_patient_repository() -> PatientRepository:
 
 @lru_cache()
 def get_audio_repository() -> AudioRepository:
-    """Get audio repository instance."""
+    """Get audio repository instance (internal use for transcription workflow)."""
     return AudioRepository()
 
 
@@ -63,8 +59,7 @@ def get_question_service() -> QuestionService:
 
 
 
-# Maintain a single instance of the transcription service per process so the
-# Whisper model is loaded only once and reused across requests.
+# Maintain a single instance of the transcription service per process
 _TRANSCRIPTION_SERVICE_SINGLETON: Optional[TranscriptionService] = None
 
 def get_transcription_service() -> TranscriptionService:
@@ -108,14 +103,6 @@ def get_soap_service() -> SoapService:
     return OpenAISoapService()
 
 
-@lru_cache()
-def get_action_plan_service() -> ActionPlanService:
-    """Get Action Plan service instance."""
-    # In a real implementation, this would come from the DI container
-    # For now, we'll create it directly
-    return OpenAIActionPlanService()
-
-
 def get_current_user(request: Request) -> str:
     """
     Get current authenticated user ID from request state.
@@ -141,10 +128,8 @@ def get_current_user(request: Request) -> str:
 # Dependency annotations for FastAPI
 VisitRepositoryDep = Annotated[VisitRepository, Depends(get_visit_repository)]
 PatientRepositoryDep = Annotated[PatientRepository, Depends(get_patient_repository)]
-AudioRepositoryDep = Annotated[AudioRepository, Depends(get_audio_repository)]
+AudioRepositoryDep = Annotated[AudioRepository, Depends(get_audio_repository)]  # Internal use for transcription
 QuestionServiceDep = Annotated[QuestionService, Depends(get_question_service)]
-# Removed StablePatientRepository dependency
 TranscriptionServiceDep = Annotated[TranscriptionService, Depends(get_transcription_service)]
 SoapServiceDep = Annotated[SoapService, Depends(get_soap_service)]
-ActionPlanServiceDep = Annotated[ActionPlanService, Depends(get_action_plan_service)]
 CurrentUserDep = Annotated[str, Depends(get_current_user)]

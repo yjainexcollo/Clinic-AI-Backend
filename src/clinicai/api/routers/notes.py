@@ -31,7 +31,6 @@ from ..deps import PatientRepositoryDep, VisitRepositoryDep, TranscriptionServic
 from ...core.utils.crypto import decode_patient_id
 from ..schemas import ErrorResponse
 from ...core.config import get_settings
-from ...adapters.db.mongo.models.patient_m import AdhocTranscriptMongo
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 

@@ -36,7 +36,6 @@ class AzureAIClient:
         api_key: Optional[str] = None,
         api_version: Optional[str] = None,
         deployment_name: Optional[str] = None,
-        whisper_deployment_name: Optional[str] = None,
     ) -> None:
         """
         Initialize AzureAIClient.
@@ -49,9 +48,6 @@ class AzureAIClient:
         api_key = api_key or settings.azure_openai.api_key
         api_version = api_version or settings.azure_openai.api_version
         deployment_name = deployment_name or settings.azure_openai.deployment_name
-        whisper_deployment_name = (
-            whisper_deployment_name or settings.azure_openai.whisper_deployment_name
-        )
 
         if not endpoint or not api_key:
             raise ValueError(
@@ -65,17 +61,10 @@ class AzureAIClient:
                 "Set AZURE_OPENAI_DEPLOYMENT_NAME."
             )
 
-        if not whisper_deployment_name:
-            raise ValueError(
-                "Azure OpenAI Whisper deployment name is required. "
-                "Set AZURE_OPENAI_WHISPER_DEPLOYMENT_NAME."
-            )
-
         # Normalize endpoint: Azure SDK does not expect trailing slash
         normalized_endpoint = endpoint.rstrip("/") if endpoint else endpoint
 
         self._deployment_name = deployment_name
-        self._whisper_deployment_name = whisper_deployment_name
 
         self._client = AsyncAzureOpenAI(
             api_key=api_key,
@@ -163,28 +152,6 @@ class AzureAIClient:
             input=inputs,
             **kwargs,
         )
-
-    async def transcribe_whisper(
-        self,
-        file: Any,
-        *,
-        language: Optional[str] = None,
-        **kwargs: Any,
-    ):
-        """
-        Transcribe audio using an Azure OpenAI Whisper deployment.
-
-        Args:
-            file: Binary file-like object opened in rb mode.
-            language: Optional language code.
-        """
-        return await self._client.audio.transcriptions.create(
-            model=self._whisper_deployment_name,
-            file=file,
-            language=language,
-            **kwargs,
-        )
-
 
 __all__ = ["AzureAIClient"]
 
