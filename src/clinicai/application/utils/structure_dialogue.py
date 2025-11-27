@@ -9,7 +9,6 @@ from typing import List, Dict, Optional
 import asyncio
 import re as _re
 
-from clinicai.core.ai_client import AzureAIClient
 from clinicai.core.ai_factory import get_ai_client
 from clinicai.core.config import get_settings
 
@@ -47,18 +46,10 @@ async def structure_dialogue_from_text(
 
         deployment_name = model or settings.azure_openai.deployment_name
 
-        if azure_endpoint and azure_api_key:
-            # Create a dedicated client with the provided credentials
-            client = AzureAIClient(
-                endpoint=azure_endpoint,
-                api_key=azure_api_key,
-                api_version=settings.azure_openai.api_version,
-                deployment_name=deployment_name,
-                whisper_deployment_name=settings.azure_openai.whisper_deployment_name,
-            )
-        else:
-            # Use shared factory client (configured via settings/env)
-            client = get_ai_client()
+        # Always use factory client (configured via settings/env)
+        # Custom credentials should be configured via environment variables or settings
+        # rather than passed as parameters to maintain consistency
+        client = get_ai_client()
 
         # Language-aware system prompt
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:

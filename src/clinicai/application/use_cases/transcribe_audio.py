@@ -11,7 +11,7 @@ from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.transcription_service import TranscriptionService
 from ...core.config import get_settings
-from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple
 import asyncio
 import logging
 import json
@@ -19,8 +19,8 @@ import re
 import time
 from datetime import datetime
 
-if TYPE_CHECKING:
-    from openai import AsyncAzureOpenAI  # type: ignore
+from ...core.ai_client import AzureAIClient
+from ...core.ai_factory import get_ai_client
 
 # Module-level logger to avoid UnboundLocalError from function-level assignments
 LOGGER = logging.getLogger("clinicai")
@@ -586,7 +586,7 @@ class TranscribeAudioUseCase:
 
     async def _retry_chunk_processing(
         self,
-        client: AsyncAzureOpenAI,
+        client: AzureAIClient,
         system_prompt: str,
         user_prompt: str,
         settings,
@@ -745,7 +745,7 @@ class TranscribeAudioUseCase:
 
     async def _process_transcript_with_chunking(
         self, 
-        client: AsyncAzureOpenAI, 
+        client: AzureAIClient, 
         raw_transcript: str, 
         settings, 
         logger,
@@ -1099,7 +1099,7 @@ class TranscribeAudioUseCase:
     
     async def _process_single_chunk(
         self, 
-        client: AsyncAzureOpenAI, 
+        client: AzureAIClient, 
         system_prompt: str, 
         user_prompt: str, 
         settings, 
@@ -1121,13 +1121,13 @@ class TranscribeAudioUseCase:
                 logger.info(f"User prompt length: {len(user_prompt)} characters")
                 logger.info(f"User prompt preview: {user_prompt[:300]}...")
                 
-                # Use Azure OpenAI deployment name instead of model
-                resp = await client.chat.completions.create(
-                    model=settings.azure_openai.deployment_name,
+                # Use unified client.chat() method
+                resp = await client.chat(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
+                    model=settings.azure_openai.deployment_name,
                     max_tokens=max_tokens,
                     temperature=0.1,
                     top_p=0.9,
@@ -1335,7 +1335,7 @@ class TranscribeAudioUseCase:
     
     async def _process_transcript_simple(
         self, 
-        client: AsyncAzureOpenAI, 
+        client: AzureAIClient, 
         raw_transcript: str, 
         settings, 
         logger,
