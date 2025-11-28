@@ -630,20 +630,30 @@ class AzureBlobStorageService:
             account_key = self.settings.account_key
             account_name = self.settings.account_name
             
-            if not account_key and self.settings.connection_string:
-                # Parse connection string to extract account_key
+            shared_access_signature = None
+            if self.settings.connection_string:
+                # Parse connection string to extract account_key / SAS
                 # Format: DefaultEndpointsProtocol=https;AccountName=xxx;AccountKey=xxx;EndpointSuffix=core.windows.net
+                # Azure portal sometimes provides SharedAccessSignature instead of AccountKey
                 conn_parts = self.settings.connection_string.split(';')
                 for part in conn_parts:
                     if part.startswith('AccountKey='):
                         account_key = part.split('=', 1)[1]
                     elif part.startswith('AccountName=') and not account_name:
                         account_name = part.split('=', 1)[1]
+                    elif part.startswith('SharedAccessSignature='):
+                        shared_access_signature = part.split('=', 1)[1].lstrip('?')
             
             if not account_key:
+                if shared_access_signature:
+                    blob_url = f"https://{account_name}.blob.core.windows.net/{self.settings.container_name}/{blob_path}"
+                    signed_url = f"{blob_url}?{shared_access_signature}"
+                    logger.info("⚠️ Using shared access signature from connection string for blob: %s", blob_path)
+                    return signed_url
                 raise ValueError(
                     "Azure Blob Storage account_key is required for generating signed URLs. "
-                    "Either set AZURE_BLOB_ACCOUNT_KEY or ensure AZURE_BLOB_CONNECTION_STRING contains AccountKey."
+                    "Either set AZURE_BLOB_ACCOUNT_KEY or ensure AZURE_BLOB_CONNECTION_STRING contains "
+                    "AccountKey or SharedAccessSignature."
                 )
             
             if not account_name:

@@ -733,6 +733,7 @@ async def get_intake_medication_image_content(
 async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     from ...adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+    from ...adapters.storage.azure_blob_service import get_azure_blob_service
     try:
         original_patient_id = patient_id
         try:
@@ -753,14 +754,28 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
         
         # Fetch blob references for blob_url
         blob_repo = BlobFileRepository()
+        blob_service = get_azure_blob_service()
         images_list = []
         for d in docs:
             blob_url = None
+            signed_url = None
             try:
                 if hasattr(d, "blob_reference_id") and d.blob_reference_id:
                     blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
                     if blob_ref:
                         blob_url = blob_ref.blob_url
+                        if getattr(blob_ref, "blob_path", None):
+                            try:
+                                signed_url = blob_service.generate_signed_url(
+                                    blob_path=blob_ref.blob_path,
+                                    expires_in_hours=1,
+                                )
+                            except Exception as sas_error:
+                                logger.warning(
+                                    "Failed to generate SAS URL for blob %s: %s",
+                                    blob_ref.blob_path,
+                                    sas_error,
+                                )
             except Exception as e:
                 logger.warning(f"Failed to fetch blob URL for image {getattr(d, 'id', 'unknown')}: {e}")
             
@@ -770,6 +785,7 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
                 "content_type": getattr(d, "content_type", ""),
                 "file_size": getattr(d, "file_size", 0),
                 "blob_url": blob_url,
+                "signed_url": signed_url,
                 "uploaded_at": getattr(d, "uploaded_at", None),
             })
         
@@ -1097,6 +1113,8 @@ async def get_pre_visit_summary(
                 if not result.medication_images:
                     logger.warning(f"[GetPreVisitSummary] Use case returned no images, querying directly...")
                     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+                    from ...adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+                    from ...adapters.storage.azure_blob_service import get_azure_blob_service
                     from beanie.operators import Or
                     from ...core.utils.crypto import encode_patient_id
                     
@@ -1113,14 +1131,34 @@ async def get_pre_visit_summary(
                     ).to_list()
                     
                     if docs:
-                        result.medication_images = [
-                            {
-                                "id": str(getattr(d, "id", "")),
-                                "filename": getattr(d, "filename", "unknown"),
-                                "content_type": getattr(d, "content_type", ""),
-                            }
-                            for d in docs
-                        ]
+                        blob_repo = BlobFileRepository()
+                        blob_service = get_azure_blob_service()
+                        enriched_images = []
+                        for d in docs:
+                            signed_url = None
+                            try:
+                                if getattr(d, "blob_reference_id", None):
+                                    blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
+                                    if blob_ref and getattr(blob_ref, "blob_path", None):
+                                        signed_url = blob_service.generate_signed_url(
+                                            blob_path=blob_ref.blob_path,
+                                            expires_in_hours=1,
+                                        )
+                            except Exception as sas_error:
+                                logger.warning(
+                                    "Failed to generate SAS URL for medication image %s: %s",
+                                    getattr(d, "id", "unknown"),
+                                    sas_error,
+                                )
+                            enriched_images.append(
+                                {
+                                    "id": str(getattr(d, "id", "")),
+                                    "filename": getattr(d, "filename", "unknown"),
+                                    "content_type": getattr(d, "content_type", ""),
+                                    "signed_url": signed_url,
+                                }
+                            )
+                        result.medication_images = enriched_images
                         logger.info(f"[GetPreVisitSummary] Found {len(result.medication_images)} images in direct query")
                 
                 return PreVisitSummaryResponse(
@@ -1141,6 +1179,8 @@ async def get_pre_visit_summary(
 
         # Attach any uploaded medication images
         from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
+        from ...adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+        from ...adapters.storage.azure_blob_service import get_azure_blob_service
         from beanie.operators import Or
         from ...core.utils.crypto import encode_patient_id
         
@@ -1162,14 +1202,35 @@ async def get_pre_visit_summary(
         logger.info(f"[GetPreVisitSummary] Querying images for visit {visit.visit_id.value} with patient_id variants: internal={patient_internal_id[:20]}..., encoded={patient_encoded_id[:20]}..., request={patient_id[:20]}...")
         logger.info(f"[GetPreVisitSummary] Found {len(docs) if docs else 0} medication images")
         
-        images_meta = [
-            {
-                "id": str(getattr(d, "id", "")),
-                "filename": getattr(d, "filename", "unknown"),
-                "content_type": getattr(d, "content_type", ""),
-            }
-            for d in docs
-        ] if docs else None
+        images_meta = None
+        if docs:
+            blob_repo = BlobFileRepository()
+            blob_service = get_azure_blob_service()
+            images_meta = []
+            for d in docs:
+                signed_url = None
+                try:
+                    if getattr(d, "blob_reference_id", None):
+                        blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
+                        if blob_ref and getattr(blob_ref, "blob_path", None):
+                            signed_url = blob_service.generate_signed_url(
+                                blob_path=blob_ref.blob_path,
+                                expires_in_hours=1,
+                            )
+                except Exception as sas_error:
+                    logger.warning(
+                        "Failed to generate SAS URL for medication image %s: %s",
+                        getattr(d, "id", "unknown"),
+                        sas_error,
+                    )
+                images_meta.append(
+                    {
+                        "id": str(getattr(d, "id", "")),
+                        "filename": getattr(d, "filename", "unknown"),
+                        "content_type": getattr(d, "content_type", ""),
+                        "signed_url": signed_url,
+                    }
+                )
         
         if images_meta:
             logger.info(f"[GetPreVisitSummary] Returning {len(images_meta)} medication images: {[img['filename'] for img in images_meta]}")

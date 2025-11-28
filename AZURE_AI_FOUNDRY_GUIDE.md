@@ -573,16 +573,21 @@ az webapp config appsettings set \
 ### Test 1: Verify Basic Connectivity
 
 ```bash
-# Run verification script
+# Run verification script (from backend directory)
 cd /Users/excollodev/Desktop/Clinic-AI/backend
-python scripts/verify_foundry.py
+python3 scripts/verify_foundry.py
 ```
+
+**Note**: The script automatically adds the `src` directory to the Python path, so you can run it directly from the backend directory.
 
 Expected output:
 ```
+🔍 Verifying Azure AI Foundry integration...
+
 ✅ Client initialized successfully
 📍 Endpoint: https://clinicai-openai.openai.azure.com
 🔖 API Version: 2025-01-01-preview
+🤖 Deployment: gpt-4o-mini
 
 🚀 Sending test request to Azure OpenAI…
 ✅ Response: OK
@@ -593,8 +598,101 @@ Expected output:
 ⏱️  Latency: 234.56ms
 🏁 Finish reason: stop
 
+💬 Response content: OK
+
 ✅ Foundry verification complete! Check Azure AI Foundry logs.
+   - Log Analytics: Azure Portal > Log Analytics Workspace > Logs
+   - Application Insights: Azure Portal > Application Insights > Logs
 ```
+
+---
+
+## Post-Migration Next Steps
+
+After the verification script succeeds, use this checklist to make sure production telemetry is fully wired up.
+
+### 1. Confirm App Service → Log Analytics
+
+```bash
+# Capture App Service resource ID
+APP_SERVICE_ID=$(az webapp show \
+  --name clinic-ai-backend \
+  --resource-group clinic-ai \
+  --query id -o tsv)
+
+# List diagnostic settings (should show app-service-logs)
+az monitor diagnostic-settings list \
+  --resource $APP_SERVICE_ID \
+  --output table
+```
+
+If nothing is listed, recreate the diagnostic setting:
+
+```bash
+WORKSPACE_ID=$(az monitor log-analytics workspace show \
+  --resource-group clinic-ai \
+  --workspace-name Clinic-ai-logs \
+  --query id -o tsv)
+
+az monitor diagnostic-settings create \
+  --name app-service-logs \
+  --resource $APP_SERVICE_ID \
+  --workspace $WORKSPACE_ID \
+  --logs '[
+      {"category":"AppServiceHTTPLogs","enabled":true},
+      {"category":"AppServiceConsoleLogs","enabled":true},
+      {"category":"AppServiceAppLogs","enabled":true},
+      {"category":"AppServiceAuditLogs","enabled":true},
+      {"category":"AppServiceIPSecAuditLogs","enabled":true}
+  ]' \
+  --metrics '[{"category":"AllMetrics","enabled":true}]'
+```
+
+### 2. Validate data in Log Analytics
+
+Run in `Clinic-ai-logs`:
+
+```kql
+AppServiceHTTPLogs
+| where TimeGenerated > ago(15m)
+| where _ResourceId contains "/sites/clinic-ai-backend"
+| project TimeGenerated, CsMethod, CsUriStem, CsHost, ScStatus, Clp, UserAgent
+| take 20
+```
+
+Once you see rows, HTTP diagnostics are flowing.
+
+### 3. Validate Application Insights traces
+
+```kql
+AppRequests
+| where TimeGenerated > ago(15m)
+| where cloud_RoleName == "clinic-ai-backend"
+| order by TimeGenerated desc
+| take 20
+```
+
+If nothing appears, double-check `APPLICATIONINSIGHTS_CONNECTION_STRING` in App Service and restart.
+
+### 4. Clean up duplicate Azure resources
+
+- Remove the extra Foundry workspace (`clinicai-foundry`) if `clinicai-project-resource` is the one you use.
+- Remove unused Log Analytics workspaces (`workspace-clinicaifBYY`) so all diagnostics land in `Clinic-ai-logs`.
+- Delete any remaining Helicone Container Apps, PostgreSQL, and Container Registry resources.
+- Remove unused managed identities (keep only the ones referenced by App Service).
+
+### 5. Create dashboards & alerts
+
+- Build a Log Analytics workbook for token usage, latency, and error rate using the KQL snippets below.
+- Create alert rules (5xx, high latency, audit gaps) using `AppRequests` or `AppServiceHTTPLogs`.
+
+### 6. Run an end-to-end workflow
+
+1. Register a test patient via the UI.
+2. Upload a visit audio file and wait for transcription.
+3. Generate SOAP/summary outputs.
+4. Confirm the calls show up in Azure AI Foundry → Monitoring.
+5. Confirm the same events appear in `Clinic-ai-logs` and Application Insights.
 
 ### Test 2: Validate Logs in Log Analytics
 

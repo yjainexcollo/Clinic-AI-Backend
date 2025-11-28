@@ -11,6 +11,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import custom metrics for Application Insights
+try:
+    from ..observability.metrics import record_ai_request, record_error
+    from ..observability.tracing import trace_operation, set_span_status, add_span_attribute
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+    logger.debug("Observability module not available")
+
 
 class AzureOpenAIClient:
     """
@@ -71,8 +80,23 @@ class AzureOpenAIClient:
         max_retries = 3
         base_delay = 1.0  # Start with 1 second delay
         
+        # Prepare tracing attributes
+        trace_attrs = {
+            "deployment": self.deployment_name,
+            "prompt_name": prompt_name or "unknown",
+        }
+        if patient_id:
+            trace_attrs["patient_id"] = patient_id[:50]  # Truncate for privacy
+        
         for attempt in range(max_retries):
             try:
+                # Create tracing span for AI call
+                if OBSERVABILITY_AVAILABLE:
+                    with trace_operation("ai.chat.completion", trace_attrs) as span:
+                        if span:
+                            add_span_attribute(span, "attempt", attempt + 1)
+                            add_span_attribute(span, "max_tokens", max_tokens or "unlimited")
+                            
                 # Make API call - Azure OpenAI uses deployment_name instead of model
                 response = await self.client.chat.completions.create(
                     model=self.deployment_name,  # Use deployment name, not model name
@@ -86,7 +110,40 @@ class AzureOpenAIClient:
                 latency = time.time() - start_time
                 metrics = self._calculate_metrics(response, latency)
                 
+                        # Record custom metrics for Application Insights
+                        if OBSERVABILITY_AVAILABLE:
+                            record_ai_request(
+                                model=self.deployment_name,
+                                latency_ms=metrics['latency_ms'],
+                                tokens=metrics['total_tokens'],
+                                success=True
+                            )
+                            if span:
+                                add_span_attribute(span, "tokens", metrics['total_tokens'])
+                                add_span_attribute(span, "latency_ms", metrics['latency_ms'])
+                                set_span_status(span, success=True)
+                        
                 # Log metrics
+                        logger.info(
+                            f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
+                            f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
+                            f"patient={patient_id}"
+                        )
+                        
+                        return response, metrics
+                else:
+                    # Fallback if observability not available
+                    response = await self.client.chat.completions.create(
+                        model=self.deployment_name,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **kwargs
+                    )
+                    
+                    latency = time.time() - start_time
+                    metrics = self._calculate_metrics(response, latency)
+                    
                 logger.info(
                     f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
                     f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
@@ -203,6 +260,19 @@ class AzureOpenAIClient:
                 logger.error(
                     f"Azure OpenAI API error ({error_type}): {e} "
                     f"(deployment={self.deployment_name}, attempt={attempt + 1}, latency: {latency:.2f}s)"
+                )
+                
+                # Record error metrics for Application Insights
+                if OBSERVABILITY_AVAILABLE:
+                    record_ai_request(
+                        model=self.deployment_name,
+                        latency_ms=latency * 1000,
+                        tokens=0,
+                        success=False
+                    )
+                    record_error(
+                        error_type=f"ai_{error_type}",
+                        error_message=str(e)[:200]  # Truncate long error messages
                 )
                 
                 # Provide specific error messages
