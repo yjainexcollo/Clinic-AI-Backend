@@ -11,6 +11,7 @@ import uuid
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import json
+import re
 
 import aiohttp
 
@@ -18,6 +19,15 @@ from clinicai.application.ports.services.transcription_service import Transcript
 from clinicai.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Simple ISO8601 duration parser for Azure Speech offsets/durations
+ISO_DURATION_RE = re.compile(
+    r"^PT"  # prefix
+    r"(?:(\d+)H)?"  # hours
+    r"(?:(\d+)M)?"  # minutes
+    r"(?:(\d+(?:\.\d+)?)S)?"  # seconds (int or float)
+    r"$"
+)
 
 
 # Custom exception classes for better error handling
@@ -99,6 +109,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         audio_file_path: str,
         language: str = "en",
         medical_context: bool = True,
+        sas_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Transcribe audio using Azure Speech Service batch transcription with speaker diarization.
@@ -115,7 +126,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             - model: Service name
         """
         if self._settings.azure_speech.transcription_mode == "batch":
-            return await self._transcribe_batch(audio_file_path, language, medical_context)
+            return await self._transcribe_batch(audio_file_path, language, medical_context, sas_url=sas_url)
         else:
             raise ValueError("Real-time transcription not supported. Use batch mode.")
     
@@ -124,6 +135,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         audio_file_path: str,
         language: str,
         medical_context: bool,
+        sas_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Batch transcription with speaker diarization using REST API."""
         transcription_id = None
@@ -138,28 +150,33 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             
             logger.info(f"Starting Azure Speech Service batch transcription: {audio_file_path}, language: {speech_language}")
             
-            # Read audio file
-            with open(audio_file_path, "rb") as audio_file:
-                audio_data = audio_file.read()
-            
-            # Validate audio data
-            if not audio_data or len(audio_data) == 0:
-                raise AzureSpeechInvalidAudioError(
-                    "Audio file is empty or could not be read",
-                    file_path=audio_file_path,
-                    file_size=0
-                )
-            
-            # Upload audio to Azure Blob Storage and get SAS URL
-            try:
-                blob_url = await self._upload_audio_to_blob(audio_file_path, audio_data)
-            except Exception as e:
-                raise AzureSpeechBlobUploadError(
-                    f"Failed to upload audio to blob storage: {str(e)}",
-                    file_path=audio_file_path,
-                    file_size=len(audio_data),
-                    original_error=str(e)
-                )
+            # Determine blob URL for Azure Speech Service
+            # Prefer directly provided SAS URL (from existing blob) when available
+            if sas_url:
+                blob_url = sas_url
+                logger.info("Using provided SAS URL for Azure Speech transcription")
+            else:
+                # Fallback: read local file and upload to blob (legacy path)
+                with open(audio_file_path, "rb") as audio_file:
+                    audio_data = audio_file.read()
+                
+                # Validate audio data
+                if not audio_data or len(audio_data) == 0:
+                    raise AzureSpeechInvalidAudioError(
+                        "Audio file is empty or could not be read",
+                        file_path=audio_file_path,
+                        file_size=0
+                    )
+                
+                try:
+                    blob_url = await self._upload_audio_to_blob(audio_file_path, audio_data)
+                except Exception as e:
+                    raise AzureSpeechBlobUploadError(
+                        f"Failed to upload audio to blob storage: {str(e)}",
+                        file_path=audio_file_path,
+                        file_size=len(audio_data),
+                        original_error=str(e)
+                    )
             
             # Create transcription job
             try:
@@ -357,16 +374,28 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         """Create Azure Speech transcription job with retry logic."""
         transcription_name = f"clinicai-transcription-{uuid.uuid4()}"
         
+        properties: Dict[str, Any] = {
+            "diarizationEnabled": self._settings.azure_speech.enable_speaker_diarization,
+            "wordLevelTimestampsEnabled": True,
+            "punctuationMode": "DictatedAndAutomatic",
+            "profanityFilterMode": "Masked",
+        }
+        # Optionally include maxSpeakers when configured (for newer Speech APIs that support it)
+        try:
+            max_speakers = int(self._settings.azure_speech.max_speakers)
+            if max_speakers > 0:
+                # Some API versions expect this inside a diarization config object;
+                # we keep it flat here and adapt as needed.
+                properties["maxSpeakers"] = max_speakers
+        except Exception:
+            # If configuration is invalid, skip maxSpeakers and rely on service defaults
+            logger.debug("Skipping maxSpeakers configuration due to invalid value")
+
         payload = {
             "contentUrls": [blob_url],
             "locale": language,
             "displayName": transcription_name,
-            "properties": {
-                "diarizationEnabled": self._settings.azure_speech.enable_speaker_diarization,
-                "wordLevelTimestampsEnabled": True,
-                "punctuationMode": "DictatedAndAutomatic",
-                "profanityFilterMode": "Masked"
-            }
+            "properties": properties,
         }
         
         headers = {
@@ -423,7 +452,8 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         """Poll transcription job status until completion with increased timeout."""
         status_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
-        poll_interval = max(3, self._settings.azure_speech.batch_polling_interval)  # Minimum 3 seconds
+        # Allow slightly more aggressive polling while preserving a sane lower bound
+        poll_interval = max(2, self._settings.azure_speech.batch_polling_interval)
         timeout_seconds = self._settings.azure_speech.batch_max_wait_time
         start_time = time.time()
         poll_count = 0
@@ -577,20 +607,46 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             return 0.0
         return sum(confidences) / len(confidences)
     
+    def _parse_iso_duration_seconds(self, value: Optional[str]) -> float:
+        """
+        Parse ISO8601 duration strings like 'PT19.16S', 'PT5M3.5S', 'PT1H2M3S' into seconds.
+        
+        Azure Speech returns phrase-level 'offset' and 'duration' values in this format.
+        We support hours, minutes, and seconds components.
+        """
+        if not value:
+            return 0.0
+        match = ISO_DURATION_RE.match(value)
+        if not match:
+            return 0.0
+        hours = int(match.group(1)) if match.group(1) else 0
+        minutes = int(match.group(2)) if match.group(2) else 0
+        seconds = float(match.group(3)) if match.group(3) else 0.0
+        return hours * 3600 + minutes * 60 + seconds
+
     def _extract_duration(self, results: List[Dict[str, Any]]) -> float:
-        durations = []
+        """
+        Estimate total audio duration in seconds from Azure Speech results.
+        
+        Each recognized phrase includes an 'offset' (start time) and 'duration'.
+        We approximate the full audio length as max(offset + duration) across all phrases.
+        """
+        max_end_seconds = 0.0
+
         for result in results:
             recognized_phrases = result.get("recognizedPhrases", [])
             for phrase in recognized_phrases:
                 duration_text = phrase.get("duration")
-                if duration_text:
-                    try:
-                        if duration_text.startswith("PT") and duration_text.endswith("S"):
-                            duration_seconds = float(duration_text[2:-1])
-                            durations.append(duration_seconds)
-                    except ValueError:
-                        continue
-        return max(durations) if durations else 0.0
+                offset_text = phrase.get("offset") or "PT0S"
+
+                dur_sec = self._parse_iso_duration_seconds(duration_text)
+                off_sec = self._parse_iso_duration_seconds(offset_text)
+
+                end_sec = off_sec + dur_sec
+                if end_sec > max_end_seconds:
+                    max_end_seconds = end_sec
+
+        return max_end_seconds
     
     async def _delete_transcription_job(self, transcription_id: str) -> None:
         """Delete transcription job to clean up resources."""

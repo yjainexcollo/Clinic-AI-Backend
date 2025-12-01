@@ -124,12 +124,27 @@ class TranscriptionWorker:
             )
             print(f"🔵 Worker: downloaded audio data size = {len(audio_data)} bytes")
             
-            # Get audio file metadata to determine extension
+            # Get audio file metadata and blob reference (for SAS URL + extension)
             audio_file = await self.audio_repo.get_audio_file_by_id(audio_file_id)
             if not audio_file:
                 raise ValueError(f"Audio file {audio_file_id} not found")
             
-            # Create temp file for transcription
+            from clinicai.adapters.db.mongo.repositories.blob_file_repository import BlobFileRepository
+            blob_repo = BlobFileRepository()
+            blob_ref = await blob_repo.get_blob_reference_by_id(audio_file.blob_reference_id)
+            if not blob_ref:
+                raise ValueError(f"Blob reference {audio_file.blob_reference_id} not found")
+            
+            # Generate SAS URL for existing audio blob (avoids re-upload for Azure Speech)
+            from clinicai.adapters.storage.azure_blob_service import get_azure_blob_service
+            blob_service = get_azure_blob_service()
+            sas_url = blob_service.generate_signed_url(
+                blob_path=blob_ref.blob_path,
+                expires_in_hours=24,
+            )
+            logger.info(f"Generated SAS URL for transcription blob: {blob_ref.blob_path}")
+            
+            # Create temp file for transcription (local Azure Speech adapter still expects file path)
             ext = audio_file.filename.split('.')[-1] if '.' in audio_file.filename else 'mp3'
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as temp_file:
                 temp_file.write(audio_data)
@@ -163,6 +178,7 @@ class TranscriptionWorker:
                     visit_id=visit_id,
                     audio_file_path=temp_file_path,
                     language=language,
+                    sas_url=sas_url,
                 )
                 
                 # Execute transcription use case
@@ -200,6 +216,10 @@ class TranscriptionWorker:
                     f"✅ Transcription completed: {result}, "
                     f"transcription_duration={transcription_duration:.2f}s, "
                     f"total_job_duration={total_duration:.2f}s"
+                )
+                logger.info(
+                    f"✅ Transcription job finished in {total_duration:.2f}s "
+                    f"(queue_wait={0.00:.2f}s, speech+LLM={transcription_duration:.2f}s)"
                 )
                 print(f"✅ Worker: transcription completed. duration={result.audio_duration}, words={result.word_count}")
                 
@@ -297,9 +317,28 @@ class TranscriptionWorker:
                     logger.warning(f"Failed to clean up temp file: {cleanup_error}")
     
     async def run(self):
-        """Main worker loop."""
+        """Main worker loop with bounded concurrency."""
         logger.info("🚀 Starting transcription worker...")
         await self.initialize()
+        
+        # Read concurrency from environment (default to 2)
+        try:
+            max_concurrent_jobs = int(os.getenv("TRANSCRIPTION_WORKER_CONCURRENCY", "2"))
+        except ValueError:
+            max_concurrent_jobs = 2
+        if max_concurrent_jobs < 1:
+            max_concurrent_jobs = 1
+        
+        logger.info(f"Transcription worker concurrency set to {max_concurrent_jobs}")
+        semaphore = asyncio.Semaphore(max_concurrent_jobs)
+
+        async def handle_job(job: dict):
+            async with semaphore:
+                await self.process_job(
+                    job["data"],
+                    job["message_id"],
+                    job["pop_receipt"],
+                )
         
         while True:
             try:
@@ -307,11 +346,8 @@ class TranscriptionWorker:
                 job = await self.queue_service.dequeue_transcription_job()
                 
                 if job:
-                    await self.process_job(
-                        job["data"],
-                        job["message_id"],
-                        job["pop_receipt"]
-                    )
+                    # Process job in background with concurrency limit
+                    asyncio.create_task(handle_job(job))
                 else:
                     # No messages, wait before next poll
                     await asyncio.sleep(self.poll_interval)

@@ -297,6 +297,13 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Application port")
     host: str = Field(default="0.0.0.0", description="Application host")
 
+    # Transcription / LLM settings
+    transcription_simple_max_chars: int = Field(
+        default=20000,
+        env="TRANSCRIPTION_SIMPLE_MAX_CHARS",
+        description="Max transcript chars for simple LLM path before chunking",
+    )
+
     # Sub-settings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)

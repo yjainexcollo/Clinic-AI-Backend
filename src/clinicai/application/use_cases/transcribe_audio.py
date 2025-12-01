@@ -187,11 +187,15 @@ class TranscribeAudioUseCase:
             # Transcribe audio using Azure Speech Service
             LOGGER.info(f"Starting transcription for file: {request.audio_file_path}, language: {transcription_language}")
             
+            speech_start = time.time()
             transcription_result = await self._transcription_service.transcribe_audio(
                 request.audio_file_path,
                 language=transcription_language,
-                medical_context=True
+                medical_context=True,
+                sas_url=getattr(request, "sas_url", None),
             )
+            speech_end = time.time()
+            speech_latency = speech_end - speech_start
 
             # Check for transcription errors
             if transcription_result.get("error"):
@@ -310,6 +314,26 @@ class TranscribeAudioUseCase:
                         LOGGER.info("✓ Additional PII removal pass successful")
             else:
                 LOGGER.info("✓ PII validation: No PII detected in final output")
+
+            # Measure LLM/PII/dialogue post-processing latency
+            # (All operations from after Speech call to just before persistence)
+            # NOTE: speech_latency was measured around the Azure Speech call above.
+            llm_start = speech_end
+            llm_end = time.time()
+            llm_latency = llm_end - llm_start
+
+            LOGGER.info(
+                f"⏱️ Transcription pipeline: speech={speech_latency:.2f}s, llm={llm_latency:.2f}s",
+                extra={
+                    "event": "transcription_pipeline_timings",
+                    "patient_id": request.patient_id,
+                    "visit_id": request.visit_id,
+                    "speech_latency_sec": speech_latency,
+                    "llm_latency_sec": llm_latency,
+                    "transcript_chars": len(raw_transcript),
+                    "structured_dialogue_turns": len(structured_dialogue) if structured_dialogue else 0,
+                },
+            )
 
             # Validate completeness
             if structured_dialogue:
@@ -1360,12 +1384,12 @@ class TranscribeAudioUseCase:
         return matches / total if total > 0 else 0.0
     
     async def _process_transcript_simple(
-        self, 
-        client: AzureAIClient, 
-        raw_transcript: str, 
-        settings, 
+        self,
+        client: AzureAIClient,
+        raw_transcript: str,
+        settings,
         logger,
-        language: str = "en"
+        language: str = "en",
     ) -> str:
         """Process transcript with simplified approach for very short transcripts (<5000 chars)."""
         
@@ -1383,9 +1407,20 @@ class TranscribeAudioUseCase:
                 "Format: [{\"Doctor\": \"text\"}, {\"Patient\": \"text\"}]"
             )
         
-        # For transcripts >12000 chars, use chunking instead (should not happen as this is only for short transcripts)
-        if len(raw_transcript) > 12000:
-            logger.info(f"Long transcript detected ({len(raw_transcript)} chars), redirecting to chunking strategy")
+        # For transcripts above a configurable threshold, use robust chunking strategy instead
+        from clinicai.core.config import get_settings
+
+        settings_obj = get_settings()
+        try:
+            simple_max_chars = int(settings_obj.transcription_simple_max_chars)
+        except (TypeError, ValueError):
+            simple_max_chars = 20000
+
+        if len(raw_transcript) > simple_max_chars:
+            logger.info(
+                f"Transcript length {len(raw_transcript)} exceeds simple_max_chars={simple_max_chars}, "
+                "redirecting to chunking strategy"
+            )
             return await self._process_transcript_with_chunking(
                 client, raw_transcript, settings, logger, language
             )

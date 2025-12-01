@@ -14,7 +14,8 @@ class TranscriptionService(ABC):
         self, 
         audio_file_path: str,
         language: str = "en",
-        medical_context: bool = True
+        medical_context: bool = True,
+        sas_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Transcribe audio file to text.

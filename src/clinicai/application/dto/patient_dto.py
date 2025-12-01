@@ -196,6 +196,8 @@ class AudioTranscriptionRequest:
     audio_file_path: str
     language: str = "en"
     audio_duration: Optional[float] = None
+    # Optional: direct SAS URL to existing blob for Azure Speech (avoids re-upload)
+    sas_url: Optional[str] = None
 
 
 # Post-Visit Summary DTOs
