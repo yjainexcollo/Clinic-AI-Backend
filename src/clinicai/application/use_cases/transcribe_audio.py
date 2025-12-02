@@ -1386,10 +1386,10 @@ class TranscribeAudioUseCase:
         return matches / total if total > 0 else 0.0
     
     async def _process_transcript_simple(
-        self,
-        client: AzureAIClient,
-        raw_transcript: str,
-        settings,
+        self, 
+        client: AzureAIClient, 
+        raw_transcript: str, 
+        settings, 
         logger,
         language: str = "en",
     ) -> str:

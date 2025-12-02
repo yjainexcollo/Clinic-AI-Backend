@@ -35,11 +35,12 @@ class IntakeSession:
     symptom: str = ""  # Make symptom optional with default empty string
     questions_asked: List[QuestionAnswer] = field(default_factory=list)
     current_question_count: int = 0
-    max_questions: int = 14
+    max_questions: int = 12  # Default from settings (can be overridden)
     status: str = "in_progress"  # in_progress, completed, cancelled
     started_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     pending_question: Optional[str] = None
+    travel_questions_count: int = 0  # Track how many travel-related questions asked
 
     def __post_init__(self) -> None:
         """Normalize primary symptom string (no fixed whitelist)."""
@@ -185,6 +186,9 @@ class Visit:
     )
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+    
+    # Visit-specific travel history (moved from Patient - travel is visit-specific, not lifetime patient attribute)
+    recently_travelled: bool = False
 
     # Step 1: Pre-Visit Intake
     intake_session: Optional[IntakeSession] = None

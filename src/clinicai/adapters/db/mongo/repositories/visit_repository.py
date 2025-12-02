@@ -315,6 +315,7 @@ class MongoVisitRepository(VisitRepository):
                 started_at=visit.intake_session.started_at,
                 completed_at=visit.intake_session.completed_at,
                 pending_question=visit.intake_session.pending_question,
+                travel_questions_count=getattr(visit.intake_session, "travel_questions_count", 0),
             )
 
         # Convert transcription session
@@ -357,6 +358,7 @@ class MongoVisitRepository(VisitRepository):
             existing_visit.patient_id = visit.patient_id
             existing_visit.status = visit.status
             existing_visit.updated_at = datetime.utcnow()
+            existing_visit.recently_travelled = getattr(visit, "recently_travelled", False)
             existing_visit.intake_session = intake_session_mongo
             existing_visit.pre_visit_summary = visit.pre_visit_summary
             existing_visit.transcription_session = transcription_session_mongo
@@ -373,6 +375,7 @@ class MongoVisitRepository(VisitRepository):
                 status=visit.status,
                 created_at=visit.created_at,
                 updated_at=visit.updated_at,
+                recently_travelled=getattr(visit, "recently_travelled", False),
                 intake_session=intake_session_mongo,
                 pre_visit_summary=visit.pre_visit_summary,
                 transcription_session=transcription_session_mongo,
@@ -406,6 +409,7 @@ class MongoVisitRepository(VisitRepository):
                 status=visit_mongo.intake_session.status,
                 started_at=visit_mongo.intake_session.started_at,
                 completed_at=visit_mongo.intake_session.completed_at,
+                travel_questions_count=getattr(visit_mongo.intake_session, "travel_questions_count", 0),
             )
             intake_session.pending_question = getattr(visit_mongo.intake_session, "pending_question", None)
 
@@ -474,6 +478,7 @@ class MongoVisitRepository(VisitRepository):
             status=visit_mongo.status,
             created_at=visit_mongo.created_at,
             updated_at=visit_mongo.updated_at,
+            recently_travelled=getattr(visit_mongo, "recently_travelled", False),
             intake_session=intake_session,
             pre_visit_summary=visit_mongo.pre_visit_summary,
             transcription_session=transcription_session,

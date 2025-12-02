@@ -1,29 +1,23 @@
-"""
-Multi-Agent Question Generation System
-Optimized for medical accuracy with intelligent reasoning
-
-Architecture:
-- Agent 1: Medical Context Analyzer - Analyzes chief complaint and determines medical priorities
-- Agent 2: Answer Extractor - Reviews previous Q&A to avoid redundancy
-- Agent 3: Question Generator - Generates medically-relevant interview questions
-- Agent 4: Safety Validator - Enforces hard safety constraints
-
-This replaces the previous 837-line prompt with dynamic medical reasoning.
-"""
-
 import asyncio
 import logging
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from collections import Counter
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, Field, ValidationError
 
 from clinicai.application.ports.services.question_service import QuestionService
 from clinicai.core.config import get_settings
 from clinicai.core.ai_factory import get_ai_client
-
+from clinicai.core.constants import (
+    ALLOWED_TOPICS,
+    TRAVEL_KEYWORDS,
+    MENSTRUAL_KEYWORDS,
+    HIGH_RISK_COMPLAINT_KEYWORDS,
+    SIMILARITY_STOPWORDS,
+)
 
 logger = logging.getLogger("clinicai")
 
@@ -32,25 +26,69 @@ logger = logging.getLogger("clinicai")
 # AGENT 1: Medical Context Analyzer
 # ============================================================================
 
+class ConditionPropertiesModel(BaseModel):
+    """Pydantic schema for condition_properties returned by Agent-01."""
+
+    is_chronic: Optional[bool] = None
+    is_hereditary: Optional[bool] = None
+    has_complications: Optional[bool] = None
+    is_acute_emergency: Optional[bool] = None
+    is_pain_related: Optional[bool] = None
+    is_womens_health: Optional[bool] = None
+    is_allergy_related: Optional[bool] = None
+    requires_lifestyle_assessment: Optional[bool] = None
+    is_travel_related: Optional[bool] = None
+    severity_level: Optional[str] = Field(default=None, pattern="^(mild|moderate|severe)$")
+    acuity_level: Optional[str] = Field(default=None, pattern="^(acute|subacute|chronic)$")
+    is_new_problem: Optional[bool] = None
+    is_followup: Optional[bool] = None
+
+
+class MedicalContextLLMResponse(BaseModel):
+    """Pydantic schema for Agent-01 LLM JSON response."""
+
+    condition_properties: ConditionPropertiesModel
+    triage_level: Optional[str] = "routine"
+    red_flags: Optional[Dict[str, Any]] = None
+    normalized_complaint: Optional[str] = None
+    priority_topics: List[str] = Field(default_factory=list)
+    avoid_topics: List[str] = Field(default_factory=list)
+    medical_reasoning: str = ""
+    prompt_version: Optional[str] = None
+    core_symptom_phrase: Optional[str] = None
+    topic_plan: List[str] = Field(default_factory=list)
+
+
 @dataclass
 class MedicalContext:
-    """Structured medical context from condition analysis"""
+    """Structured medical context from condition analysis."""
+
+    # Core fields
     chief_complaint: str
-    condition_properties: Dict[str, bool]  # is_chronic, is_hereditary, has_complications, etc.
-    priority_topics: List[str]  # Ordered list of what to ask about
-    avoid_topics: List[str]  # Topics that should NOT be asked
-    medical_reasoning: str  # Why these priorities
+    condition_properties: Dict[str, Any]  # validated via ConditionPropertiesModel
+    priority_topics: List[str]            # Ordered list of what to ask about
+    avoid_topics: List[str]               # Topics that should NOT be asked
+    medical_reasoning: str                # Why these priorities
     patient_age: Optional[int]
     patient_gender: Optional[str]
+
+    # Phase 1 richer context (all optional, LLM-populated when available)
+    severity_level: Optional[str] = None          # "mild" | "moderate" | "severe"
+    acuity_level: Optional[str] = None            # "acute" | "subacute" | "chronic"
+    triage_level: Optional[str] = None            # "routine" | "urgent" | "emergency"
+    normalized_complaint: Optional[str] = None    # Short normalized label, e.g. "type 2 diabetes follow-up"
+    red_flags: Optional[Dict[str, Any]] = None    # Flexible structure for red-flag metadata
+    core_symptom_phrase: Optional[str] = None     # e.g. "blurry vision"
+    topic_plan: List[str] = field(default_factory=list)  # ordered plan from Agent-01
 
 
 class MedicalContextAnalyzer:
     """Agent 1: Analyzes medical context using LLM reasoning"""
-    
+
     def __init__(self, client, settings):
         self._client = client
         self._settings = settings
-    
+
     async def analyze_condition(
         self,
         chief_complaint: str,
@@ -63,152 +101,151 @@ class MedicalContextAnalyzer:
         Analyze the medical condition to understand what information is needed.
         Uses LLM's medical knowledge instead of hardcoded rules.
         """
-        
+
         lang = self._normalize_language(language)
-        
+
         if lang == "sp":
-            system_prompt = """Eres un médico experto analizando una queja principal del paciente.
+            system_prompt = """You are AGENT-01 "MEDICAL CONTEXT ANALYZER" / Clinical Strategist for a clinical intake assistant.
 
-Tu trabajo es determinar QUÉ información médica es esencial recopilar para este caso específico.
+Your ONLY job is to analyze the chief complaint and basic patient info and return a JSON "plan" object.
+You DO NOT write questions for the patient. You decide:
+- what kind of problem this is (chronic/acute, red flags, etc.),
+- which topics are important,
+- in what order they should be asked,
+- and which topics must NOT be asked in this case.
 
-Analiza la condición médicamente y devuelve un análisis estructurado en formato JSON."""
+TOPIC LABELS (DEBES USAR SOLO ESTAS)
+- Allowed topic labels (sensible a mayúsculas/minúsculas, SIEMPRE en inglés):
+  "duration", "associated_symptoms", "symptom_characterization",
+  "current_medications", "pain_assessment", "pain_characterization",
+  "location_radiation", "travel_history", "chronic_monitoring", "screening",
+  "allergies", "past_medical_history", "hpi", "menstrual_cycle",
+  "functional_impact", "daily_impact", "lifestyle_factors",
+  "triggers", "aggravating_factors", "temporal", "progression",
+  "frequency", "past_evaluation", "other", "exploratory", "family_history"
+- DEBES usar SOLO estas etiquetas de temas en priority_topics, avoid_topics y topic_plan.
+- NUNCA inventes nuevas etiquetas. NUNCA traduzcas las etiquetas. Deben permanecer en inglés.
 
+ESQUEMA JSON (DEVUELVE SOLO ESTO)
+Debes devolver UN SOLO objeto JSON con esta estructura:
+{
+  "condition_properties": {
+    "is_chronic": <true/false/null>,
+    "is_hereditary": <true/false/null>,
+    "has_complications": <true/false/null>,
+    "is_acute_emergency": <true/false/null>,
+    "is_pain_related": <true/false/null>,
+    "is_womens_health": <true/false/null>,
+    "is_allergy_related": <true/false/null>,
+    "requires_lifestyle_assessment": <true/false/null>,
+    "is_travel_related": <true/false/null>,
+    "severity_level": "<mild|moderate|severe|null>",
+    "acuity_level": "<acute|subacute|chronic|null>",
+    "is_new_problem": <true/false/null>,
+    "is_followup": <true/false/null>
+  },
+  "triage_level": "<routine|urgent|emergency>",
+  "red_flags": {
+    "possible_emergency": <true/false>,
+    "needs_urgent_attention": <true/false>,
+    "example_flags": ["<frases cortas o vacío>"]
+  },
+  "normalized_complaint": "<etiqueta breve y normalizada para el problema principal>",
+  "core_symptom_phrase": "<frase corta para el síntoma principal o null>",
+  "priority_topics": ["<etiquetas de la lista permitida>", "..."],
+  "avoid_topics": ["<etiquetas de la lista permitida>", "..."],
+  "topic_plan": ["<secuencia ideal de temas, subconjunto de priority_topics>", "..."],
+  "medical_reasoning": "<explicación breve de por qué elegiste estas propiedades y temas>",
+  "prompt_version": "med_ctx_v3"
+}
+
+REGLAS:
+- Sé conservador: si no estás seguro sobre un booleano, usa null en lugar de adivinar.
+- triage_level:
+  - "emergency": dolor de pecho con signos de alarma, dificultad respiratoria severa, síntomas tipo ACV, anafilaxia, etc.
+  - "urgent": alto riesgo pero estable (por ejemplo, malestar torácico que empeora, fiebre alta con signos de alarma).
+  - "routine": la mayoría de las consultas estables.
+- Para niños (<12), evita temas menstruales y enfócate en infección, hidratación, preocupación de los padres, etc.
+- Para pacientes masculinos o edad <12 o >60, NUNCA incluyas "menstrual_cycle" en priority_topics.
+- Para problemas claramente crónicos no infecciosos (por ejemplo, seguimiento de diabetes sin infección), normalmente evita "travel_history".
+
+Devuelve SOLO JSON. Sin comentarios ni explicaciones fuera del JSON.
+
+IMPORTANTE: Las etiquetas de temas deben permanecer EXACTAMENTE en inglés como se listan arriba."""
             user_prompt = f"""
-Analiza esta queja principal del paciente: "{chief_complaint}"
+Analiza la queja principal del paciente: "{chief_complaint}"
 Edad del paciente: {patient_age or "Desconocida"}
 Género del paciente: {patient_gender or "No especificado"}
-Ha viajado recientemente: {"Sí" if recently_travelled else "No"}
+Viajó recientemente: {"Sí" if recently_travelled else "No"}
 
-Realiza un análisis médico completo y devuelve un JSON con esta estructura EXACTA:
-
-REGLAS MÉDICAS PARA PRIORITY_TOPICS (CUMPLE EXACTAMENTE):
-
-PRIORIDAD DE FLUJO - aplica a todas las entrevistas (omite solo lo que no sea relevante):
-   1. Duración - siempre la primera pregunta.
-   2. Medicamentos + cuidados caseros combinados - segunda pregunta; incluye fármacos prescritos y todo lo que el paciente use en casa (OTC, hierbas, remedios).
-   3. Temas de alta prioridad según la enfermedad - aborda inmediatamente después (ver secciones). Si el médico selecciona categorías, cúbrelas primero pero respetando este orden global y eligiendo la pregunta más relevante médicamente.
-   4. Síntomas asociados - solo si aportan valor, máximo 3 preguntas únicas (no reformules).
-   5. Monitoreo crónico - si is_chronic=true, formula exactamente DOS preguntas de monitoreo (lecturas en casa, adherencia, tendencias).
-   6. Detección/complicaciones - si is_chronic=true, formula exactamente UNA pregunta de detección que cite exámenes/laboratorios reales (combina chequeos relacionados en una sola pregunta).
-   7. Otras categorías - cualquier otro tema (impacto funcional, estilo de vida, alergias, desencadenantes, temporalidad, etc.) queda limitado a UNA pregunta por categoría.
-   8. Pregunta de cierre - "algo más" solo después de >=10 preguntas totales o cuando ya no existan temas de alto valor pendientes.
-
-EVITA DUPLICADOS:
-   - No separes apetito, peso y energía en múltiples preguntas; si uno se cubre, omite los demás.
-   - No reformules preguntas ya realizadas; usa el contexto semántico para evitar redundancias.
-
-PRIORIDADES SEGÚN TIPO DE CONDICIÓN (generaliza con criterio clínico):
-
-**Enfermedades crónicas (diabetes, hipertensión, asma, tiroides, cardiopatías, cáncer, EPOC, etc.)**
-   - Alta prioridad: duración, combinación medicamentos/cuidados caseros, monitoreo crónico (2 preguntas), detección/complicaciones (1 pregunta), historia familiar (dentro de las primeras 5), laboratorios/imágenes recientes.
-   - Ejemplos de monitoreo:
-      - Diabetes - registros de glucosa, CGM, HbA1c, hipoglucemias.
-      - Hipertensión - registros de PA domiciliaria, calibración de tensiómetro.
-      - Asma - registros de peak flow, uso de inhalador de rescate, diario de síntomas.
-      - Tiroides - TSH/T4 recientes, frecuencia cardíaca, síntomas de hipo/hipertiroidismo.
-      - Cardiopatías - BP/HR domiciliarios, saturación/oxígeno, control de peso.
-   - Ejemplos de detección/complicaciones (mención en la pregunta):
-      - Diabetes - fondo de ojo, examen de pies, revisión dental, microalbuminuria/eGFR.
-      - Hipertensión - función renal, examen retinal, pruebas cardíacas (ECG/eco/estrés).
-      - Asma - espirometría, panel de alergias, radiografía/TC de tórax, peak flow basal.
-      - Tiroides - examen de cuello/ultrasonido, densitometría ósea, evaluación cardíaca.
-      - Cardiopatías - panel lipídico, pruebas de esfuerzo, Holter/ECG, ecocardiograma.
-      - Cáncer - imágenes (CT/MRI/PET), marcadores tumorales, biopsias, estadificación.
-   - Prioridad media: síntomas asociados, estilo de vida (dieta, ejercicio, tabaco), impacto funcional.
-   - Baja prioridad: viajes, alergias (salvo relación evidente).
-   - Prohibido salvo que el médico lo solicite explícitamente: preguntas genéricas de historial médico/pasos similares en el pasado ("¿Ha tenido episodios parecidos antes?", "¿Qué enfermedades ha tenido?", etc.). Mantén el enfoque en el control actual y el monitoreo.
-   - Combina detección y complicaciones en una sola pregunta rica.
-
-**Condiciones agudas/infecciosas (fiebre, tos, diarrea, infecciones, etc.)**
-   - Alta prioridad: duración, síntomas asociados, medicamentos/cuidados caseros, viajes (solo si hay riesgo), episodios previos similares.
-   - Media: evaluación de dolor (si corresponde), impacto en estilo de vida/aislamiento.
-   - Prohibido: historia familiar, monitoreo/detección crónica.
-
-**Condiciones dolorosas (cefalea, dolor torácico, musculoesquelético)**
-   - Alta prioridad: duración, caracterización del dolor, desencadenantes/alivio, impacto funcional, medicamentos/cuidados caseros, episodios previos similares.
-   - Media: síntomas asociados, factores de estilo de vida (sueño, estrés).
-   - Prohibido: historia familiar, monitoreo crónico (salvo dolor crónico documentado).
-
-**Salud de la mujer (menstruación, fertilidad, embarazo, menopausia, SOP, dolor pélvico)**
-   - Alta prioridad: duración, combinación medicamentos/cuidados caseros, síntomas hormonales/ginecológicos, tamizajes recientes (Pap, mamografía, densitometría, análisis hormonales), historia familiar de cáncer de mama/ovario o trastornos endocrinos (dentro de las primeras 5 si es crónico).
-   - Media: síntomas asociados, estilo de vida, impacto funcional.
-   - Baja: viajes, alergias (salvo relación directa).
-
-ENFOQUE POR EDAD:
-   - <12 años: nunca hacer preguntas menstruales; prioriza causas generales y seguridad.
-   - 10-18: abordar regularidad menstrual, pubertad, SOP, cólicos/pain con la regla.
-   - 19-40: fertilidad, endometriosis, embarazo/obstetricia, alteraciones menstruales.
-   - 41-60: perimenopausia, menopausia, salud ósea, cambios hormonales.
-   - >60: sin preguntas menstruales; enfócate en integración con enfermedades crónicas y tamizajes.
-   - Todas las edades: si hay enfermedad crónica, pregunta historia familiar una vez y en las primeras 5 preguntas.
-
-REGLAS GENERALES:
-   - Respeta estrictamente los límites (síntomas asociados <=3, monitoreo crónico =2, detección =1, resto <=1).
-   - Preguntas de viaje solo si la casilla está marcada y el cuadro clínico lo amerita.
-   - Preguntas menstruales/pregnancy solo con género, edad y síntomas pertinentes.
-   - No formules la pregunta final antes de tiempo.
-   - Las categorías elegidas por el médico tienen prioridad, sin romper el flujo global; elige la pregunta más relevante médicamente dentro de cada categoría seleccionada.
-
-Los ejemplos son ilustrativos: aplica tu mejor criterio clínico para enfermedades raras o complejas usando estas mismas prioridades.
-
-{{
-    "condition_properties": {{
-        "is_chronic": <true/false - ¿Es una condición crónica que dura >3 meses?>,
-        "is_hereditary": <true/false - ¿Tiene componente genético/familiar?>,
-        "has_complications": <true/false - ¿Requiere monitoreo de complicaciones?>,
-        "is_acute_emergency": <true/false - ¿Es aguda y de inicio reciente <2 semanas?>,
-        "is_pain_related": <true/false - ¿El dolor es síntoma principal?>,
-        "is_womens_health": <true/false - ¿Relacionado con salud de la mujer (menstruación, embarazo, ginecología)?>,
-        "is_allergy_related": <true/false - ¿Involucra alergias o reacciones alérgicas?>,
-        "requires_lifestyle_assessment": <true/false - ¿Factores de estilo de vida son relevantes?>
-    }},
-    "priority_topics": [
-        <lista ordenada de temas médicos a explorar según REGLAS arriba>
-        Opciones disponibles (EN ESTE ORDEN EXACTO DE SECUENCIA - solo incluir si es relevante para los síntomas):
-        1. "duración" - SIEMPRE PRIMERO si no se ha preguntado
-        2. "síntomas_asociados", "caracterización_síntomas" - Después de duración (máximo 2-3 preguntas)
-        3. "medicamentos_actuales" - Después de síntomas asociados (incluye medicamentos Y remedios caseros, máximo 1 pregunta)
-        4. "evaluación_dolor", "caracterización_dolor" - Solo si el dolor es parte de los síntomas
-        5. "historial_viajes" - Solo si recently_travelled=True Y síntomas son relevantes para viajes
-        6. "monitoreo_crónico" - Solo para enfermedades crónicas (OBLIGATORIO: hacer exactamente 2 preguntas)
-        7. "detección" - Solo para enfermedades crónicas (OBLIGATORIO: hacer exactamente 1 pregunta sobre exámenes específicos)
-        8. "alergias" - Solo si síntomas relacionados con alergias
-        9. "historial_médico_previo", "hpi" - Solo si es relevante para síntomas actuales O el médico lo seleccionó explícitamente (omitir en seguimientos crónicos) (máximo 1 pregunta)
-        10. "ciclo_menstrual" - SOLO para condiciones de salud de la mujer (NO para hipertensión/diabetes/dolor de cabeza)
-        11. "impacto_funcional", "impacto_diario" - Después de preguntas centrales
-        12. "factores_estilo_vida" - Después de funcional (máximo 1 pregunta)
-        13. "desencadenantes", "factores_agravantes" - Después de estilo de vida
-        14. "temporal", "progresión", "frecuencia" - Después de desencadenantes
-        15. "otros", "exploratorio" - Último, después de todas las categorías anteriores
-        También disponible (agregar cuando sea relevante):
-        "historia_familiar" - OBLIGATORIO para enfermedades crónicas (máximo 1 pregunta)
-        
-        IMPORTANTE:
-        - Sigue esta secuencia ESTRICTAMENTE - NO te saltes categorías anteriores si aún son relevantes
-        - Solo incluye temas que cumplen las REGLAS MÉDICAS arriba Y son relevantes para los síntomas
-        - Revisa brechas de información para ver qué categorías aún se necesitan
-    ],
-    "avoid_topics": [
-        <lista de temas que NO son relevantes para esta condición>
-    ],
-    "medical_reasoning": "<1-2 oraciones explicando el razonamiento médico>"
-}}
-
-REGLAS CRÍTICAS DE SEGURIDAD (no violar):
-1. Si género = masculino → NUNCA incluir "ciclo_menstrual" en priority_topics
-2. Si edad < 12 o > 60 → NUNCA incluir preguntas menstruales
-3. Si "Ha viajado recientemente" = No → NUNCA incluir "historial_viajes" en priority_topics
-4. Priorizar información médicamente relevante según el tipo de condición
-5. Solo incluir temas que son REALMENTE necesarios para evaluar esta condición específica
-
-Devuelve SOLO el JSON, sin texto adicional."""
-
+Realiza un análisis médico completo según las instrucciones del sistema y devuelve SOLO el objeto JSON descrito."""
         else:  # English
-            system_prompt = """You are an expert physician analyzing a patient's chief complaint.
+            system_prompt = """You are AGENT-01 "MEDICAL CONTEXT ANALYZER" / Clinical Strategist for a clinical intake assistant.
 
-Your job is to determine WHAT medical information is essential to collect for this specific case.
+Your ONLY job is to analyze the chief complaint and basic patient info and return a JSON "plan" object.
+You DO NOT write questions for the patient. You decide:
+- what kind of problem this is (chronic/acute, red flags, etc.),
+- which topics are important,
+- in what order they should be asked,
+- and which topics must NOT be asked in this case.
 
-Analyze the condition medically and return a structured analysis in JSON format."""
+TOPIC LABELS (MUST USE THESE ONLY)
+- Allowed topic labels (case-sensitive, always English):
+  "duration", "associated_symptoms", "symptom_characterization",
+  "current_medications", "pain_assessment", "pain_characterization",
+  "location_radiation", "travel_history", "chronic_monitoring", "screening",
+  "allergies", "past_medical_history", "hpi", "menstrual_cycle",
+  "functional_impact", "daily_impact", "lifestyle_factors",
+  "triggers", "aggravating_factors", "temporal", "progression",
+  "frequency", "past_evaluation", "other", "exploratory", "family_history"
+- You MUST only use these topic labels in priority_topics, avoid_topics, and topic_plan.
+- NEVER invent new topic labels. NEVER translate labels. They must stay in English.
+
+JSON SCHEMA (RETURN THIS ONLY)
+You MUST return ONE JSON object with this structure:
+{
+  "condition_properties": {
+    "is_chronic": <true/false/null>,
+    "is_hereditary": <true/false/null>,
+    "has_complications": <true/false/null>,
+    "is_acute_emergency": <true/false/null>,
+    "is_pain_related": <true/false/null>,
+    "is_womens_health": <true/false/null>,
+    "is_allergy_related": <true/false/null>,
+    "requires_lifestyle_assessment": <true/false/null>,
+    "is_travel_related": <true/false/null>,
+    "severity_level": "<mild|moderate|severe|null>",
+    "acuity_level": "<acute|subacute|chronic|null>",
+    "is_new_problem": <true/false/null>,
+    "is_followup": <true/false/null>
+  },
+  "triage_level": "<routine|urgent|emergency>",
+  "red_flags": {
+    "possible_emergency": <true/false>,
+    "needs_urgent_attention": <true/false>,
+    "example_flags": [ "<short phrases or empty>" ]
+  },
+  "normalized_complaint": "<short normalized label for the main problem>",
+  "core_symptom_phrase": "<short phrase for main symptom or null>",
+  "priority_topics": ["<topic label from the allowed list>", "..."],
+  "avoid_topics": ["<topic label from the allowed list>", "..."],
+  "topic_plan": ["<ideal questioning sequence, subset of priority_topics>", "..."],
+  "medical_reasoning": "<short explanation of why you chose these properties and topics>",
+  "prompt_version": "med_ctx_v3"
+}
+
+RULES:
+- Be conservative: if unsure about a boolean, use null instead of guessing.
+- triage_level:
+  - "emergency": chest pain with red-flag features, severe breathing difficulty, stroke-like symptoms, anaphylaxis, etc.
+  - "urgent": high-risk but stable (e.g. worsening chest discomfort, high fever with red flags).
+  - "routine": most stable consultations.
+- For children (<12), avoid menstrual topics and focus on infection, hydration, parental concern, etc.
+- For males or for age <12 or >60, NEVER include "menstrual_cycle" in priority_topics.
+- For clearly chronic non-infectious problems (e.g. diabetes follow-up without infection), usually avoid "travel_history".
+
+IMPORTANT: Topic labels MUST remain EXACTLY in English as listed above.
+Return ONLY JSON, no commentary or explanation outside the JSON."""
 
             user_prompt = f"""
 Analyze this patient's chief complaint: "{chief_complaint}"
@@ -216,131 +253,7 @@ Patient age: {patient_age or "Unknown"}
 Patient gender: {patient_gender or "Not specified"}
 Recently traveled: {"Yes" if recently_travelled else "No"}
 
-Perform a comprehensive medical analysis and return a JSON with this EXACT structure:
-
-MEDICAL RULES FOR PRIORITY_TOPICS (FOLLOW EXACTLY):
-
-FLOW PRIORITY - apply to every intake (skip only when medically irrelevant):
-   1. Duration - must be the very first question.
-   2. Combined medications + home/self-care - second question, covering prescriptions AND over-the-counter/herbal/home remedies in one question.
-   3. Disease-specific high-priority items - ask next (see sections below). If the doctor supplied selected categories, address those first while keeping this global order. Within a selected category, choose the question a general physician would prioritise.
-   4. Associated symptoms - only if relevant, maximum 3 unique questions (never rephrase the same symptom).
-   5. Chronic monitoring - if is_chronic=true, ask exactly TWO monitoring questions (home logs, device readings, treatment adherence, trend tracking).
-   6. Chronic screening/complications - if is_chronic=true, ask exactly ONE screening question referencing real exams/labs (combine related checks in a single question).
-   7. Other categories - everything else (functional impact, lifestyle, allergies, triggers, temporal progression, etc.) is limited to ONE question each.
-   8. Closing question - "anything else" only after >=10 total questions or when no high-value topics remain.
-
-DUPLICATE SAFEGUARDS:
-   - Never split appetite/weight/energy across separate questions; once one is covered, do not ask the others.
-   - Do not rephrase previously covered information; rely on semantic understanding to avoid duplicates.
-
-CONDITION-SPECIFIC PRIORITIES (examples generalise to similar illnesses; adapt using clinical reasoning):
-
-**Chronic diseases (diabetes, hypertension, asthma, thyroid, heart disease, cancer, COPD, etc.)**
-   - High priority (ask early): duration, combined meds/home care, chronic monitoring (2 questions), screening/complication exam (1 question), family history (within first 5), recent labs/imaging.
-   - Monitoring examples:
-      - Diabetes - home glucose logs, CGM trends, HbA1c, hypoglycaemia episodes.
-      - Hypertension - home BP logs, cuff calibration, sudden spikes.
-      - Asthma - peak-flow records, rescue inhaler frequency, symptom diary.
-      - Thyroid - recent TSH/FT4 results, heart rate checks.
-      - Heart disease - BP/HR logs, home oxygen use if applicable.
-   - Screening/complication examples (reference real tests in the screening question):
-      - Diabetes - eye exam, foot exam, dental check, kidney labs (microalbumin, eGFR).
-      - Hypertension - kidney function labs, retinal exam, cardiac imaging/stress tests.
-      - Asthma - pulmonary function test, allergy panels, chest imaging, baseline peak-flow.
-      - Thyroid - neck exam/ultrasound, bone density, cardiac rhythm evaluation.
-      - Heart disease - lipid panel, stress test, echocardiogram, Holter/ECG.
-      - Cancer - imaging (CT/MRI/PET), tumour markers, biopsies, staging labs.
-   - Medium priority: associated symptoms, lifestyle factors (diet, exercise, smoking), functional impact.
-   - Low priority: travel history, allergies (unless clearly linked).
-   - Forbidden unless clinician explicitly requests: generic past medical history questions ("Have you experienced this before?", "Any similar episodes in the past?", "What past conditions have you had?"). Stay focused on current control and monitoring.
-   - Combine screening + complication context in ONE rich question.
-
-**Acute infections (fever, cough, gastroenteritis, URI, etc.)**
-   - High priority: duration, associated symptoms, combined meds/home care, travel history (only if risk factors), past similar episodes.
-   - Medium: pain assessment (when applicable), lifestyle/contagion considerations.
-   - Forbidden: family history, chronic monitoring/screening.
-
-**Pain conditions (headache, chest pain, musculoskeletal pain)**
-   - High priority: duration, pain character/severity, triggers/relieving factors, functional impact, combined meds/home care, past similar episodes.
-   - Medium: associated symptoms, lifestyle factors (sleep, stress).
-   - Forbidden: family history, chronic monitoring (unless chronic pain management is the focus).
-
-**Women's health (menstrual, fertility, pregnancy, menopause, PCOS, pelvic pain)**
-   - High priority: duration, combined meds/home care, hormonal/gynecologic symptoms, recent screenings (Pap smear, pelvic exam, mammogram, bone density, hormone panels), family history of breast/ovarian/endocrine cancers (within first 5 if chronic context).
-   - Medium: associated symptoms, lifestyle, functional impact.
-   - Low: travel, allergies (unless related).
-
-AGE-FOCUSED GUIDANCE:
-   - <12 years: never ask menstrual questions; emphasise general causes and safety.
-   - 10-18: include puberty, cycle regularity, PCOS, cramps when relevant.
-   - 19-40: fertility, endometriosis, pregnancy history, menstrual irregularities.
-   - 41-60: perimenopause, menopause, hormone changes, bone health.
-   - >60: no menstrual questions; focus on chronic disease interplay and relevant screenings.
-   - All ages: when chronic disease present, ask family history once early (within first 5).
-
-GENERAL RULES:
-   - Respect per-category limits strictly (associated symptoms <=3, chronic monitoring =2, screening =1, every other category <=1).
-   - Travel questions only when checkbox is true AND symptoms justify it.
-   - Menstrual/pregnancy questions require appropriate gender, age, and symptom relevance.
-   - Never ask the final "anything else" question prematurely.
-   - Doctor-selected categories override the generic order, but do NOT violate the flow; choose the most medically relevant question within each selected category.
-
-Examples are illustrative—always apply best clinical reasoning for any condition, including rare or complex presentations.
-
-IMPORTANT: These examples are illustrative—always apply your best clinical reasoning for any condition.
-
-{{
-    "condition_properties": {{
-        "is_chronic": <true/false - Is this a chronic condition lasting >3 months?>,
-        "is_hereditary": <true/false - Does it have genetic/familial component?>,
-        "has_complications": <true/false - Does it require complication monitoring?>,
-        "is_acute_emergency": <true/false - Is it acute with recent onset <2 weeks?>,
-        "is_pain_related": <true/false - Is pain the primary symptom?>,
-        "is_womens_health": <true/false - Related to women's health (menstruation, pregnancy, gynecology)?>,
-        "is_allergy_related": <true/false - Involves allergies or allergic reactions?>,
-        "requires_lifestyle_assessment": <true/false - Are lifestyle factors relevant?>
-    }},
-    "priority_topics": [
-        <ordered list of medical topics to explore according to RULES above>
-        Available options (IN THIS EXACT SEQUENCE ORDER - only include if relevant to symptoms):
-        1. "duration" - ALWAYS FIRST if not already asked
-        2. "associated_symptoms", "symptom_characterization" - After duration (2-3 questions max)
-        3. "current_medications" - After associated symptoms (includes medications AND home remedies, 1 question max)
-        4. "pain_assessment", "pain_characterization" - Only if pain is part of symptoms
-        5. "travel_history" - Only if recently_travelled=True AND symptoms are travel-relevant
-        6. "chronic_monitoring" - Only for chronic diseases (MANDATORY: ask exactly 2 questions)
-        7. "screening" - Only for chronic diseases (MANDATORY: ask exactly 1 question about specific exams/checkups)
-        8. "allergies" - Only if allergy-related symptoms
-        9. "past_medical_history", "hpi" - Only if relevant to current symptoms OR doctor explicitly selected it (skip for chronic follow-up)
-        10. "menstrual_cycle" - ONLY for women's health conditions (NOT for hypertension/diabetes/headache)
-        11. "functional_impact", "daily_impact" - After core questions
-        12. "lifestyle_factors" - After functional (1 question max)
-        13. "triggers", "aggravating_factors" - After lifestyle
-        14. "temporal", "progression", "frequency" - After triggers
-        15. "other", "exploratory" - Last, after all above categories
-        Also available (add when relevant):
-        "family_history" - MANDATORY for chronic diseases (1 question max)
-        
-        IMPORTANT: 
-        - Follow this sequence STRICTLY - do NOT skip ahead to later categories if earlier ones are still relevant
-        - Only include topics that meet the MEDICAL RULES above AND are relevant to the symptoms
-        - Check information_gaps to see which categories are still needed
-    ],
-    "avoid_topics": [
-        <list of topics that are NOT relevant for this condition>
-    ],
-    "medical_reasoning": "<1-2 sentences explaining the medical reasoning>"
-}}
-
-CRITICAL SAFETY RULES (do not violate):
-1. If gender = male → NEVER include "menstrual_cycle" in priority_topics
-2. If age < 12 or > 60 → NEVER include menstrual questions
-3. If "Recently traveled" = No → NEVER include "travel_history" in priority_topics
-4. Prioritize medically relevant information based on condition type
-5. Only include topics that are TRULY necessary to evaluate this specific condition
-
-Return ONLY the JSON, no additional text."""
+Perform a comprehensive medical analysis following the system instructions and return ONLY the JSON object described."""
 
         try:
             response = await self._client.chat(
@@ -350,47 +263,136 @@ Return ONLY the JSON, no additional text."""
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=800,
-                temperature=0.2,  # Low temperature for consistency
+                temperature=0.2,
             )
-            
-            # Extract text from response object
+
             response_text = response.choices[0].message.content.strip()
-            
-            # Parse JSON response
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if not json_match:
-                raise ValueError("No JSON found in response")
-            
-            analysis = json.loads(json_match.group())
-            
-            # Validate and enforce hard constraints
+                logger.error("Agent 1: No JSON found in response: %s", response_text[:200])
+                return self._create_fallback_context(
+                    chief_complaint, patient_age, patient_gender, recently_travelled
+                )
+
+            # Parse and validate JSON via Pydantic schema
+            try:
+                raw = json.loads(json_match.group())
+                parsed = MedicalContextLLMResponse.model_validate(raw)
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.error("Agent 1: JSON/validation error: %s", e)
+                return self._create_fallback_context(
+                    chief_complaint, patient_age, patient_gender, recently_travelled
+                )
+
+            # ---- Phase 1: normalize new rich fields (triage, severity, acuity, red_flags, normalized_complaint) ----
+            condition_properties = parsed.condition_properties.model_dump()
+
+            # Severity and acuity inside condition_properties
+            severity = condition_properties.get("severity_level")
+            if severity not in {"mild", "moderate", "severe"}:
+                severity = None
+
+            acuity = condition_properties.get("acuity_level")
+            if acuity not in {"acute", "subacute", "chronic"}:
+                acuity = None
+
+            condition_properties["severity_level"] = severity
+            condition_properties["acuity_level"] = acuity
+
+            # Triage level: clamp to allowed values
+            triage_level = parsed.triage_level or "routine"
+            allowed_triage = {"routine", "urgent", "emergency"}
+            if triage_level not in allowed_triage:
+                triage_level = "routine"
+
+            # Topics and reasoning (clamped to allow-list)
+            priority_topics_raw = parsed.priority_topics or []
+            avoid_topics_raw = parsed.avoid_topics or []
+            topic_plan_raw = parsed.topic_plan or []
+            medical_reasoning = parsed.medical_reasoning or ""
+
+            allowed_topics_set = set(ALLOWED_TOPICS)
+            unknown_topics = (
+                set(priority_topics_raw)
+                .union(avoid_topics_raw)
+                .union(topic_plan_raw)
+                - allowed_topics_set
+            )
+            if unknown_topics:
+                logger.warning(
+                    "Agent 1: Dropping unknown topic labels from LLM: %s",
+                    sorted(unknown_topics),
+                )
+
+            priority_topics = [t for t in priority_topics_raw if t in allowed_topics_set]
+            avoid_topics = [t for t in avoid_topics_raw if t in allowed_topics_set]
+            # topic_plan must be subset of priority_topics and allowed topics
+            priority_set = set(priority_topics)
+            topic_plan = [t for t in topic_plan_raw if t in priority_set and t in allowed_topics_set]
+
+            # Other optional rich fields
+            red_flags = parsed.red_flags or None
+            normalized_complaint = parsed.normalized_complaint or None
+            core_symptom_phrase = parsed.core_symptom_phrase or None
+
+            # Build analysis dict for safety constraints and logging
+            analysis: Dict[str, Any] = {
+                "chief_complaint": chief_complaint,
+                "condition_properties": condition_properties,
+                "priority_topics": priority_topics,
+                "avoid_topics": avoid_topics,
+                "medical_reasoning": medical_reasoning,
+            }
+
+            # Apply hard safety constraints (travel, family history, PMH/allergies, menstrual)
             analysis = self._enforce_safety_constraints(
-                analysis, 
-                patient_age, 
+                analysis,
+                patient_age,
                 patient_gender,
                 recently_travelled
             )
-            
+
+            # Enhanced logging: log full condition properties and topics after safety constraints
             logger.info(
-                f"Medical context analysis: {analysis['condition_properties']}, "
-                f"Priority topics: {analysis['priority_topics']}"
+                f"Medical context analysis completed - "
+                f"chief_complaint: '{chief_complaint}', "
+                f"is_travel_related: {analysis['condition_properties'].get('is_travel_related')}, "
+                f"recently_travelled: {recently_travelled}, "
+                f"condition_properties: {json.dumps(analysis['condition_properties'], indent=2)}, "
+                f"priority_topics: {analysis['priority_topics']}, "
+                f"avoid_topics: {analysis.get('avoid_topics', [])}"
             )
-            
+
+            # Additional compact log for triage summary
+            logger.info(
+                "Medical context triage summary - triage_level=%s, severity=%s, acuity=%s, normalized_complaint='%s'",
+                triage_level,
+                severity,
+                acuity,
+                normalized_complaint or "",
+            )
+
             return MedicalContext(
                 chief_complaint=chief_complaint,
                 condition_properties=analysis["condition_properties"],
                 priority_topics=analysis["priority_topics"],
                 avoid_topics=analysis.get("avoid_topics", []),
-                medical_reasoning=analysis.get("medical_reasoning", ""),
+                medical_reasoning=medical_reasoning,
                 patient_age=patient_age,
-                patient_gender=patient_gender
+                patient_gender=patient_gender,
+                severity_level=severity,
+                acuity_level=acuity,
+                triage_level=triage_level,
+                normalized_complaint=normalized_complaint,
+                red_flags=red_flags,
+                core_symptom_phrase=core_symptom_phrase,
+                topic_plan=topic_plan,
             )
-            
+
         except Exception as e:
             logger.error(f"Medical context analysis failed: {e}")
-            # Fallback to conservative approach
             return self._create_fallback_context(chief_complaint, patient_age, patient_gender, recently_travelled)
-    
+
     def _enforce_safety_constraints(
         self,
         analysis: Dict[str, Any],
@@ -398,53 +400,128 @@ Return ONLY the JSON, no additional text."""
         patient_gender: Optional[str],
         recently_travelled: bool = False
     ) -> Dict[str, Any]:
-        """Enforce hard safety constraints that cannot be violated"""
-        
+        """
+        Enforce hard safety constraints that cannot be violated.
+
+        This method enforces conditional topic rules:
+        - Travel history: only if recently_travelled AND is_travel_related
+        - Family history: only if condition is chronic or hereditary
+        - PMH/allergies: only if chronic, allergy-related, or high-risk
+        """
         priority_topics = analysis.get("priority_topics", [])
         avoid_topics = analysis.get("avoid_topics", [])
+        condition_props = analysis.get("condition_properties", {})
+        chief_complaint = analysis.get("chief_complaint", "")
+
+        # NEW: Detect travel-illness keywords vs chronic non-infectious conditions
+        chief_complaint_lower = (chief_complaint or "").lower()
+        travel_illness_keywords = [
+            "fever", "diarrhea", "loose motion", "vomiting", "stomach pain",
+            "infection", "malaria", "dengue", "chikungunya", "jaundice", "rash"
+        ]
+        chronic_non_infectious_keywords = [
+            "diabetes", "hypertension", "high blood pressure", "asthma", "copd",
+            "chronic", "heart failure", "ckd", "chronic kidney", "thyroid"
+        ]
+
+        looks_like_travel_illness = any(kw in chief_complaint_lower for kw in travel_illness_keywords)
+        is_chronic_non_infectious = any(kw in chief_complaint_lower for kw in chronic_non_infectious_keywords)
+
+        # Override is_travel_related for chronic non-infectious conditions
+        is_travel_related = condition_props.get("is_travel_related", False)
+        if is_chronic_non_infectious and not looks_like_travel_illness:
+            condition_props["is_travel_related"] = False
+            logger.info(
+                f"Overrode is_travel_related=False for chronic non-infectious condition: "
+                f"chief_complaint='{chief_complaint_lower}', "
+                f"chronic_keywords_matched={[kw for kw in chronic_non_infectious_keywords if kw in chief_complaint_lower]}"
+            )
+
+        # HARD CONSTRAINT: Travel history only if patient travelled AND symptoms are travel-related
+        is_travel_related = condition_props.get("is_travel_related", False)
+        if not recently_travelled or not is_travel_related:
+            for key in ["travel_history", "historial_viajes"]:
+                if key in priority_topics:
+                    priority_topics.remove(key)
+                if key not in avoid_topics:
+                    avoid_topics.append(key)
+            if not recently_travelled:
+                logger.info(
+                    f"Safety constraint: Removed travel_history from priority_topics "
+                    f"(reason: patient has not traveled recently, recently_travelled={recently_travelled}, "
+                    f"chief_complaint='{chief_complaint_lower}')"
+                )
+            elif not is_travel_related:
+                logger.info(
+                    f"Safety constraint: Removed travel_history from priority_topics "
+                    f"(reason: symptoms are not travel-related, is_travel_related={is_travel_related}, "
+                    f"chronic_non_infectious={is_chronic_non_infectious}, chief_complaint='{chief_complaint_lower}')"
+                )
+
+        # HARD CONSTRAINT: Family history only for hereditary/chronic conditions
+        is_hereditary = condition_props.get("is_hereditary", False)
+        is_chronic = condition_props.get("is_chronic", False)
+        removed_family = False
+        if not (is_hereditary or is_chronic):
+            for key in ["family_history"]:
+                if key in priority_topics:
+                    priority_topics.remove(key)
+                    removed_family = True
+                if key not in avoid_topics:
+                    avoid_topics.append(key)
+            logger.info(
+                f"Safety constraint: Removed family_history from priority_topics "
+                f"(reason: condition is not hereditary/chronic, is_hereditary={is_hereditary}, is_chronic={is_chronic})"
+            )
+
+        # HARD CONSTRAINT: PMH/allergies only when medically relevant
+        is_allergy_related = condition_props.get("is_allergy_related", False)
+        is_chronic = condition_props.get("is_chronic", False)
+        # High-risk conditions that require PMH/allergy screening
+        chief_complaint_lower = (analysis.get("chief_complaint", "") or "").lower()
+        high_risk_keywords = ["chest pain", "shortness of breath", "anaphylaxis", "allergic reaction", "medication", "prescription"]
+        is_high_risk = any(kw in chief_complaint_lower for kw in high_risk_keywords)
         
-        # HARD CONSTRAINT 1: Male patients - no menstrual questions
-        if patient_gender and patient_gender.lower() in ["male", "m", "masculino", "hombre"]:
-            if "menstrual_cycle" in priority_topics:
-                priority_topics.remove("menstrual_cycle")
-            if "ciclo_menstrual" in priority_topics:
-                priority_topics.remove("ciclo_menstrual")
-            if "menstrual_cycle" not in avoid_topics:
-                avoid_topics.append("menstrual_cycle")
-            if "ciclo_menstrual" not in avoid_topics:
-                avoid_topics.append("ciclo_menstrual")
-            logger.warning("Removed menstrual questions for male patient (safety constraint)")
+        should_ask_pmh_allergy = is_chronic or is_allergy_related or is_high_risk
+        removed_pmh_allergy = False
         
-        # HARD CONSTRAINT 2: Age-based menstrual filtering
-        if patient_age is not None:
-            if patient_age < 12 or patient_age > 60:
-                if "menstrual_cycle" in priority_topics:
-                    priority_topics.remove("menstrual_cycle")
-                if "ciclo_menstrual" in priority_topics:
-                    priority_topics.remove("ciclo_menstrual")
-                if "menstrual_cycle" not in avoid_topics:
-                    avoid_topics.append("menstrual_cycle")
-                if "ciclo_menstrual" not in avoid_topics:
-                    avoid_topics.append("ciclo_menstrual")
-                logger.warning(f"Removed menstrual questions for age {patient_age} (safety constraint)")
-        
-        # HARD CONSTRAINT 3: Travel history only if patient traveled
-        if not recently_travelled:
-            if "travel_history" in priority_topics:
-                priority_topics.remove("travel_history")
-            if "historial_viajes" in priority_topics:
-                priority_topics.remove("historial_viajes")
-            if "travel_history" not in avoid_topics:
-                avoid_topics.append("travel_history")
-            if "historial_viajes" not in avoid_topics:
-                avoid_topics.append("historial_viajes")
-            logger.info("Removed travel_history - patient has not traveled recently (safety constraint)")
-        
+        if not should_ask_pmh_allergy:
+            for key in ["past_medical_history", "allergies"]:
+                if key in priority_topics:
+                    priority_topics.remove(key)
+                    removed_pmh_allergy = True
+                if key not in avoid_topics:
+                    avoid_topics.append(key)
+            logger.info(
+                f"Safety constraint: Removed PMH/allergies from priority_topics "
+                f"(reason: not medically relevant, is_chronic={is_chronic}, "
+                f"is_allergy_related={is_allergy_related}, is_high_risk={is_high_risk})"
+            )
+
+        # HARD CONSTRAINT: Menstrual questions filtered by age & gender
+        if patient_gender:
+            gender_lower = patient_gender.lower()
+            question_menstrual_topics = ["menstrual_cycle", "ciclo_menstrual"]
+            if gender_lower in ["male", "m", "masculino", "hombre"]:
+                for key in question_menstrual_topics:
+                    if key in priority_topics:
+                        priority_topics.remove(key)
+                    if key not in avoid_topics:
+                        avoid_topics.append(key)
+                logger.warning("Removed menstrual questions for male patient (safety constraint)")
+
+        if patient_age is not None and (patient_age < 12 or patient_age > 60):
+            for key in ["menstrual_cycle", "ciclo_menstrual"]:
+                if key in priority_topics:
+                    priority_topics.remove(key)
+                if key not in avoid_topics:
+                    avoid_topics.append(key)
+            logger.warning(f"Removed menstrual questions for age {patient_age} (safety constraint)")
+
         analysis["priority_topics"] = priority_topics
-        analysis["avoid_topics"] = list(set(avoid_topics))  # Remove duplicates
-        
+        analysis["avoid_topics"] = list(set(avoid_topics))
         return analysis
-    
+
     def _create_fallback_context(
         self,
         chief_complaint: str,
@@ -452,28 +529,34 @@ Return ONLY the JSON, no additional text."""
         patient_gender: Optional[str],
         recently_travelled: bool = False
     ) -> MedicalContext:
-        """Create safe fallback context if analysis fails"""
-        
+        """Safe fallback context if analysis fails completely."""
+
         priority_topics = [
             "duration",
             "current_medications",
             "symptom_characterization",
-            "associated_symptoms"
+            "associated_symptoms",
         ]
-        
-        avoid_topics = []
-        
-        # Apply safety constraints
+
+        # If the main complaint is pain, ensure we ask about location & radiation early
+        chief_lower = (chief_complaint or "").lower()
+        if "pain" in chief_lower and "location_radiation" not in priority_topics:
+            insert_idx = 2 if len(priority_topics) >= 2 else len(priority_topics)
+            priority_topics.insert(insert_idx, "location_radiation")
+
+        avoid_topics: List[str] = []
+
         is_male = patient_gender and patient_gender.lower() in ["male", "m", "masculino", "hombre"]
         age_inappropriate = patient_age and (patient_age < 12 or patient_age > 60)
-        
+
         if is_male or age_inappropriate:
             avoid_topics.extend(["menstrual_cycle", "ciclo_menstrual"])
-        
-        # Apply travel constraint
+
         if not recently_travelled:
             avoid_topics.extend(["travel_history", "historial_viajes"])
-        
+
+        topic_plan = list(priority_topics)
+
         return MedicalContext(
             chief_complaint=chief_complaint,
             condition_properties={
@@ -481,20 +564,29 @@ Return ONLY the JSON, no additional text."""
                 "is_hereditary": False,
                 "has_complications": False,
                 "is_acute_emergency": True,
-                "is_pain_related": False,
+                "is_pain_related": "pain" in chief_lower,
                 "is_womens_health": False,
                 "is_allergy_related": False,
-                "requires_lifestyle_assessment": False
+                "requires_lifestyle_assessment": False,
+                "is_travel_related": False,  # Default to False in fallback
+                "severity_level": None,
+                "acuity_level": None,
             },
             priority_topics=priority_topics,
             avoid_topics=avoid_topics,
             medical_reasoning="Using conservative fallback approach",
             patient_age=patient_age,
-            patient_gender=patient_gender
+            patient_gender=patient_gender,
+            severity_level=None,
+            acuity_level=None,
+            triage_level="routine",
+            normalized_complaint=None,
+            red_flags=None,
+            core_symptom_phrase=None,
+            topic_plan=topic_plan,
         )
-    
+
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code"""
         if not language:
             return "en"
         normalized = language.lower().strip()
@@ -510,22 +602,22 @@ Return ONLY the JSON, no additional text."""
 @dataclass
 class ExtractedInformation:
     """Information already collected from patient"""
-    topics_covered: List[str]  # What has been asked
-    information_gaps: List[str]  # What's still needed
-    extracted_facts: Dict[str, str]  # Key facts from answers
+    topics_covered: List[str]
+    information_gaps: List[str]
+    extracted_facts: Dict[str, str]
     already_mentioned_duration: bool
     already_mentioned_medications: bool
     redundant_categories: List[str]
-    topic_counts: Optional[Dict[str, int]] = None  # Count of how many times each topic was asked
+    topic_counts: Optional[Dict[str, int]] = None
 
 
 class AnswerExtractor:
     """Agent 2: Extracts information from previous Q&A to avoid redundancy"""
-    
+
     def __init__(self, client, settings):
         self._client = client
         self._settings = settings
-    
+
     async def extract_covered_information(
         self,
         asked_questions: List[str],
@@ -533,12 +625,7 @@ class AnswerExtractor:
         medical_context: MedicalContext,
         language: str = "en"
     ) -> ExtractedInformation:
-        """
-        Analyze ALL Q&A pairs to understand what's been covered.
-        Prevents asking redundant questions by tracking all previously asked topics.
-        """
-        
-        # Get ALL Q&A pairs for comprehensive duplicate checking
+
         all_qa = []
         for i in range(len(asked_questions)):
             if i < len(previous_answers):
@@ -546,8 +633,7 @@ class AnswerExtractor:
                     "question": asked_questions[i],
                     "answer": previous_answers[i]
                 })
-        
-        # Get last 3 Q&A pairs for detailed context analysis
+
         recent_qa = []
         for i in range(max(0, len(asked_questions) - 3), len(asked_questions)):
             if i < len(previous_answers):
@@ -555,9 +641,8 @@ class AnswerExtractor:
                     "question": asked_questions[i],
                     "answer": previous_answers[i]
                 })
-        
+
         if not all_qa:
-            # No previous Q&A, nothing covered yet
             return ExtractedInformation(
                 topics_covered=[],
                 information_gaps=medical_context.priority_topics,
@@ -567,14 +652,57 @@ class AnswerExtractor:
                 redundant_categories=[],
                 topic_counts=None
             )
-        
+
         lang = self._normalize_language(language)
-        
+
         if lang == "sp":
-            system_prompt = """Eres un asistente médico analizando respuestas de admisión del paciente.
+            system_prompt = """Eres AGENT-02 "COVERAGE & FACT EXTRACTOR" para un asistente de admisión clínica.
 
-Tu trabajo es extraer QUÉ información ya se ha recopilado para evitar preguntas redundantes."""
+Tu ÚNICO trabajo es revisar todas las preguntas y respuestas previas, junto con el plan de Agent-01, y decidir:
+- qué temas ya están cubiertos,
+- qué temas son claramente redundantes,
+- qué temas del topic_plan todavía necesitan preguntarse.
 
+No creas nuevas preguntas para el paciente.
+Solo resumes la cobertura actual.
+
+Etiquetas de temas permitidas (mismas que Agent-01, NO inventes etiquetas nuevas):
+"duration", "associated_symptoms", "symptom_characterization",
+"current_medications", "pain_assessment", "pain_characterization",
+"location_radiation", "travel_history", "chronic_monitoring", "screening",
+"allergies", "past_medical_history", "hpi", "menstrual_cycle",
+"functional_impact", "daily_impact", "lifestyle_factors",
+"triggers", "aggravating_factors", "temporal", "progression",
+"frequency", "past_evaluation", "other", "exploratory", "family_history"
+
+ESQUEMA JSON:
+{
+  "topics_covered": ["<etiqueta de tema>", "..."],
+  "information_gaps": ["<etiqueta de tema>", "..."],
+  "extracted_facts": {
+    "duration": "<texto o null>",
+    "medications": "<texto o null>",
+    "pain_severity": "<texto o null>",
+    "associated_symptoms": "<texto o null>"
+  },
+  "already_mentioned_duration": <true/false>,
+  "already_mentioned_medications": <true/false>,
+  "redundant_categories": ["<etiqueta de tema>", "..."]
+}
+
+REGLAS:
+- topics_covered: temas donde hubo AL MENOS una pregunta clara y directa con respuesta.
+- information_gaps:
+  - DEBEN ser un subconjunto de medical_context.priority_topics.
+  - DEBEN excluir todo lo que esté en medical_context.avoid_topics.
+  - Deben seguir aproximadamente el orden de medical_context.topic_plan.
+- duration, current_medications, travel_history y daily_impact son "UNA SOLA VEZ":
+  - Una vez haya habido una pregunta clara y enfocada sobre el tema, márcalo como cubierto y agrégalo a redundant_categories.
+- Sé conservador con redundant_categories:
+  - Solo marca un tema como redundante si hubo una pregunta DIRECTA y enfocada con una respuesta clara.
+  - En caso de duda, NO lo incluyas en redundant_categories.
+
+Devuelve SOLO JSON, sin texto adicional."""
             user_prompt = f"""
 TODAS LAS PREGUNTAS Y RESPUESTAS (para verificación de duplicados):
 {self._format_qa_pairs(all_qa)}
@@ -586,70 +714,94 @@ Contexto médico:
 - Queja principal: {medical_context.chief_complaint}
 - Temas prioritarios a cubrir: {medical_context.priority_topics}
 
-TAREA IMPORTANTE: Analiza TODAS las {len(all_qa)} preguntas arriba para determinar qué información YA se ha recopilado.
+TAREA IMPORTANTE: Analiza TODAS las {len(all_qa)} preguntas anteriores para determinar qué información YA se ha recopilado.
 
 Devuelve un JSON con esta estructura EXACTA:
 
 {{
     "topics_covered": [
-        <lista de temas que YA fueron preguntados/respondidos EN CUALQUIER PREGUNTA>
-        Opciones (en orden de secuencia): "duración", "síntomas_asociados", "caracterización_síntomas",
-                 "medicamentos_actuales", "evaluación_dolor", "caracterización_dolor",
-                 "historial_viajes", "monitoreo_crónico", "detección", "alergias",
-                 "historial_médico_previo", "hpi", "ciclo_menstrual", "impacto_funcional",
-                 "impacto_diario", "factores_estilo_vida", "desencadenantes", "factores_agravantes",
-                 "temporal", "progresión", "frecuencia", "otros", "exploratorio",
-                 "historia_familiar"
+        "duration",
+        "associated_symptoms"
     ],
     "information_gaps": [
-        <lista de temas prioritarios que AÚN NO se han preguntado>
+        "current_medications"
     ],
     "extracted_facts": {{
-        "duration": "<si se mencionó duración EN CUALQUIER RESPUESTA, extrae aquí (ej. '3 semanas'), sino null>",
-        "medications": "<si se mencionaron medicamentos EN CUALQUIER RESPUESTA, lista aquí, sino null>",
-        "pain_severity": "<si se mencionó severidad EN CUALQUIER RESPUESTA (1-10), sino null>",
-        "associated_symptoms": "<si se mencionaron síntomas EN CUALQUIER RESPUESTA, lista aquí, sino null>"
+        "duration": "<si se mencionó duración EN CUALQUIER RESPUESTA, extrae aquí (p. ej. '3 semanas'), si no null>",
+        "medications": "<si se mencionaron medicamentos EN CUALQUIER RESPUESTA, lista aquí, si no null>",
+        "pain_severity": "<si se mencionó severidad del dolor EN CUALQUIER RESPUESTA (1-10), si no null>",
+        "associated_symptoms": "<si se mencionaron síntomas asociados EN CUALQUIER RESPUESTA, lista aquí, si no null>"
     }},
-    "already_mentioned_duration": <true/false - ¿El paciente ya mencionó duración EN CUALQUIER RESPUESTA?>,
-    "already_mentioned_medications": <true/false - ¿Ya se preguntó sobre medicamentos EN CUALQUIER PREGUNTA?>,
+    "already_mentioned_duration": <true/false>,
+    "already_mentioned_medications": <true/false>,
     "redundant_categories": [
-        <categorías que NO deben preguntarse de nuevo porque ya fueron cubiertas EN CUALQUIER PREGUNTA>
+        "duration"
     ]
 }}
 
-REGLAS CRÍTICAS PARA MARCAR REDUNDANT_CATEGORIES (revisa TODAS las categorías en orden de secuencia):
-1. Revisa TODAS las {len(all_qa)} preguntas arriba, no solo las últimas 3
-2. Si "duración" fue preguntada EXPLÍCITAMENTE en CUALQUIER pregunta → already_mentioned_duration = true Y añade "duración" a redundant_categories
-3. Si "síntomas asociados" o "otros síntomas" fueron preguntados EXPLÍCITAMENTE → añade "síntomas_asociados" a redundant_categories SOLO SI YA FUERON PREGUNTADOS (máximo 2-3 preguntas)
-4. Si "caracterización de síntomas" o "describe los síntomas" fue preguntada EXPLÍCITAMENTE → añade "caracterización_síntomas" a redundant_categories SOLO SI YA FUE PREGUNTADA
-5. Si "medicamentos" o "remedios caseros" fueron preguntados EXPLÍCITAMENTE en CUALQUIER pregunta → already_mentioned_medications = true Y añade "medicamentos_actuales" a redundant_categories (máximo 1 pregunta)
-6. Si "dolor" o "evaluación del dolor" fue preguntado EXPLÍCITAMENTE → añade "evaluación_dolor" o "caracterización_dolor" a redundant_categories SOLO SI YA FUE PREGUNTADO
-7. Si "viajes" o "historial de viajes" fue preguntado EXPLÍCITAMENTE → añade "historial_viajes" a redundant_categories SOLO SI YA FUE PREGUNTADO
-8. Si "monitoreo crónico" o monitoreo de lecturas/registros fue preguntado EXPLÍCITAMENTE → añade "monitoreo_crónico" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 2 preguntas en total)
-9. Si "detección" o "chequeos" o exámenes específicos (ojos/pies/dental) fueron preguntados EXPLÍCITAMENTE → añade "detección" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta en total)
-10. Si "alergias" fue preguntado EXPLÍCITAMENTE → añade "alergias" a redundant_categories SOLO SI YA FUE PREGUNTADO
-11. Si "historial médico previo" o "episodios anteriores" o "HPI" fue preguntado EXPLÍCITAMENTE → añade "historial_médico_previo" o "hpi" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta)
-12. Si "ciclo menstrual" o "período" fue preguntado EXPLÍCITAMENTE → añade "ciclo_menstrual" a redundant_categories SOLO SI YA FUE PREGUNTADO
-13. Si "impacto funcional" o "actividades diarias" o "vida diaria" fue preguntado EXPLÍCITAMENTE → añade "impacto_funcional" o "impacto_diario" a redundant_categories SOLO SI YA FUE PREGUNTADO
-14. Si "factores de estilo de vida" o "cambios en el estilo de vida" fue preguntado EXPLÍCITAMENTE → añade "factores_estilo_vida" a redundant_categories SOLO SI YA FUE PREGUNTADO (máximo 1 pregunta)
-15. Si "desencadenantes" o "qué lo empeora/mejora" o "factores agravantes" fue preguntado EXPLÍCITAMENTE → añade "desencadenantes" o "factores_agravantes" a redundant_categories SOLO SI YA FUE PREGUNTADO
-16. Si "temporal" o "progresión" o "frecuencia" o "con qué frecuencia" o "con el tiempo" fue preguntado EXPLÍCITAMENTE → añade "temporal" o "progresión" o "frecuencia" a redundant_categories SOLO SI YA FUE PREGUNTADO
-17. Si "historia familiar" fue preguntada EXPLÍCITAMENTE → añade "historia_familiar" a redundant_categories SOLO SI YA FUE PREGUNTADA (máximo 1 pregunta, obligatorio para enfermedades crónicas)
+Reglas importantes:
+- Solo uses etiquetas de temas EXACTAS de la lista permitida. NUNCA inventes etiquetas nuevas.
+- "topics_covered": temas que YA fueron preguntados y respondidos de forma clara en CUALQUIER pregunta.
+- "information_gaps": temas prioritarios que AÚN NO se han cubierto adecuadamente.
+- "redundant_categories": temas que NO deben preguntarse de nuevo porque ya se cubrieron claramente.
+- Sé conservador al marcar categorías como redundantes: solo marca un tema como redundante si hubo al menos una pregunta directa y específica sobre ese tema con una respuesta clara. En caso de duda, NO lo incluyas.
 
-IMPORTANTE:
-- SÉ CONSERVADOR: solo marca un tema como redundante si la pregunta REALMENTE lo preguntó directamente
-- NO marques temas que solo se mencionaron de paso o implícitamente
-- information_gaps debe contener temas que AÚN NO se han preguntado específicamente
-- Solo añade a redundant_categories cuando estés 100% seguro de que ese tema específico fue cubierto
-
-MANTÉN information_gaps con al menos 2-3 temas hasta que el paciente haya respondido al menos 5-6 preguntas.
+Etiquetas de temas permitidas (usa SOLO estas cadenas EXACTAS, nunca inventes etiquetas nuevas):
+"duration", "associated_symptoms", "symptom_characterization", "current_medications", "pain_assessment",
+"pain_characterization", "location_radiation", "travel_history", "chronic_monitoring", "screening",
+"allergies", "past_medical_history", "hpi", "menstrual_cycle", "functional_impact", "daily_impact",
+"lifestyle_factors", "triggers", "aggravating_factors", "temporal", "progression", "frequency",
+"past_evaluation", "other", "exploratory", "family_history".
 
 Devuelve SOLO el JSON, sin texto adicional."""
+        else:
+            system_prompt = """You are AGENT-02 "COVERAGE & FACT EXTRACTOR" for a clinical intake assistant.
 
-        else:  # English
-            system_prompt = """You are a medical assistant analyzing patient intake responses.
+Your ONLY job is to review all previous questions and answers plus the plan from Agent-01 and decide:
+- which topics are already covered,
+- which topics are clearly redundant,
+- which topics from the topic_plan still need to be asked.
 
-Your job is to extract WHAT information has already been collected to avoid redundant questions."""
+You DO NOT create new questions for the patient.
+You ONLY summarize what has been covered so far.
+
+TOPIC LABELS (same allow-list as Agent-01, do NOT invent new labels):
+"duration", "associated_symptoms", "symptom_characterization",
+"current_medications", "pain_assessment", "pain_characterization",
+"location_radiation", "travel_history", "chronic_monitoring", "screening",
+"allergies", "past_medical_history", "hpi", "menstrual_cycle",
+"functional_impact", "daily_impact", "lifestyle_factors",
+"triggers", "aggravating_factors", "temporal", "progression",
+"frequency", "past_evaluation", "other", "exploratory", "family_history"
+
+JSON SCHEMA:
+{
+  "topics_covered": ["<topic label>", "..."],
+  "information_gaps": ["<topic label>", "..."],
+  "extracted_facts": {
+    "duration": "<text or null>",
+    "medications": "<text or null>",
+    "pain_severity": "<text or null>",
+    "associated_symptoms": "<text or null>"
+  },
+  "already_mentioned_duration": <true/false>,
+  "already_mentioned_medications": <true/false>,
+  "redundant_categories": ["<topic label>", "..."]
+}
+
+RULES:
+- topics_covered: topics where at least ONE CLEAR, direct question was asked and answered.
+- information_gaps MUST:
+  - be a subset of medical_context.priority_topics,
+  - exclude everything in medical_context.avoid_topics,
+  - be ordered roughly following medical_context.topic_plan.
+- Once there has been a clear, focused Q&A about a topic, treat these as ONE-AND-DONE and add to redundant_categories:
+  - "duration", "current_medications", "travel_history", "daily_impact".
+- Be conservative with redundant_categories:
+  - Only mark a topic as redundant if there was a DIRECT, focused question with a clear answer.
+  - If in doubt, leave the topic OUT of redundant_categories.
+
+Return ONLY JSON, no extra text."""
 
             user_prompt = f"""
 ALL QUESTIONS AND ANSWERS (for duplicate checking):
@@ -668,17 +820,11 @@ Return a JSON with this EXACT structure:
 
 {{
     "topics_covered": [
-        <list of topics that were ALREADY asked/answered IN ANY QUESTION>
-        Options (in sequence order): "duration", "associated_symptoms", 
-                 "current_medications", "pain_assessment", "pain_characterization",
-                 "travel_history", "chronic_monitoring", "screening", "allergies",
-                 "past_medical_history", "hpi", "menstrual_cycle", "functional_impact",
-                 "daily_impact", "lifestyle_factors", "triggers", "aggravating_factors",
-                 "temporal", "progression", "frequency", "other", "exploratory",
-                 "family_history"
+        "duration",
+        "associated_symptoms"
     ],
     "information_gaps": [
-        <list of priority topics that have NOT been asked yet>
+        "current_medications"
     ],
     "extracted_facts": {{
         "duration": "<if duration mentioned IN ANY ANSWER, extract here (e.g. '3 weeks'), else null>",
@@ -686,39 +832,26 @@ Return a JSON with this EXACT structure:
         "pain_severity": "<if pain severity mentioned IN ANY ANSWER (1-10), else null>",
         "associated_symptoms": "<if associated symptoms mentioned IN ANY ANSWER, list here, else null>"
     }},
-    "already_mentioned_duration": <true/false - Did patient already mention duration IN ANY ANSWER?>,
-    "already_mentioned_medications": <true/false - Were medications already asked IN ANY QUESTION?>,
+    "already_mentioned_duration": <true/false>,
+    "already_mentioned_medications": <true/false>,
     "redundant_categories": [
-        <categories that should NOT be asked again because already covered IN ANY QUESTION>
+        "duration"
     ]
 }}
 
-CRITICAL RULES FOR MARKING REDUNDANT_CATEGORIES (check ALL categories in sequence order):
-1. Review ALL {len(all_qa)} questions above, not just the last 3
-2. If "duration" was asked EXPLICITLY in ANY previous question → already_mentioned_duration = true AND add "duration" to redundant_categories
-3. If "associated symptoms" or "other symptoms" were asked EXPLICITLY → add "associated_symptoms" to redundant_categories ONLY IF ALREADY ASKED (max 2-3 questions)
-4. If "symptom characterization" or "describe symptoms" was asked EXPLICITLY → add "symptom_characterization" to redundant_categories ONLY IF ALREADY ASKED
-5. If "medications" or "home remedies" were asked EXPLICITLY in ANY previous question → already_mentioned_medications = true AND add "current_medications" to redundant_categories (max 1 question)
-6. If "pain" or "pain assessment" was asked EXPLICITLY → add "pain_assessment" or "pain_characterization" to redundant_categories ONLY IF ALREADY ASKED
-7. If "travel" or "travel history" was asked EXPLICITLY → add "travel_history" to redundant_categories ONLY IF ALREADY ASKED
-8. If "chronic monitoring" or monitoring of readings/logs was asked EXPLICITLY → add "chronic_monitoring" to redundant_categories ONLY IF ALREADY ASKED (max 2 questions total)
-9. If "screening" or "checkups" or specific exams (eye/foot/dental) were asked EXPLICITLY → add "screening" to redundant_categories ONLY IF ALREADY ASKED (max 1 question total)
-10. If "allergies" was asked EXPLICITLY → add "allergies" to redundant_categories ONLY IF ALREADY ASKED
-11. If "past medical history" or "previous episodes" or "HPI" was asked EXPLICITLY → add "past_medical_history" or "hpi" to redundant_categories ONLY IF ALREADY ASKED (max 1 question)
-12. If "menstrual cycle" or "period" was asked EXPLICITLY → add "menstrual_cycle" to redundant_categories ONLY IF ALREADY ASKED
-13. If "functional impact" or "daily activities" or "daily life" was asked EXPLICITLY → add "functional_impact" or "daily_impact" to redundant_categories ONLY IF ALREADY ASKED
-14. If "lifestyle factors" or "lifestyle changes" was asked EXPLICITLY → add "lifestyle_factors" to redundant_categories ONLY IF ALREADY ASKED (max 1 question)
-15. If "triggers" or "what makes it worse/better" or "aggravating factors" was asked EXPLICITLY → add "triggers" or "aggravating_factors" to redundant_categories ONLY IF ALREADY ASKED
-16. If "temporal" or "progression" or "frequency" or "how often" or "over time" was asked EXPLICITLY → add "temporal" or "progression" or "frequency" to redundant_categories ONLY IF ALREADY ASKED
-17. If "family history" was asked EXPLICITLY → add "family_history" to redundant_categories ONLY IF ALREADY ASKED (max 1 question, mandatory for chronic diseases)
+Important rules:
+- You MUST only use these exact topic labels. Never invent new labels.
+- "topics_covered": topics that were ALREADY asked and clearly answered in ANY question.
+- "information_gaps": priority topics that have NOT yet been adequately covered.
+- "redundant_categories": topics that should NOT be asked again because they are clearly covered.
+- Be conservative when marking categories as redundant: only mark a topic as redundant if there has been at least one direct, focused question about that topic with a clear, specific answer. If in doubt, do NOT include it.
 
-IMPORTANT:
-- Be CONSERVATIVE: only mark a topic as redundant if the question ACTUALLY asked about it directly
-- DO NOT mark topics that were only mentioned in passing or implicitly
-- information_gaps should contain topics that have NOT been specifically asked yet
-- Only add to redundant_categories when you are 100% certain that specific topic was covered
-
-KEEP information_gaps with at least 2-3 topics until the patient has answered at least 5-6 questions.
+Allowed topic labels (use ONLY these exact strings, never invent new ones):
+"duration", "associated_symptoms", "symptom_characterization", "current_medications", "pain_assessment",
+"pain_characterization", "location_radiation", "travel_history", "chronic_monitoring", "screening",
+"allergies", "past_medical_history", "hpi", "menstrual_cycle", "functional_impact", "daily_impact",
+"lifestyle_factors", "triggers", "aggravating_factors", "temporal", "progression", "frequency",
+"past_evaluation", "other", "exploratory", "family_history".
 
 Return ONLY the JSON, no additional text."""
 
@@ -730,69 +863,141 @@ Return ONLY the JSON, no additional text."""
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=600,
-                temperature=0.1,  # Very low for consistency
+                temperature=0.1,
             )
-            
-            # Extract text from response object
+
             response_text = response.choices[0].message.content.strip()
-            
-            # Parse JSON response with robust error handling
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if not json_match:
                 logger.error(f"No JSON found in Agent 2 response: {response_text[:200]}")
                 raise ValueError("No JSON found in response")
-            
+
+            extraction = json.loads(json_match.group())
+
+            # ---- Normalize topic lists and clamp to allowed set ----
+            def _to_str_list(value: Any) -> List[str]:
+                if not isinstance(value, list):
+                    return []
+                result: List[str] = []
+                for v in value:
+                    if isinstance(v, (str, int, float)):
+                        s = str(v).strip()
+                        if s:
+                            result.append(s)
+                return result
+
+            raw_topics_covered = extraction.get("topics_covered", []) or []
+            raw_information_gaps = extraction.get("information_gaps", medical_context.priority_topics) or []
+            raw_redundant_categories = extraction.get("redundant_categories", []) or []
+
+            topics_covered = _to_str_list(raw_topics_covered)
+            information_gaps = _to_str_list(raw_information_gaps)
+            redundant_categories = _to_str_list(raw_redundant_categories)
+
+            allowed = set(ALLOWED_TOPICS)
+            unknown_topics = (
+                set(topics_covered)
+                .union(information_gaps)
+                .union(redundant_categories)
+                - allowed
+            )
+            if unknown_topics:
+                logger.warning(
+                    f"Agent 2: Dropping unknown topic labels from LLM: {sorted(unknown_topics)}"
+                )
+
+            topics_covered = [t for t in topics_covered if t in allowed]
+            information_gaps = [t for t in information_gaps if t in allowed]
+            redundant_categories = [t for t in redundant_categories if t in allowed]
+
+            # ---- Ensure travel topic is treated as covered once a travel question was asked ----
+            if any(
+                any(kw in (q or "").lower() for kw in TRAVEL_KEYWORDS)
+                for q in asked_questions or []
+            ):
+                if "travel_history" in information_gaps:
+                    information_gaps.remove("travel_history")
+                if "travel_history" not in redundant_categories:
+                    redundant_categories.append("travel_history")
+
+            # ---- One-and-done hard rule for daily_impact (similar to travel_history) ----
             try:
-                extraction = json.loads(json_match.group())
-            except json.JSONDecodeError as je:
-                logger.error(f"JSON parsing error in Agent 2: {je}. Response: {json_match.group()[:200]}")
-                raise
-            
-            # Validate JSON structure
-            required_keys = ["topics_covered", "information_gaps", "redundant_categories"]
-            missing_keys = [k for k in required_keys if k not in extraction]
-            if missing_keys:
-                logger.warning(f"Agent 2 JSON missing keys: {missing_keys}. Using defaults.")
-            
-            # Extract values with defaults
-            topics_covered = extraction.get("topics_covered", [])
-            information_gaps = extraction.get("information_gaps", medical_context.priority_topics)
-            redundant_categories = extraction.get("redundant_categories", [])
-            
-            # Ensure lists are actually lists
-            if not isinstance(topics_covered, list):
-                topics_covered = []
-            if not isinstance(information_gaps, list):
-                information_gaps = medical_context.priority_topics
-            if not isinstance(redundant_categories, list):
-                redundant_categories = []
-            
+                any_daily_impact_q = any(
+                    "daily activities" in (q or "").lower()
+                    or "overall quality of life" in (q or "").lower()
+                    or "daily life" in (q or "").lower()
+                    for q in (asked_questions or [])
+                )
+            except Exception:
+                any_daily_impact_q = False
+
+            if any_daily_impact_q:
+                if "daily_impact" in information_gaps:
+                    information_gaps.remove("daily_impact")
+                if "daily_impact" not in redundant_categories:
+                    redundant_categories.append("daily_impact")
+
+            # ---- Tie gaps to priority_topics AND avoid_topics from Agent-01 ----
+            priority = set(medical_context.priority_topics or [])
+            avoid = set(medical_context.avoid_topics or [])
+
+            information_gaps = [
+                t for t in information_gaps
+                if t in priority and t not in avoid
+            ]
+
+            if not information_gaps and priority:
+                logger.info(
+                    "Agent 2: information_gaps empty after filtering; "
+                    "falling back to priority_topics minus topics_covered/avoid."
+                )
+                information_gaps = [
+                    t for t in medical_context.priority_topics
+                    if t not in topics_covered and t not in avoid
+                ]
+
+            # ---- Extracted facts normalization ----
+            extracted_facts = extraction.get("extracted_facts", {}) or {}
+            if not isinstance(extracted_facts, dict):
+                extracted_facts = {}
+
+            for key in ["duration", "medications", "pain_severity", "associated_symptoms"]:
+                value = extracted_facts.get(key)
+                if value is not None and not isinstance(value, str):
+                    extracted_facts[key] = str(value)
+
+            already_mentioned_duration = bool(extraction.get("already_mentioned_duration", False))
+            already_mentioned_medications = bool(extraction.get("already_mentioned_medications", False))
+
+            # ---- Make redundant_categories more conservative ----
+            SENSITIVE_TOPICS = {"associated_symptoms", "current_medications"}
+            redundant_categories = [
+                t for t in redundant_categories
+                if t not in SENSITIVE_TOPICS
+            ]
+
+            # ---- Topic counts: use provided or derive from topics_covered ----
+            topic_counts = extraction.get("topic_counts")
+            if not isinstance(topic_counts, dict):
+                topic_counts = dict(Counter(topics_covered))
+
             logger.info(
                 f"Agent 2 Results: Covered={topics_covered}, "
-                f"Gaps={information_gaps}, Redundant={redundant_categories} "
-                f"(analyzed {len(all_qa)} total Q&A pairs)"
+                f"Gaps={information_gaps}, Redundant={redundant_categories}"
             )
-            
-            # Calculate topic_counts from topics_covered if not provided
-            topic_counts = extraction.get("topic_counts")
-            if topic_counts is None:
-                # Count occurrences of each topic in topics_covered
-                from collections import Counter
-                topic_counts = dict(Counter(topics_covered))
-            
+
             return ExtractedInformation(
                 topics_covered=topics_covered,
                 information_gaps=information_gaps,
-                extracted_facts=extraction.get("extracted_facts", {}),
-                already_mentioned_duration=extraction.get("already_mentioned_duration", False),
-                already_mentioned_medications=extraction.get("already_mentioned_medications", False),
+                extracted_facts=extracted_facts,
+                already_mentioned_duration=already_mentioned_duration,
+                already_mentioned_medications=already_mentioned_medications,
                 redundant_categories=redundant_categories,
-                topic_counts=topic_counts
+                topic_counts=topic_counts,
             )
-            
+
         except Exception as e:
             logger.error(f"Answer extraction failed: {e}")
-            # Fallback: assume nothing covered
             return ExtractedInformation(
                 topics_covered=[],
                 information_gaps=medical_context.priority_topics,
@@ -802,16 +1007,14 @@ Return ONLY the JSON, no additional text."""
                 redundant_categories=[],
                 topic_counts=None
             )
-    
+
     def _format_qa_pairs(self, qa_pairs: List[Dict[str, str]]) -> str:
-        """Format Q&A pairs for analysis"""
         formatted = []
         for i, qa in enumerate(qa_pairs, 1):
             formatted.append(f"{i}. Q: {qa['question']}\n   A: {qa['answer']}")
         return "\n\n".join(formatted)
-    
+
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code"""
         if not language:
             return "en"
         normalized = language.lower().strip()
@@ -826,11 +1029,11 @@ Return ONLY the JSON, no additional text."""
 
 class QuestionGenerator:
     """Agent 3: Generates the actual medical question"""
-    
+
     def __init__(self, client, settings):
         self._client = client
         self._settings = settings
-    
+
     async def generate_question(
         self,
         medical_context: MedicalContext,
@@ -841,21 +1044,77 @@ class QuestionGenerator:
         avoid_similar_to: Optional[str] = None,
         asked_questions: Optional[List[str]] = None,
         previous_answers: Optional[List[str]] = None,
-        is_deep_diagnostic: bool = False
+        is_deep_diagnostic: bool = False,
+        deep_diagnostic_question_num: Optional[int] = None,
     ) -> str:
         """
         Generate next medical question based on context and what's been covered.
-        This is a FOCUSED prompt that leverages medical reasoning.
-        
-        Args:
-            avoid_similar_to: A question that was just rejected as duplicate - generate something DIFFERENT
-            asked_questions: All questions asked so far (for full context)
-            previous_answers: All answers received so far (for full context)
+
+        KEY:
+        - In deep diagnostic mode, we IGNORE information_gaps for topic selection and force
+          the question to be about a specific domain.
+          • CHRONIC: monitoring / labs / screening
+          • NON-CHRONIC: triggers / functional_impact / past_evaluation
         """
-        
+
+        # 1) Determine if condition is chronic
+        #    - Prefer Agent-01 decision; use keyword-based detection only as fallback.
+        condition_props = {}
+        try:
+            if medical_context and medical_context.condition_properties:
+                condition_props = dict(medical_context.condition_properties)
+        except Exception:
+            condition_props = medical_context.condition_properties or {}
+
+        is_chronic_flag = condition_props.get("is_chronic", None)  # None = unknown
+        is_chronic_condition = bool(is_chronic_flag) if is_chronic_flag is not None else False
+
+        # Build combined text from chief complaint + ALL answers for chronic keyword detection (fallback only)
+        combined_text_parts: List[str] = []
+        try:
+            if medical_context and medical_context.chief_complaint:
+                combined_text_parts.append(medical_context.chief_complaint.lower())
+        except Exception:
+            pass
+        try:
+            if previous_answers:
+                combined_text_parts.append(" ".join(a.lower() for a in previous_answers if a))
+        except Exception:
+            pass
+
+        combined_text = " ".join(combined_text_parts)
+
+        chronic_keywords = [
+            "diabetes",
+            "type 1 diabetes",
+            "type 2 diabetes",
+            "hypertension",
+            "high blood pressure",
+            "asthma",
+            "copd",
+            "chronic obstructive",
+            "chronic kidney",
+            "ckd",
+            "heart failure",
+            "coronary artery",
+            "epilepsy",
+            "thyroid",
+        ]
+
+        # Only infer chronic if Agent-01 did not specify (fallback)
+        if is_chronic_flag is None and any(kw in combined_text for kw in chronic_keywords):
+            condition_props["is_chronic"] = True
+            if medical_context:
+                medical_context.condition_properties = condition_props
+            is_chronic_condition = True
+            logger.info(
+                "Agent 3: is_chronic inferred from keywords in Q&A (fallback), chief_complaint='%s'",
+                medical_context.chief_complaint if medical_context else "",
+            )
+
         lang = self._normalize_language(language)
-        
-        # Format all Q&A pairs for context
+
+        # Format Q&A history (for context in the prompt)
         qa_history = ""
         if asked_questions and previous_answers:
             all_qa = []
@@ -867,58 +1126,322 @@ class QuestionGenerator:
                     })
             if all_qa:
                 qa_history = self._format_qa_pairs(all_qa)
-        
-        # Determine if this is the closing question
-        if current_count + 1 >= max_count:
+
+        # Closing question for standard flow
+        if current_count + 1 >= max_count and not is_deep_diagnostic:
             if lang == "sp":
-                return "¿Hemos pasado por alto algo importante sobre su salud o hay otras preocupaciones que desee que el médico sepa?"
-            return "Have we missed anything important about your health, or any other concerns you want the doctor to know?"
-        
+                return "¿Hay algo más que le gustaría compartir sobre su condición?"
+            return "Is there anything else you'd like to share about your condition?"
+
+        # ------------------------------------------------------------------ #
+        # DEEP DIAGNOSTIC MODE
+        # ------------------------------------------------------------------ #
+        if is_deep_diagnostic:
+            if lang == "sp":
+                system_prompt = """Eres un médico experimentado realizando una entrevista médica.
+
+Tu trabajo es generar UNA pregunta diagnóstica detallada, clara y amigable relacionada
+con el dominio específico que se te indica."""
+                
+                q_num = deep_diagnostic_question_num or 1
+                q_num = max(1, min(3, q_num))
+
+                if is_chronic_condition:
+                    # CHRONIC: fixed domains (1 = monitoring, 2 = labs, 3 = screening)
+                    if q_num == 1:
+                        domain_title = "MONITOREO EN CASA / LECTURAS"
+                        domain_desc = (
+                            "Cómo el paciente ha estado monitoreando esta condición crónica en casa "
+                            "(por ejemplo, azúcar en sangre, presión arterial, flujo pico, registros de peso, lecturas de dispositivos)."
+                        )
+                    elif q_num == 2:
+                        domain_title = "RESULTADOS RECIENTES DE PRUEBAS DE LABORATORIO"
+                        domain_desc = (
+                            "Pruebas de laboratorio recientes relevantes para esta enfermedad crónica (por ejemplo, HbA1c, función renal, "
+                            "colesterol, pruebas de tiroides) y lo que el paciente recuerda sobre los resultados."
+                        )
+                    else:
+                        domain_title = "EXÁMENES DE DETECCIÓN / VERIFICACIÓN DE COMPLICACIONES"
+                        domain_desc = (
+                            "Exámenes formales y pruebas de detección de complicaciones (por ejemplo, exámenes de ojos/pies para diabetes, "
+                            "pruebas cardíacas, imágenes renales, pruebas de función pulmonar) realizadas debido a esta condición."
+                        )
+
+                    user_prompt = f"""
+Contexto médico:
+- Motivo de consulta: {medical_context.chief_complaint}
+- Edad del paciente: {medical_context.patient_age or "Desconocida"}
+- Género del paciente: {medical_context.patient_gender or "No especificado"}
+- Propiedades de la condición: {json.dumps(medical_context.condition_properties, indent=2)}
+- Esta es una condición CRÓNICA (por ejemplo, diabetes, hipertensión, asma, etc.)
+
+Modo Diagnóstico Profundo – Pregunta {q_num} de 3 (enfermedad CRÓNICA)
+
+DOMINIO DIAGNÓSTICO SOLO PARA ESTA PREGUNTA:
+- Dominio: {domain_title}
+- Descripción: {domain_desc}
+
+Reglas para esta pregunta de diagnóstico profundo:
+- IGNORA information_gaps y redundant_categories para la selección de temas; son solo para contexto.
+- DEBES hacer EXACTAMENTE UNA pregunta sobre ESTE dominio solamente. NO combines con otros dominios.
+- CRÍTICO: Mantén la pregunta CORTA (15-25 palabras). Enfócate en UN aspecto específico de este dominio.
+- Incluso si este dominio se tocó antes (por ejemplo, se mencionó una lectura única de presión arterial),
+  DEBES hacer una pregunta de diagnóstico profundo enfocada que agregue MÁS detalle que antes.
+  NO omitas este dominio.
+- NO preguntes sobre severidad de síntomas, detalles genéricos de dolor de cabeza, peso/apetito, alergias, sueño,
+  o estilo de vida general en esta pregunta.
+- NO preguntes sobre otros dominios (por ejemplo, si esta es la pregunta de monitoreo, NO preguntes sobre pruebas de laboratorio o exámenes de detección).
+- Haz la pregunta específica, concreta, concisa y fácil de responder para el paciente en sus propias palabras.
+- Fraseala como una pregunta única, directa, CORTA que termine con "?".
+
+Historial de Q&A (solo contexto – NO elijas tema de esto, solo evita duplicación obvia):
+{qa_history if qa_history else "No hay preguntas previas."}
+
+REQUISITOS DE SALIDA:
+- Devuelve SOLO el texto de la pregunta, sin comillas, sin numeración, sin explicaciones.
+- Ejemplo de estilo correcto (para dominio de monitoreo): 
+  "¿Con qué frecuencia revisas tu presión arterial en casa y cómo han sido tus lecturas recientes generalmente?"
+
+Genera la siguiente pregunta de diagnóstico profundo ahora, estrictamente sobre este dominio."""
+                else:
+                    # NON-CHRONIC: deep diagnostic sequence = triggers, functional impact, past evaluation
+                    if q_num == 1:
+                        domain_title = "DESENCADENANTES, ALIVIADORES Y CONTEXTO"
+                        domain_desc = (
+                            "Qué tiende a provocar o empeorar el síntoma principal, qué lo mejora, "
+                            "y en qué situaciones o momentos del día suele aparecer."
+                        )
+                    elif q_num == 2:
+                        domain_title = "IMPACTO FUNCIONAL"
+                        domain_desc = (
+                            "Cómo este problema está afectando la capacidad del paciente para realizar actividades diarias, "
+                            "trabajo, ejercicio, sueño o autocuidado."
+                        )
+                    else:
+                        domain_title = "EVALUACIÓN PASADA / TRABAJO DIAGNÓSTICO"
+                        domain_desc = (
+                            "Evaluaciones médicas previas específicamente para este problema – por ejemplo visitas a clínica o urgencias, "
+                            "ECG, rayos X, escaneos, análisis de sangre, o consultas con especialistas – y lo que se le dijo al paciente."
+                        )
+
+                    user_prompt = f"""
+Contexto médico:
+- Motivo de consulta: {medical_context.chief_complaint}
+- Edad del paciente: {medical_context.patient_age or "Desconocida"}
+- Género del paciente: {medical_context.patient_gender or "No especificado"}
+- Propiedades de la condición: {json.dumps(medical_context.condition_properties, indent=2)}
+
+Modo Diagnóstico Profundo – Pregunta {q_num} de 3 (condición NO CRÓNICA)
+
+DOMINIO DIAGNÓSTICO SOLO PARA ESTA PREGUNTA:
+- Dominio: {domain_title}
+- Descripción: {domain_desc}
+
+Reglas para esta pregunta de diagnóstico profundo:
+- IGNORA information_gaps y redundant_categories para la selección de temas; son solo para contexto.
+- DEBES hacer EXACTAMENTE UNA pregunta que profundice la comprensión del MOTIVO DE CONSULTA dentro de este dominio.
+- CRÍTICO: Mantén la pregunta CORTA (15-25 palabras). Enfócate en UN aspecto específico de este dominio.
+- Incluso si esta área se mencionó antes, DEBES hacer una pregunta de diagnóstico profundo enfocada para este dominio.
+  NO omitas este dominio.
+- NO preguntes sobre temas separados y no relacionados como alergias, estilo de vida general, o nuevos sistemas de órganos.
+- NO combines múltiples aspectos o temas en una pregunta.
+- Haz la pregunta específica, concreta, concisa y fácil de responder para el paciente.
+- Frasea la pregunta como una pregunta única, directa, CORTA que termine con "?".
+
+Historial de Q&A (solo contexto – NO elijas tema de esto, solo evita duplicación obvia):
+{qa_history if qa_history else "No hay preguntas previas."}
+
+REQUISITOS DE SALIDA:
+- Devuelve SOLO el texto de la pregunta, sin comillas, sin numeración, sin explicaciones.
+- Ejemplo de estilo correcto (para dominio de desencadenantes):
+  "¿Has notado algo que tiende a desencadenar o empeorar este problema, o algo que confiablemente lo hace sentir mejor?"
+
+Genera la siguiente pregunta de diagnóstico profundo ahora, estrictamente sobre este dominio."""
+            else:
+                system_prompt = """You are an experienced physician conducting a focused diagnostic interview.
+
+Your job is to generate ONE detailed, clinically relevant, patient-friendly question
+about the EXACT diagnostic domain specified below."""
+
+                q_num = deep_diagnostic_question_num or 1
+                q_num = max(1, min(3, q_num))
+
+                if is_chronic_condition:
+                    # CHRONIC: fixed domains (1 = monitoring, 2 = labs, 3 = screening)
+                    if q_num == 1:
+                        domain_title = "HOME MONITORING / READINGS"
+                        domain_desc = (
+                            "How the patient has been monitoring this chronic condition at home "
+                            "(e.g., blood sugar, blood pressure, peak flow, weight logs, device readings)."
+                        )
+                    elif q_num == 2:
+                        domain_title = "RECENT LAB TEST RESULTS"
+                        domain_desc = (
+                            "Recent lab tests relevant to this chronic disease (e.g., HbA1c, kidney function, "
+                            "cholesterol, thyroid labs) and what the patient remembers about the results."
+                        )
+                    else:
+                        domain_title = "SCREENING / COMPLICATION CHECKS"
+                        domain_desc = (
+                            "Formal exams and screening tests for complications (e.g., diabetic eye/foot exams, "
+                            "cardiac tests, kidney imaging, lung function tests) done because of this condition."
+                        )
+
+                    user_prompt = f"""
+Medical context:
+- Chief complaint: {medical_context.chief_complaint}
+- Patient age: {medical_context.patient_age or "Unknown"}
+- Patient gender: {medical_context.patient_gender or "Not specified"}
+- Condition properties: {json.dumps(medical_context.condition_properties, indent=2)}
+- This is a CHRONIC condition (for example, diabetes, hypertension, asthma, etc.)
+
+Deep Diagnostic Mode – Question {q_num} of 3 (CHRONIC disease)
+
+DIAGNOSTIC DOMAIN FOR THIS QUESTION ONLY:
+- Domain: {domain_title}
+- Description: {domain_desc}
+
+Rules for this deep diagnostic question:
+- IGNORE information_gaps and redundant_categories for topic selection; they are for context only.
+- You MUST ask EXACTLY ONE question about THIS domain only. Do NOT combine with other domains.
+- CRITICAL: Keep the question SHORT (15-25 words). Focus on ONE specific aspect of this domain.
+- Even if this domain was touched earlier (for example, a single BP reading was mentioned),
+  you MUST still ask a focused deep diagnostic question that adds MORE detail than before.
+  Do NOT skip this domain.
+- Do NOT ask about symptom severity, generic headache details, weight/appetite, allergies, sleep,
+  or general lifestyle in this question.
+- Do NOT ask about other domains (for example, if this is the monitoring question, do NOT ask about lab tests or screening exams).
+- Make the question specific, concrete, concise, and easy for the patient to answer in their own words.
+- Phrase it as a single, direct, SHORT question ending with "?".
+
+Q&A history (context only – do NOT choose topic from this, just avoid obvious duplication):
+{qa_history if qa_history else "No previous questions."}
+
+OUTPUT REQUIREMENTS:
+- Return ONLY the question text, no quotes, no numbering, no explanations.
+- Example of correct style (for monitoring domain): 
+  "How often do you check your blood pressure at home, and what have your recent readings usually been like?"
+
+Generate the next deep diagnostic question now, strictly about this domain."""
+                else:
+                    # NON-CHRONIC: deep diagnostic sequence = triggers, functional impact, past evaluation
+                    if q_num == 1:
+                        domain_title = "TRIGGERS, RELIEVERS AND CONTEXT"
+                        domain_desc = (
+                            "What tends to bring on or worsen the main symptom, what makes it better, "
+                            "and in what situations or times of day it usually appears."
+                        )
+                    elif q_num == 2:
+                        domain_title = "FUNCTIONAL IMPACT"
+                        domain_desc = (
+                            "How this problem is affecting the patient's ability to carry out daily activities, "
+                            "work, exercise, sleep, or self-care."
+                        )
+                    else:
+                        domain_title = "PAST EVALUATION / WORKUP"
+                        domain_desc = (
+                            "Previous medical evaluations specifically for this problem – for example clinic or ER visits, "
+                            "ECG, X-ray, scans, blood tests, or specialist consultations – and what the patient was told."
+                        )
+
+                    user_prompt = f"""
+Medical context:
+- Chief complaint: {medical_context.chief_complaint}
+- Patient age: {medical_context.patient_age or "Unknown"}
+- Patient gender: {medical_context.patient_gender or "Not specified"}
+- Condition properties: {json.dumps(medical_context.condition_properties, indent=2)}
+
+Deep Diagnostic Mode – Question {q_num} of 3 (NON-CHRONIC condition)
+
+DIAGNOSTIC DOMAIN FOR THIS QUESTION ONLY:
+- Domain: {domain_title}
+- Description: {domain_desc}
+
+Rules for this deep diagnostic question:
+- IGNORE information_gaps and redundant_categories for topic selection; they are for context only.
+- You MUST ask EXACTLY ONE question that deepens understanding of the CHIEF COMPLAINT within this domain.
+- CRITICAL: Keep the question SHORT (15-25 words). Focus on ONE specific aspect of this domain.
+- Even if this area was mentioned earlier, you MUST still ask one focused deep diagnostic question for this domain.
+  Do NOT skip this domain.
+- Do NOT ask about separate, unrelated topics such as allergies, general lifestyle, or new organ systems.
+- Do NOT combine multiple aspects or topics in one question.
+- Make the question specific, concrete, concise, and easy for the patient to answer.
+- Phrase the question as a single, direct, SHORT question ending with "?".
+
+Q&A history (context only – do NOT choose topic from this, just avoid obvious duplication):
+{qa_history if qa_history else "No previous questions."}
+
+OUTPUT REQUIREMENTS:
+- Return ONLY the question text, no quotes, no numbering, no explanations.
+- Example of correct style (for triggers domain):
+  "Have you noticed anything that tends to trigger or worsen this problem, or anything that reliably makes it feel better?"
+
+Generate the next deep diagnostic question now, strictly about this domain."""
+
+            try:
+                response = await self._client.chat(
+                    model=self._settings.openai.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_tokens=100,  # Reduced to enforce shorter, single-topic questions
+                    temperature=0.2,
+                )
+                question = response.choices[0].message.content.strip()
+            except Exception as e:
+                logger.error(f"Deep diagnostic question generation failed: {e}")
+                # Safe fallback
+                if lang == "sp":
+                    return "¿Puede contarme un poco más de detalle sobre cómo se ha presentado este problema?"
+                return "Can you tell me a bit more detail about how this problem has been occurring for you?"
+
+            question = self._postprocess_question_text(question)
+            logger.info(f"Generated deep diagnostic question (cleaned): {question}")
+            return question
+        # ------------------------------------------------------------------ #
+        # NORMAL (NON-DEEP) QUESTION GENERATION
+        # ------------------------------------------------------------------ #
+
+        # Determine chosen_topic using topic_plan + information_gaps
+        info_gaps = list(extracted_info.information_gaps or [])
+        redundant = set(extracted_info.redundant_categories or [])
+        avoid = set(medical_context.avoid_topics or [])
+        topic_plan = list(getattr(medical_context, "topic_plan", []) or [])
+
+        base_candidates = [t for t in info_gaps if t not in avoid and t not in redundant]
+        ordered_candidates = [t for t in topic_plan if t in base_candidates]
+        chosen_topic = ordered_candidates[0] if ordered_candidates else (base_candidates[0] if base_candidates else None)
+
         if lang == "sp":
             system_prompt = """Eres un médico experimentado realizando una entrevista médica.
 
-Tu trabajo es generar UNA pregunta médicamente relevante, clara y amigable para el paciente.
+Tu trabajo es generar UNA pregunta médicamente relevante, clara y amigable para el paciente."""
 
-La pregunta debe ser apropiada para un contexto de entrevista médica."""
-
-            deep_diagnostic_block_sp = ""
-            if is_deep_diagnostic:
-                deep_diagnostic_block_sp = (
-                    "🔍 MODO DIAGNÓSTICO PROFUNDO: El paciente aceptó responder preguntas diagnósticas detalladas. "
-                    "Esta es la pregunta diagnóstica profunda #" + str(current_count - 9) + " de 3.\n\n"
-                    "CRÍTICO: Estas preguntas deben ser PROFUNDAMENTE DIAGNÓSTICAS - NO preguntas básicas como 'cuánto tiempo', "
-                    "'cuándo comenzó', 'duración', 'medicamentos', etc. Esas ya fueron preguntadas.\n\n"
-                    "Genera preguntas diagnósticas ALTAMENTE ESPECÍFICAS que exploren:\n"
-                    "- Patrones específicos de síntomas, desencadenantes o asociaciones\n"
-                    "- Caracterización detallada de síntomas (calidad, radiación, momento)\n"
-                    "- Impacto en sistemas corporales o funciones específicas\n"
-                    "- Historia detallada relacionada con la queja principal\n"
-                    "- Pistas diagnósticas específicas o señales de alerta\n\n"
-                    "Ejemplos de BUENAS preguntas diagnósticas profundas:\n"
-                    "- '¿Puede describir el patrón exacto de su [síntoma] - viene en oleadas, es constante, o tiene desencadenantes específicos?'\n"
-                    "- 'Cuando experimenta [síntoma], ¿se irradia a alguna otra parte de su cuerpo, y si es así, dónde exactamente?'\n"
-                    "- '¿Ha notado alguna hora específica del día o circunstancias cuando [síntoma] empeora o mejora?'\n"
-                    "- '¿Hay alguna actividad, posición o movimiento específico que desencadene o empeore su [síntoma]?'\n\n"
-                    "Ejemplos de MALAS preguntas (NO hagas estas - son demasiado básicas):\n"
-                    "- '¿Desde hace cuánto tiempo tiene esto?' (ya preguntado)\n"
-                    "- '¿Qué medicamentos está tomando?' (ya preguntado)\n"
-                    "- '¿Puede describir sus síntomas?' (demasiado genérico)\n\n"
-                )
-
-            duplicate_warning_sp = ""
+            avoid_similar_block = ""
             if avoid_similar_to:
-                duplicate_warning_sp = (
-                    f"⚠️ ADVERTENCIA CRÍTICA: La pregunta '{avoid_similar_to}' fue RECHAZADA como duplicado. "
-                    "Debes generar una pregunta COMPLETAMENTE DIFERENTE sobre un TEMA DIFERENTE. NO reformules la misma pregunta.\n"
-                )
+                avoid_similar_block = f"""
+
+PREGUNTA A EVITAR:
+- NO hagas ninguna pregunta semánticamente similar a esta pregunta previa:
+  "{avoid_similar_to}"
+- No repitas la misma intención ni el mismo enunciado. Elige un ángulo o tema nuevo.
+"""
+
+            topic_line = (
+                f"Tema que DEBES abordar en esta pregunta: {chosen_topic}"
+                if chosen_topic
+                else "Tema que DEBES abordar en esta pregunta: general_cierre"
+            )
 
             user_prompt = f"""
 Contexto médico:
-- Queja principal: {medical_context.chief_complaint}
+- Motivo de consulta: {medical_context.chief_complaint}
 - Edad del paciente: {medical_context.patient_age or "Desconocida"}
 - Género del paciente: {medical_context.patient_gender or "No especificado"}
 - Propiedades de la condición: {json.dumps(medical_context.condition_properties, indent=2)}
 - Razonamiento médico: {medical_context.medical_reasoning}
+{topic_line}
 
 Temas prioritarios a cubrir: {medical_context.priority_topics}
 Temas a EVITAR: {medical_context.avoid_topics}
@@ -928,107 +1451,94 @@ TODAS LAS PREGUNTAS Y RESPUESTAS ANTERIORES (CONTEXTO COMPLETO):
 {qa_history if qa_history else "No hay preguntas previas - esta es la primera pregunta."}
 {"=" * 60}
 
-IMPORTANTE: Revisa TODAS las preguntas y respuestas anteriores para asegurarte de NO repetir preguntas similares o duplicadas. Usa este contexto para entender qué información ya se ha recopilado y qué temas ya se han cubierto.
-
-Información ya recopilada:
+Información ya recolectada:
 - Temas cubiertos: {extracted_info.topics_covered}
-- Brechas de información: {extracted_info.information_gaps if extracted_info.information_gaps else "No hay brechas listadas - genera una pregunta exploratoria relevante según el contexto médico"}
+- Brechas de información (temas que aún necesitan ser cubiertos): {extracted_info.information_gaps if extracted_info.information_gaps else "[]"}
 - Hechos extraídos: {json.dumps(extracted_info.extracted_facts, indent=2)}
-- ¿Ya se mencionó duración?: {extracted_info.already_mentioned_duration}
+- ¿Ya se mencionó la duración?: {extracted_info.already_mentioned_duration}
 - ¿Ya se preguntó sobre medicamentos?: {extracted_info.already_mentioned_medications}
-- Categorías redundantes (NO repetir): {extracted_info.redundant_categories}
+- Categorías redundantes (NO deben repetirse): {extracted_info.redundant_categories}
 
 Progreso: Pregunta {current_count + 1} de {max_count}
+{avoid_similar_block}
 
-{deep_diagnostic_block_sp}
+REGLAS DE FLUJO Y CATEGORÍA:
+- Elige la siguiente pregunta de information_gaps, dando prioridad a temas médicamente importantes.
+- NUNCA elijas un tema que aparezca en redundant_categories o avoid_topics.
+- CRÍTICO: Pregunta sobre SOLO UNA categoría/tema por pregunta. NO combines múltiples categorías.
+- La duración debe preguntarse una vez temprano en la entrevista (SOLO UNA pregunta).
+- Los medicamentos combinados + cuidado en casa/autocuidado deben preguntarse una vez temprano como una sola pregunta (esta es la ÚNICA excepción a la regla de una categoría).
+- Los síntomas asociados deben preguntarse solo una vez, pero para enfermedades crónicas es de alta prioridad temprano.
+- Para condiciones crónicas, las preguntas de chronic_monitoring y screening están reservadas SOLO para modo diagnóstico profundo (después de consentimiento explícito).
+- Para condiciones no crónicas, las preguntas de past_evaluation (pruebas previas o visitas a clínica/urgencias para este problema) están reservadas
+  SOLO para modo diagnóstico profundo; NO preguntes sobre evaluación pasada en el flujo normal.
+- Los temas relacionados con dolor (pain_assessment, pain_characterization, location_radiation) son relevantes solo cuando el dolor es parte de la presentación.
+- Cuando el dolor es un síntoma clave, incluye exactamente una pregunta corta de estilo 'location_radiation' aclarando dónde está el dolor y
+  si se desplaza a algún lugar (por ejemplo al brazo, mandíbula, espalda u otras áreas).
+- La pregunta debe ser CORTA, estilo entrevista (lenguaje natural), no una lista de verificación.
+- Mantén las preguntas concisas: máximo 15-25 palabras. NO crees preguntas largas de múltiples partes.
 
-"REGLAS DE FLUJO Y CATEGORÍAS (OBLIGATORIAS):\n"
-"- Sigue la secuencia global: 1) duración (ya debería estar cubierta salvo que sea la primera pregunta), 2) UNA pregunta combinada de medicamentos + cuidados/remedios caseros, 3) temas de alta prioridad según la enfermedad, 4) síntomas asociados (<=3 únicos), 5) monitoreo crónico (exactamente 2 si es crónica), 6) detección/complicaciones (exactamente 1 si es crónica), 7) categorías restantes (<=1 pregunta cada una), 8) pregunta de cierre solo al final (>=7 preguntas totales o sin temas valiosos pendientes).\n"
-"- Si el médico seleccionó categorías, cúbrelas primero dentro de esta secuencia eligiendo la pregunta más relevante clínicamente.\n"
-"- No preguntes historia familiar en cuadros agudos/infecciosos ni en dolor aislado. En condiciones crónicas, omite preguntas de historial médico / episodios similares ("¿Ha pasado antes?", etc.) a menos que el médico lo haya solicitado explícitamente.\n"
-"- Escenarios agudos/infecciosos: enfócate en duración, síntomas asociados, medicamentos/cuidados caseros, viajes relevantes, episodios previos similares. NO hagas preguntas de monitoreo/detección crónica.\n"
-"- Escenarios de dolor: prioriza duración, caracterización/severidad, desencadenantes/alivio, impacto funcional, medicamentos/cuidados caseros, episodios previos. Evita historia familiar salvo dolor crónico.\n"
-"- Salud de la mujer: incluye síntomas hormonales/ginecológicos, tamizajes recientes (Pap, examen pélvico, mamografía, densitometría, laboratorios hormonales) e historia familiar pertinente. Viajes/alergias solo con justificación.\n"
-"- Enfermedades crónicas (diabetes, hipertensión, asma, tiroides, cardiopatías, cáncer, EPOC, etc.): formula DOS preguntas de monitoreo y UNA de detección/complicaciones mencionando pruebas reales (fondo de ojo/examen de pies/consulta dental + laboratorios renales para diabetes; laboratorios renales, examen retinal y pruebas cardíacas para hipertensión; espirometría, pruebas de alergia, imágenes torácicas y peak-flow basal para asma; TSH/FT4, examen de cuello/ultrasonido, densitometría ósea y ritmo cardíaco para tiroides; panel lipídico, prueba de esfuerzo, Holter/ECG, ecocardiograma para cardiopatías; CT/MRI/PET, marcadores tumorales, biopsias y estudios de estadificación para oncología). Combina screening y complicaciones en una sola pregunta rica.\n"
-"- Guía por edad: <12 y >60 -> sin preguntas menstruales. Ajusta para pubertad, fertilidad o menopausia según corresponda.\n"
-"- No dividas apetito, peso y energía en preguntas separadas; una vez cubierto un aspecto, los demás quedan redundantes.\n"
-"- Preguntas de viaje solo cuando la casilla esté marcada Y el cuadro clínico lo amerite.\n\n"
-
-{duplicate_warning_sp}
-
-INSTRUCCIÓN ESPECIAL: Si las brechas de información están vacías, genera una pregunta exploratoria médicamente relevante basada en la queja principal y las propiedades de la condición. NO hagas una pregunta genérica de "¿algo más?" a menos que sea la última pregunta.
+REGLAS DE TEMA CONDICIONAL (CRÍTICO):
+- Historial de viajes: SOLO pregunta si los síntomas son plausiblemente relacionados con viajes (infecciones, enfermedades endémicas, tiempo de viaje reciente).
+  NO hagas preguntas genéricas de viajes solo porque el paciente viajó.
+- Historial familiar: SOLO pregunta si la condición es crónica o hereditaria (is_hereditary=true o is_chronic=true).
+  Pregunta sobre el historial familiar de la condición ESPECÍFICA, no historial familiar genérico.
+- Historial médico pasado / Alergias: SOLO pregunta si:
+  a) La condición es crónica (interacciones de medicamentos, cuidado continuo), O
+  b) La condición está relacionada con alergias, O
+  c) Queja de alto riesgo (dolor de pecho, dificultad para respirar, anafilaxis, relacionado con medicamentos)
+  NO hagas preguntas genéricas de PMH/alergias solo para llenar el conteo de preguntas.
 
 PREVENCIÓN DE DUPLICADOS:
-
-CRÍTICO: Revisa "Temas cubiertos" y "Categorías redundantes" - estos temas YA fueron preguntados y NO deben repetirse.
-La detección programática de duplicados rechazará cualquier pregunta duplicada, así que asegúrate de que tu pregunta sea sobre un NUEVO tema de "Brechas de información".
-
-VALIDACIÓN OBLIGATORIA antes de generar:
-Paso 1: Identifica qué INFORMACIÓN CENTRAL busca tu pregunta
-Paso 2: Busca en "Temas cubiertos" y "Categorías redundantes"
-Paso 3: Si esa información YA fue preguntada (aunque con palabras diferentes) → OMITE este tema
-Paso 4: Escoge un tema de "Brechas de información" que NO haya sido cubierto
-
-REGLAS CRÍTICAS:
-1. Genera UNA pregunta sobre el siguiente tema más importante que AÚN NO se ha cubierto
-2. Prioriza brechas de información sobre temas prioritarios
-3. NUNCA preguntes sobre temas en "Temas a EVITAR"
-4. NUNCA repitas categorías en "Categorías redundantes" (incluye duración y medicamentos si ya fueron preguntados)
-5. Haz la pregunta clara, específica y amigable para el paciente
-6. La pregunta debe ser tipo entrevista, NO tipo cuestionario
-7. Termina siempre con "?"
-8. NO incluyas razonamiento, categorías o explicaciones - SOLO la pregunta
-
-VALIDACIÓN FINAL OBLIGATORIA:
-Antes de responder, VERIFICA:
-✓ ¿Esta pregunta busca información que YA está en "Temas cubiertos"? → Si SÍ, OMITE este tema
-✓ ¿Esta pregunta es semánticamente similar a alguna pregunta anterior? → Si SÍ, OMITE este tema
-✓ ¿Esta pregunta está en "Categorías redundantes"? → Si SÍ, OMITE este tema
-✓ Escoge SOLO de "Brechas de información"
+- NO repitas lo que ya se ha preguntado claramente en preguntas anteriores.
+- Usa topics_covered y redundant_categories para evitar duplicados.
 
 FORMATO DE SALIDA:
-Responde ÚNICAMENTE con el texto de la pregunta, sin comillas, sin numeración, sin explicaciones.
-Ejemplo de respuesta correcta: ¿Qué medicamentos está tomando actualmente?
+- Responde con SOLO el texto de la pregunta.
+- Sin comillas, sin numeración, sin explicaciones.
+- Termina con un solo carácter "?".
+- Mantén la pregunta CORTA (máximo 15-25 palabras).
+- Enfócate en SOLO UNA categoría/tema.
 
-Genera LA SIGUIENTE pregunta más importante ahora:"""
+REGLAS DE SELECCIÓN DE TEMA:
+- Primero, elige internamente EXACTAMENTE UN tema de information_gaps en el que enfocarte.
+- Ese tema DEBE ser una de estas etiquetas (no inventes etiquetas nuevas):
+  "duration", "associated_symptoms", "symptom_characterization", "current_medications",
+  "pain_assessment", "pain_characterization", "location_radiation", "travel_history",
+  "chronic_monitoring", "screening", "allergies", "past_medical_history", "hpi",
+  "menstrual_cycle", "functional_impact", "daily_impact", "lifestyle_factors",
+  "triggers", "aggravating_factors", "temporal", "progression", "frequency",
+  "past_evaluation", "other", "exploratory", "family_history".
+- NUNCA selecciones un tema que aparezca en redundant_categories o avoid_topics, y NO vuelvas a preguntar sobre ese concepto.
+- Además, si un tema ya aparece en topics_covered, debes evitar volver a preguntarlo,
+  incluso si todavía aparece en information_gaps (asume que eso es ruido).
+- Si "travel_history" está en los temas a EVITAR, no hagas ninguna pregunta relacionada con viajes.
+- Si "family_history" está en los temas a EVITAR, no preguntes sobre historial familiar.
+- Si "allergies" está en los temas a EVITAR, no preguntes sobre alergias.
+- Haz EXACTAMENTE UNA pregunta que se enfoque SOLO en el tema elegido. No mezcles varios temas en una sola pregunta.
 
-        else:  # English
+Genera la siguiente pregunta MÁS importante ahora eligiendo UN tema de information_gaps que
+no esté en redundant_categories o avoid_topics."""
+        else:
             system_prompt = """You are an experienced physician conducting a medical interview.
 
-Your job is to generate ONE medically relevant, clear, and patient-friendly question.
+Your job is to generate ONE medically relevant, clear, and patient-friendly question."""
 
-The question should be appropriate for a medical interview context."""
-
-            deep_diagnostic_block_en = ""
-            if is_deep_diagnostic:
-                deep_diagnostic_block_en = (
-                    "🔍 DEEP DIAGNOSTIC MODE: The patient agreed to answer detailed diagnostic questions. "
-                    "This is deep diagnostic question #" + str(current_count - 9) + " of 3.\n\n"
-                    "CRITICAL: These questions must be DEEPLY DIAGNOSTIC - NOT basic questions like 'how long', "
-                    "'when did it start', 'duration', 'medications', etc. Those have already been asked.\n\n"
-                    "Generate HIGHLY SPECIFIC diagnostic questions that explore:\n"
-                    "- Specific symptom patterns, triggers, or associations\n"
-                    "- Detailed characterization of symptoms (quality, radiation, timing)\n"
-                    "- Impact on specific body systems or functions\n"
-                    "- Detailed history related to the chief complaint\n"
-                    "- Specific diagnostic clues or red flags\n\n"
-                    "Examples of GOOD deep diagnostic questions:\n"
-                    "- 'Can you describe the exact pattern of your [symptom] - does it come in waves, is it constant, or does it have specific triggers?'\n"
-                    "- 'When you experience [symptom], does it radiate to any other part of your body, and if so, where exactly?'\n"
-                    "- 'Have you noticed any specific time of day or circumstances when [symptom] is worse or better?'\n"
-                    "- 'Are there any specific activities, positions, or movements that trigger or worsen your [symptom]?'\n\n"
-                    "Examples of BAD questions (DO NOT ask these - they're too basic):\n"
-                    "- 'How long have you had this?' (already asked)\n"
-                    "- 'What medications are you taking?' (already asked)\n"
-                    "- 'Can you describe your symptoms?' (too generic)\n\n"
-                )
-
-            duplicate_warning_en = ""
+            avoid_similar_block = ""
             if avoid_similar_to:
-                duplicate_warning_en = (
-                    f"⚠️ CRITICAL WARNING: The question '{avoid_similar_to}' was REJECTED as duplicate. "
-                    "You MUST generate a COMPLETELY DIFFERENT question about a DIFFERENT TOPIC. DO NOT rephrase the same question.\n"
-                )
+                avoid_similar_block = f"""
+
+AVOID SIMILAR QUESTION:
+- Do NOT ask anything semantically similar to this previous question:
+  "{avoid_similar_to}"
+- Do not repeat the same intent or wording. Choose a new angle or topic.
+"""
+
+            topic_line = (
+                f"Topic you MUST focus on for this question: {chosen_topic}"
+                if chosen_topic
+                else "Topic you MUST focus on for this question: general_closing"
+            )
 
             user_prompt = f"""
 Medical context:
@@ -1037,6 +1547,7 @@ Medical context:
 - Patient gender: {medical_context.patient_gender or "Not specified"}
 - Condition properties: {json.dumps(medical_context.condition_properties, indent=2)}
 - Medical reasoning: {medical_context.medical_reasoning}
+{topic_line}
 
 Priority topics to cover: {medical_context.priority_topics}
 Topics to AVOID: {medical_context.avoid_topics}
@@ -1046,69 +1557,74 @@ ALL PREVIOUS QUESTIONS AND ANSWERS (FULL CONTEXT):
 {qa_history if qa_history else "No previous questions - this is the first question."}
 {"=" * 60}
 
-IMPORTANT: Review ALL previous questions and answers above to ensure you do NOT repeat similar or duplicate questions. Use this context to understand what information has already been collected and what topics have already been covered.
-
 Information already collected:
 - Topics covered: {extracted_info.topics_covered}
-- Information gaps: {extracted_info.information_gaps if extracted_info.information_gaps else "No gaps listed - generate an exploratory follow-up question based on medical context"}
+- Information gaps (topics that still need to be covered): {extracted_info.information_gaps if extracted_info.information_gaps else "[]"}
 - Extracted facts: {json.dumps(extracted_info.extracted_facts, indent=2)}
 - Duration already mentioned?: {extracted_info.already_mentioned_duration}
 - Medications already asked?: {extracted_info.already_mentioned_medications}
-- Redundant categories (DO NOT repeat): {extracted_info.redundant_categories}
+- Redundant categories (must NOT be repeated): {extracted_info.redundant_categories}
 
 Progress: Question {current_count + 1} of {max_count}
+{avoid_similar_block}
 
-{deep_diagnostic_block_en}
+FLOW & CATEGORY RULES:
+- Choose the next question from information_gaps, giving priority to medically important topics.
+- NEVER pick a topic that appears in redundant_categories or avoid_topics.
+- CRITICAL: Ask about ONLY ONE category/topic per question. Do NOT combine multiple categories.
+- Duration should be asked once early in the interview (ONE question only).
+- Combined medications + home/self-care should be asked once early as a single question (this is the ONLY exception to one-category rule).
+- Associated symptoms should be asked only once, but for chronic diseases it is high-priority early.
+- For chronic conditions, chronic_monitoring and screening questions are reserved for deep diagnostic mode ONLY (after explicit consent).
+- For non-chronic conditions, past_evaluation questions (previous tests or ER/clinic visits for this problem) are reserved
+  for deep diagnostic mode ONLY; do NOT ask about past evaluation in the normal flow.
+- Pain-related topics (pain_assessment, pain_characterization, location_radiation) are relevant only when pain is part of the presentation.
+- When pain is a key symptom, include exactly one short 'location_radiation' style question clarifying where the pain is and
+  whether it travels anywhere (for example to arm, jaw, back, or other areas).
+- Question must be SHORT, interview-style (natural language), not a checklist.
+- Keep questions concise: 15-25 words maximum. Do NOT create long multi-part questions.
 
-"FLOW & CATEGORY RULES (MANDATORY):\n"
-"- Follow the global sequence: 1) duration (already asked unless this is Q1), 2) one combined medications + home/self-care question, 3) disease-specific high-priority items, 4) associated symptoms (<=3 unique), 5) chronic monitoring (exactly 2 when chronic), 6) chronic screening/complication (exactly 1 when chronic), 7) remaining categories (<=1 question each), 8) closing question only at the end (>=7 total questions or no high-value topics left).\n"
-"- If the doctor selected categories, address them first within that sequence while choosing the most clinically relevant question.\n"
-"- Do not ask family history for purely acute infections or isolated pain complaints. For chronic conditions, SKIP any past medical history / "have you had this before" questions unless the doctor explicitly selected that category.\n"
-"- Acute/infectious scenarios: focus on duration, associated symptoms, combined meds/home care, relevant travel exposure, prior similar episodes. NO chronic monitoring/screening questions.\n"
-"- Pain scenarios: emphasise duration, pain character/severity, triggers/relief, functional impact, combined meds/home care, previous similar episodes. Avoid family history unless managing chronic pain.\n"
-"- Women's health: include hormonal/gynecologic symptoms, recent screenings (Pap, pelvic exam, mammogram, bone density, hormone labs) and pertinent family history. Travel/allergy questions only when justified.\n"
-"- Chronic diseases (diabetes, hypertension, asthma, thyroid, heart disease, cancer, COPD, etc.): ensure TWO monitoring questions and ONE screening/complication question referencing real tests (eye/foot/dental + kidney labs for diabetes; kidney labs, retinal exam and cardiac testing for hypertension; pulmonary function test, allergy testing, chest imaging and peak-flow baseline for asthma; TSH/FT4, neck exam/ultrasound, bone density and heart rhythm checks for thyroid; lipid panel, stress test, Holter/ECG, echocardiogram for heart disease; CT/MRI/PET, tumour markers, biopsies and staging labs for oncology). Combine screening and complications into a single rich question.\n"
-"- Apply age guidance: <12 and >60 -> no menstrual questions. Adjust for puberty, fertility or menopause as appropriate.\n"
-"- Do not split appetite, weight and energy into separate questions; once covered, treat the others as redundant.\n"
-"- Travel questions only when the travel checkbox is true AND symptoms justify it.\n\n"
-
-{duplicate_warning_en}
-
-SPECIAL INSTRUCTION: If information_gaps is empty, generate a medically relevant exploratory question based on the chief complaint and condition properties. Do NOT ask a generic "anything else?" question unless this is the last question.
+CONDITIONAL TOPIC RULES (CRITICAL):
+- Travel history: ONLY ask if symptoms are plausibly travel-related (infections, endemic diseases, recent travel timing).
+  Do NOT ask generic travel questions just because patient traveled.
+- Family history: ONLY ask if condition is chronic or hereditary (is_hereditary=true or is_chronic=true).
+  Ask about family history of the SPECIFIC condition, not generic family history.
+- Past medical history / Allergies: ONLY ask if:
+  a) Condition is chronic (medication interactions, ongoing care), OR
+  b) Condition is allergy-related, OR
+  c) High-risk complaint (chest pain, SOB, anaphylaxis, medication-related)
+  Do NOT ask generic PMH/allergy questions just to fill question count.
 
 DUPLICATE PREVENTION:
-
-CRITICAL: Check "Topics covered" and "Redundant categories" - these topics have ALREADY been asked and must NOT be repeated.
-Programmatic duplicate detection will reject any duplicate questions, so ensure your question is about a NEW topic from "Information gaps".
-
-MANDATORY VALIDATION before generating:
-Step 1: Identify what CORE INFORMATION your question seeks
-Step 2: Check "Topics covered" and "Redundant categories"
-Step 3: If that information was ALREADY asked (even with different words) → SKIP this topic
-Step 4: Choose a topic from "Information gaps" that has NOT been covered
-
-CRITICAL RULES:
-1. Generate ONE question about the next most important topic that has NOT been covered
-2. Prioritize information gaps from priority topics
-3. NEVER ask about topics in "Topics to AVOID"
-4. NEVER repeat categories in "Redundant categories" (includes duration and medications if already asked)
-5. Make the question clear, specific, and patient-friendly
-6. Question should be interview-style, NOT questionnaire-style
-7. Always end with "?"
-8. DO NOT include reasoning, categories, or explanations - ONLY the question
-
-MANDATORY FINAL VALIDATION:
-Before responding, VERIFY:
-✓ Does this question seek information ALREADY in "Topics covered"? → If YES, SKIP this topic
-✓ Is this question semantically similar to any previous question? → If YES, SKIP this topic
-✓ Is this question in "Redundant categories"? → If YES, SKIP this topic
-✓ Choose ONLY from "Information gaps"
+- Do NOT repeat what has already been clearly asked in previous questions.
+- Use topics_covered and redundant_categories to avoid duplicates.
 
 OUTPUT FORMAT:
-Respond with ONLY the question text, without quotes, without numbering, without explanations.
-Example of correct response: What medications are you currently taking?
+- Respond with ONLY the question text.
+- No quotes, no numbering, no explanations.
+- End with a single "?" character.
+- Keep the question SHORT (15-25 words maximum).
+- Focus on ONE category/topic only.
 
-Generate THE NEXT most important question now:"""
+TOPIC SELECTION RULES:
+- First, internally choose EXACTLY ONE topic from information_gaps to focus on.
+- That topic MUST be one of these labels only (do not invent new labels):
+  "duration", "associated_symptoms", "symptom_characterization", "current_medications",
+  "pain_assessment", "pain_characterization", "location_radiation", "travel_history",
+  "chronic_monitoring", "screening", "allergies", "past_medical_history", "hpi",
+  "menstrual_cycle", "functional_impact", "daily_impact", "lifestyle_factors",
+  "triggers", "aggravating_factors", "temporal", "progression", "frequency",
+  "past_evaluation", "other", "exploratory", "family_history".
+- NEVER select a topic that appears in redundant_categories or avoid_topics, and do NOT ask about that concept again.
+- Additionally, if a topic appears in topics_covered, strongly avoid asking about it again,
+  even if it still appears in information_gaps (assume that is noise).
+- If "travel_history" is in Topics to AVOID, do not ask any travel-related question at all.
+- If "family_history" is in Topics to AVOID, do not ask about family history.
+- If "allergies" is in Topics to AVOID, do not ask about allergies.
+- Ask exactly ONE question that focuses ONLY on the chosen topic. Do not mix multiple topics in one question.
+
+Generate the NEXT most important question now by choosing ONE topic from information_gaps that
+is not in redundant_categories or avoid_topics."""
 
         try:
             response = await self._client.chat(
@@ -1117,56 +1633,92 @@ Generate THE NEXT most important question now:"""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=200,  # Increased to avoid truncation
-                temperature=0.2,  # Lower for stricter adherence to rules and less creativity
+                max_tokens=100,  # Reduced to enforce shorter, single-topic questions
+                temperature=0.2,
             )
-            
-            # Extract text from response object
             response_text = response.choices[0].message.content.strip()
-            
-            # Clean up the question with robust formatting
-            question = response_text.strip()
-            
-            # Remove wrapping quotes (single or double) that LLM might add
-            if (question.startswith('"') and question.endswith('"')) or \
-               (question.startswith("'") and question.endswith("'")):
-                question = question[1:-1].strip()
-            
-            # Remove newlines and extra spaces
-            question = question.replace("\n", " ").strip()
-            question = ' '.join(question.split())  # Normalize whitespace
-            
-            # Remove any trailing punctuation before adding final "?"
-            question = question.rstrip('?.!,;:')
-            
-            # Add single question mark
-            if not question.endswith("?"):
-                question = question + "?"
-            
-            # Final validation: remove double question marks if any
-            while "??" in question:
-                question = question.replace("??", "?")
-            
+            question = self._postprocess_question_text(response_text)
+
+            # Optional semantic similarity guard for avoid_similar_to (normal mode only)
+            if avoid_similar_to and self._too_similar(question, avoid_similar_to):
+                logger.warning(
+                    "Agent 3: Generated question is too similar to avoid_similar_to; "
+                    "falling back to a generic clarification question."
+                )
+                if lang == "sp":
+                    question = "¿Puede contarme un poco más sobre cómo se ha presentado este problema para usted?"
+                else:
+                    question = "Can you tell me a bit more detail about how this problem has been occurring for you?"
+
             logger.info(f"Generated question (cleaned): {question}")
-            
             return question
-            
+
         except Exception as e:
             logger.error(f"Question generation failed: {e}")
-            # Fallback question
             if lang == "sp":
                 return "¿Puede contarme más sobre cómo se siente?"
             return "Can you tell me more about how you're feeling?"
-    
+
+    def _too_similar(self, a: Optional[str], b: Optional[str]) -> bool:
+        """Heuristic check for semantic similarity between two questions."""
+        if not a or not b:
+            return False
+
+        a_norm = a.lower().strip(" ?!.;,")
+        b_norm = b.lower().strip(" ?!.;,")
+        if not a_norm or not b_norm:
+            return False
+
+        a_tokens = set(a_norm.split())
+        b_tokens = set(b_norm.split())
+        if not a_tokens or not b_tokens:
+            return False
+
+        overlap = len(a_tokens & b_tokens)
+        min_len = min(len(a_tokens), len(b_tokens))
+        return overlap >= max(3, int(0.6 * min_len))
+
+    def _postprocess_question_text(self, question: str) -> str:
+        """Normalize and clean up question text."""
+        if not question:
+            return question
+
+        q = question.strip()
+
+        # Strip surrounding quotes
+        if (q.startswith('"') and q.endswith('"')) or (q.startswith("'") and q.endswith("'")):
+            q = q[1:-1].strip()
+
+        # Remove leading "Q:" or numbering (e.g., "1. ")
+        q = re.sub(r"^(q:|\d+\.)\s*", "", q, flags=re.IGNORECASE)
+
+        # Normalize whitespace
+        q = q.replace("\n", " ")
+        q = " ".join(q.split())
+
+        # Remove trailing punctuation (we will add a single "?")
+        q = q.rstrip("?.!,;:")
+
+        # Soft word limit (keep questions reasonably short)
+        words = q.split()
+        if len(words) > 30:
+            q = " ".join(words[:30]).rstrip("?.!,;:")
+
+        if not q.endswith("?"):
+            q = q + "?"
+
+        while "??" in q:
+            q = q.replace("??", "?")
+
+        return q
+
     def _format_qa_pairs(self, qa_pairs: List[Dict[str, str]]) -> str:
-        """Format Q&A pairs for context"""
         formatted = []
         for i, qa in enumerate(qa_pairs, 1):
             formatted.append(f"{i}. Q: {qa['question']}\n   A: {qa['answer']}")
         return "\n\n".join(formatted)
-    
+
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code"""
         if not language:
             return "en"
         normalized = language.lower().strip()
@@ -1189,189 +1741,234 @@ class ValidationResult:
 
 class SafetyValidator:
     """Agent 4: Validates questions against hard safety constraints"""
-    
+
     def __init__(self, client, settings):
         self._client = client
         self._settings = settings
-    
+
     async def validate_question(
         self,
         question: str,
         medical_context: MedicalContext,
         asked_questions: List[str],
-        language: str = "en"
+        language: str = "en",
+        recently_travelled: bool = False,
     ) -> ValidationResult:
-        """
-        Validate question against hard safety constraints.
-        This is the final safety check before returning to patient.
-        """
-        
-        issues = []
-        
-        # VALIDATION 1: Format check
-        if not question or len(question) < 10:
+
+        issues: List[str] = []
+
+        condition_props = getattr(medical_context, "condition_properties", {}) or {}
+        is_chronic = bool(condition_props.get("is_chronic", False))
+        is_hereditary = bool(condition_props.get("is_hereditary", False))
+        is_allergy_related = bool(condition_props.get("is_allergy_related", False))
+        is_travel_related = bool(condition_props.get("is_travel_related", False))
+        chief_complaint_lower = (getattr(medical_context, "chief_complaint", "") or "").lower()
+
+        if not question or len(question.strip()) < 10:
             issues.append("Question too short")
-        
+
         if not question.endswith("?"):
             question = question.rstrip(".") + "?"
-        
-        # VALIDATION 2: Gender appropriateness
+
+        # Gender / age safety checks (menstrual questions)
         if medical_context.patient_gender:
             gender_lower = medical_context.patient_gender.lower()
             question_lower = question.lower()
-            
-            # Check for menstrual questions to male patients
             if gender_lower in ["male", "m", "masculino", "hombre"]:
-                menstrual_keywords = [
-                    "menstrual", "period", "menstruation", "menstruo", "periodo",
-                    "menstruación", "regla", "ciclo menstrual", "menstrual cycle"
-                ]
-                if any(keyword in question_lower for keyword in menstrual_keywords):
+                if any(k in question_lower for k in MENSTRUAL_KEYWORDS):
                     issues.append("Menstrual question asked to male patient (CRITICAL VIOLATION)")
-        
-        # VALIDATION 3: Age appropriateness
+
         if medical_context.patient_age is not None:
             age = medical_context.patient_age
             question_lower = question.lower()
-            
-            # Check for menstrual questions outside 12-60 age range
             if age < 12 or age > 60:
-                menstrual_keywords = [
-                    "menstrual", "period", "menstruation", "menstruo", "periodo",
-                    "menstruación", "regla", "ciclo menstrual", "menstrual cycle"
-                ]
-                if any(keyword in question_lower for keyword in menstrual_keywords):
+                if any(k in question_lower for k in MENSTRUAL_KEYWORDS):
                     issues.append(f"Menstrual question asked to age {age} (CRITICAL VIOLATION)")
-        
-        # VALIDATION 4: Enhanced duplication check with semantic awareness
+
+        # Travel safety: only ask travel-related questions if condition is travel-related AND patient recently traveled
+        question_lower = question.lower()
+        if (not recently_travelled or not is_travel_related) and any(
+            kw in question_lower for kw in TRAVEL_KEYWORDS
+        ):
+            issues.append(
+                "Travel-related question asked for non-travel condition or patient not recently traveled (CRITICAL VIOLATION)"
+            )
+
+        # Family history safety: warn if asked for non-chronic/non-hereditary conditions
+        family_history_keywords = [
+            "family history",
+            "family medical history",
+            "historial familiar",
+            "antecedentes familiares",
+        ]
+        if (not is_chronic and not is_hereditary) and any(
+            kw in question_lower for kw in family_history_keywords
+        ):
+            issues.append(
+                "Family history asked for non-chronic/non-hereditary condition (safety warning)"
+            )
+
+        # PMH / allergies safety: warn if not clinically indicated
+        is_high_risk_complaint = any(
+            kw in chief_complaint_lower for kw in HIGH_RISK_COMPLAINT_KEYWORDS
+        )
+        pmh_allergy_keywords = [
+            "past medical history",
+            "medical history",
+            "conditions you have had",
+            "allergies",
+            "drug allergies",
+            "alergias",
+            "antecedentes médicos",
+            "antecedentes de salud",
+        ]
+        should_ask_pmh_or_allergies = is_chronic or is_allergy_related or is_high_risk_complaint
+        if not should_ask_pmh_or_allergies and any(
+            kw in question_lower for kw in pmh_allergy_keywords
+        ):
+            issues.append(
+                "Past medical history / allergy question asked when not clinically indicated (safety warning)"
+            )
+
+        # Duplicate / semantic similarity checks
         question_normalized = question.lower().strip().rstrip("?.")
-        
-        # Define semantic equivalence patterns
         semantic_patterns = {
-            "symptom_description": ["describe", "symptoms", "feeling", "experiencing", "concern"],
-            "duration": ["how long", "when", "started", "began", "duration"],
-            "medications": ["medication", "medicine", "drug", "taking", "treatment"],
-            "other_symptoms": ["other symptoms", "additional", "associated", "along with"],
-            "progression": ["changed", "progressed", "worse", "better", "over time", "past week"],
-            "daily_impact": ["daily", "activities", "life", "affected", "impact"],
+            "symptom_description": [
+                "describe", "symptoms", "feeling", "experiencing", "concern",
+                "síntomas", "sentir",
+            ],
+            "duration": [
+                "how long", "when", "started", "began", "duration",
+                "tiempo", "cuánto tiempo", "desde cuándo",
+            ],
+            "medications": [
+                "medication", "medicine", "drug", "taking", "treatment",
+                "medicamentos", "medicina", "tratamiento",
+            ],
+            "other_symptoms": [
+                "other symptoms", "additional", "associated", "along with",
+                "otros síntomas", "además de",
+            ],
+            "progression": [
+                "changed", "progressed", "worse", "better", "over time", "past week",
+                "empeorado", "mejorado",
+            ],
+            "daily_impact": [
+                "daily", "activities", "life", "affected", "impact",
+                "día a día", "actividades", "vida diaria",
+            ],
         }
-        
+
         def get_question_intent(q: str) -> set:
-            """Extract semantic intent from question"""
             q_lower = q.lower()
             intents = set()
             for intent, keywords in semantic_patterns.items():
                 if sum(1 for kw in keywords if kw in q_lower) >= 2:
                     intents.add(intent)
             return intents
-        
+
         current_intent = get_question_intent(question_normalized)
-        
+
         for prev_q in asked_questions:
             prev_normalized = prev_q.lower().strip().rstrip("?.")
-            
-            # Check 1: Exact or very similar text match
             if question_normalized == prev_normalized:
                 issues.append(f"Question is exact duplicate of: '{prev_q}' (CRITICAL VIOLATION)")
                 continue
-            
-            # Check 2: High word overlap similarity
+
             similarity_score = self._calculate_similarity(question_normalized, prev_normalized)
-            if similarity_score > 0.85:
-                issues.append(f"Question is very similar to: '{prev_q}' (similarity: {similarity_score:.2f})")
-                continue
-            
-            # Check 3: Semantic intent overlap
+
             prev_intent = get_question_intent(prev_normalized)
+
+            # High similarity tier – near-exact duplicate
+            if similarity_score >= 0.9:
+                issues.append(
+                    f"Question is near-exact duplicate of: '{prev_q}' "
+                    f"(similarity: {similarity_score:.2f}, CRITICAL VIOLATION)"
+                )
+                continue
+
+            # Very similar AND same intent → treat as critical duplicate
+            if similarity_score >= 0.8 and current_intent and prev_intent and current_intent == prev_intent:
+                issues.append(
+                    f"Question is very similar with same intent as: '{prev_q}' "
+                    f"(similarity: {similarity_score:.2f}, intent: {current_intent}, CRITICAL VIOLATION)"
+                )
+                continue
+
+            # Medium similarity tier – strong warning (different intent)
+            if 0.8 <= similarity_score < 0.9:
+                issues.append(
+                    f"Question is very similar to: '{prev_q}' (similarity: {similarity_score:.2f})"
+                )
+                continue
+
             if current_intent and prev_intent and current_intent == prev_intent:
                 issues.append(f"Question has same semantic intent as: '{prev_q}' (intent: {current_intent})")
                 continue
-            
-            # Check 4: High word overlap with lower threshold but same key concepts
+
             if similarity_score > 0.65:
-                # Check if they share the same core medical concept
-                core_medical_terms = ["symptom", "medication", "duration", "pain", "condition", "treatment"]
-                q_terms = [term for term in core_medical_terms if term in question_normalized]
-                prev_terms = [term for term in core_medical_terms if term in prev_normalized]
+                core_medical_terms = [
+                    "symptom", "síntoma", "medication", "medicamento",
+                    "duration", "duración", "pain", "dolor",
+                    "condition", "condición", "treatment", "tratamiento",
+                ]
+                q_terms = [t for t in core_medical_terms if t in question_normalized]
+                prev_terms = [t for t in core_medical_terms if t in prev_normalized]
                 if q_terms and prev_terms and set(q_terms) == set(prev_terms):
                     issues.append(f"Question semantically similar to: '{prev_q}' (similarity: {similarity_score:.2f})")
-        
-        # VALIDATION 5: Output format
+
         if "\n" in question:
             question = question.replace("\n", " ")
             issues.append("Question contained newlines (auto-corrected)")
-        
-        # If critical violations, generate fallback or flag for regeneration
+
+        # Question complexity / length checks (non-critical for now)
+        word_count = len(question.split())
+        if word_count > 30:
+            issues.append("Question too long / possibly multi-part")
+        if question.count(" and ") >= 2 or question.count(" o ") >= 2:
+            issues.append("Question appears multi-part (more than one 'and'/'o')")
+
+        # Optional: core_symptom_phrase overuse warning
+        core_symptom = getattr(medical_context, "core_symptom_phrase", None)
+        if core_symptom:
+            core_lower = core_symptom.lower().strip()
+            if core_lower:
+                prev_core_uses = sum(
+                    1 for q in asked_questions if core_lower in (q or "").lower()
+                )
+                if prev_core_uses >= 2 and core_lower in question.lower():
+                    issues.append(
+                        f"Core symptom phrase '{core_symptom}' over-used across questions"
+                    )
+
         critical_violations = [i for i in issues if "CRITICAL VIOLATION" in i]
         if critical_violations:
             logger.error(f"Critical safety violation detected: {critical_violations}")
-            # For duplicate questions, we need to force Agent 3 to generate a different question
-            # Return None to signal that question generation should be retried
-            if any("duplicate" in v.lower() for v in critical_violations):
-                logger.error(f"Duplicate question detected and blocked: '{question}'")
-                # Generate a diversified safe exploratory question based on asked questions
-                lang = self._normalize_language(language)
-                question = self._generate_diverse_fallback(asked_questions, lang)
+            lang = self._normalize_language(language)
+            if lang == "sp":
+                question = "¿Hay algo más sobre su condición que le gustaría compartir?"
             else:
-                # For other critical violations (gender/age)
-                lang = self._normalize_language(language)
-                if lang == "sp":
-                    question = "¿Hay algo más sobre su condición que le gustaría compartir?"
-                else:
-                    question = "Is there anything else about your condition you'd like to share?"
-        
+                question = "Is there anything else about your condition you'd like to share?"
+
         is_valid = len(critical_violations) == 0
-        
         return ValidationResult(
             is_valid=is_valid,
             issues=issues,
             corrected_question=question
         )
-    
+
     def _calculate_similarity(self, str1: str, str2: str) -> float:
-        """Simple similarity calculation based on word overlap"""
-        words1 = set(str1.split())
-        words2 = set(str2.split())
-        
+        if not str1 or not str2:
+            return 0.0
+        words1 = {w for w in str1.split() if w and w not in SIMILARITY_STOPWORDS}
+        words2 = {w for w in str2.split() if w and w not in SIMILARITY_STOPWORDS}
         if not words1 or not words2:
             return 0.0
-        
         intersection = words1.intersection(words2)
         union = words1.union(words2)
-        
         return len(intersection) / len(union) if union else 0.0
-    
-    def _generate_diverse_fallback(self, asked_questions: List[str], language: str) -> str:
-        """Generate a diverse fallback question that won't duplicate previous ones"""
-        fallback_options_en = [
-            "Can you share more details that might help us better understand your condition?",
-            "Is there anything about your symptoms that we haven't covered yet?",
-            "What other information do you think would be helpful for us to know?",
-            "Are there any recent changes in your health that you'd like to mention?",
-            "Is there anything else about your condition that concerns you?"
-        ]
-        
-        fallback_options_sp = [
-            "¿Puede compartir más detalles que puedan ayudarnos a entender mejor su condición?",
-            "¿Hay algo sobre sus síntomas que aún no hayamos cubierto?",
-            "¿Qué otra información cree que sería útil que supiéramos?",
-            "¿Ha habido cambios recientes en su salud que le gustaría mencionar?",
-            "¿Hay algo más sobre su condición que le preocupe?"
-        ]
-        
-        options = fallback_options_sp if language == "sp" else fallback_options_en
-        
-        # Find a fallback that hasn't been asked yet
-        asked_lower = [q.lower() for q in asked_questions]
-        for fallback in options:
-            if fallback.lower() not in asked_lower:
-                return fallback
-        
-        # If all have been asked (unlikely), return the first one
-        return options[0]
-    
+
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code"""
         if not language:
             return "en"
         normalized = language.lower().strip()
@@ -1388,52 +1985,38 @@ class OpenAIQuestionService(QuestionService):
     """
     Main Question Service using Multi-Agent Architecture
     Optimized for medical accuracy with intelligent reasoning
-    
-    This replaces the previous 837-line prompt system with dynamic agents.
     """
-    
+
     def __init__(self) -> None:
-        import os
-        from pathlib import Path
-        
         try:
-            from dotenv import load_dotenv
+            from dotenv import load_dotenv  # noqa: F401
         except Exception:
             load_dotenv = None
-        
-        # Load settings
+
         self._settings = get_settings()
         self._debug_prompts = getattr(self._settings, "debug_prompts", False)
-        
-        # Require Azure OpenAI - no fallback to standard OpenAI
+
         azure_openai_configured = (
-            self._settings.azure_openai.endpoint and 
+            self._settings.azure_openai.endpoint and
             self._settings.azure_openai.api_key
         )
-        
         if not azure_openai_configured:
             raise ValueError(
-                "Azure OpenAI is required. Please configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
-                "Fallback to standard OpenAI is disabled for data security."
+                "Azure OpenAI is required. Please configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY."
             )
-        
-        # Verify deployment names are configured
         if not self._settings.azure_openai.deployment_name:
             raise ValueError(
                 "Azure OpenAI deployment name is required. Please set AZURE_OPENAI_DEPLOYMENT_NAME."
             )
-        
-        # Initialize centralized Azure AI client (no fallback)
+
         self._client = get_ai_client()
-        
-        # Initialize agents
         self._context_analyzer = MedicalContextAnalyzer(self._client, self._settings)
         self._answer_extractor = AnswerExtractor(self._client, self._settings)
         self._question_generator = QuestionGenerator(self._client, self._settings)
         self._safety_validator = SafetyValidator(self._client, self._settings)
-        
+
         logger.info("Multi-Agent Question Service initialized")
-    
+
     async def _chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -1442,10 +2025,9 @@ class OpenAIQuestionService(QuestionService):
         patient_id: str = None,
         prompt_name: str = None,
     ) -> str:
-        """Helper method for direct chat completion (used by other methods)"""
         try:
             if self._debug_prompts:
-                logger.debug("[QuestionService] Sending messages to OpenAI:\n%s", messages)
+                logger.debug("[QuestionService] Sending messages:\n%s", messages)
 
             resp = await self._client.chat(
                 messages=messages,
@@ -1456,15 +2038,14 @@ class OpenAIQuestionService(QuestionService):
             output = resp.choices[0].message.content.strip()
 
             if self._debug_prompts:
-                logger.debug("[QuestionService] Received response: %s", output)
+                logger.debug("[QuestionService] Response: %s", output)
 
             return output
         except Exception:
             logger.error("[QuestionService] OpenAI call failed", exc_info=True)
             return ""
-    
+
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code to handle both 'sp' and 'es' for backward compatibility."""
         if not language:
             return "en"
         normalized = language.lower().strip()
@@ -1472,325 +2053,423 @@ class OpenAIQuestionService(QuestionService):
             return 'sp'
         return normalized if normalized in ['en', 'sp'] else 'en'
 
-    def _get_topic_count(
-        self,
-        extracted_info: ExtractedInformation,
-        topic_keys: List[str],
-    ) -> int:
-        """Count how many times any of the given topic keys have been asked."""
-        if not extracted_info:
-            return 0
-        
-        total = 0
-        if extracted_info.topic_counts:
-            for key in topic_keys:
-                total += extracted_info.topic_counts.get(key, 0)
-        else:
-            counter = Counter(extracted_info.topics_covered or [])
-            for key in topic_keys:
-                total += counter.get(key, 0)
-        return total
-
-    def _enforce_topic_requirement(
-        self,
-        extracted_info: ExtractedInformation,
-        topic_en: str,
-        topic_sp: str,
-        required_count: int,
-        language: str,
-        insert_after: Optional[List[str]] = None,
-        log_context: Optional[str] = None,
-    ) -> int:
-        """
-        Ensure a topic appears the required number of times by adjusting information_gaps/redundant_categories.
-        """
-        lang = self._normalize_language(language)
-        topic_name = topic_sp if lang == "sp" else topic_en
-        topic_keys = [topic_en, topic_sp]
-        
-        count = self._get_topic_count(extracted_info, topic_keys)
-        
-        info_gaps = list(extracted_info.information_gaps or [])
-        redundant = list(extracted_info.redundant_categories or [])
-        
-        if count < required_count:
-            if topic_name not in info_gaps:
-                insert_pos = 0
-                if insert_after:
-                    insert_pos = len(info_gaps)
-                    for i, name in enumerate(info_gaps):
-                        if name in insert_after:
-                            insert_pos = i + 1
-                insert_pos = max(0, min(insert_pos, len(info_gaps)))
-                info_gaps.insert(insert_pos, topic_name)
-                if log_context:
-                    logger.warning(
-                        f"{log_context} requirement not met (count={count} < {required_count}). "
-                        f"Added '{topic_name}' to information_gaps at position {insert_pos}"
-                    )
-            if topic_name in redundant:
-                redundant.remove(topic_name)
-        else:
-            if topic_name in info_gaps:
-                info_gaps.remove(topic_name)
-            if topic_name not in redundant:
-                redundant.append(topic_name)
-        
-        extracted_info.information_gaps = info_gaps
-        extracted_info.redundant_categories = redundant
-        return count
-    
     async def generate_first_question(self, disease: str, language: str = "en") -> str:
-        """Generate the first intake question"""
         lang = self._normalize_language(language)
         if lang == "sp":
             return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?"
         return "Why have you come in today? What is the main concern you want help with?"
-    
+
     async def generate_next_question(
         self,
         disease: str,
         previous_answers: List[str],
         asked_questions: List[str],
         current_count: int,
-        max_count: int = 10,  # Default max
-        asked_categories: Optional[List[str]] = None,  # Ignored (deprecated)
+        max_count: int = 10,
+        asked_categories: Optional[List[str]] = None,
         recently_travelled: bool = False,
+        travel_questions_count: int = 0,
         prior_summary: Optional[Any] = None,
         prior_qas: Optional[List[str]] = None,
         patient_gender: Optional[str] = None,
         patient_age: Optional[int] = None,
         language: str = "en",
     ) -> str:
-        """
-        Generate next question using multi-agent pipeline.
-        
-        This replaces the massive 837-line prompt with intelligent reasoning.
-        """
-        
+
         try:
-            max_count = max(1, min(14, max_count))
-            # AGENT 1: Analyze medical context
+            # Clamp max_count to settings limit
+            settings = self._settings
+            max_count = max(1, min(settings.intake.max_questions, max_count))
+            lang = self._normalize_language(language)
+
+            # Q8: explicit consent question for deep diagnostic
+            # current_count is zero-based, so current_count == 7 means we are about to ask Question 8
+            if current_count == 7:
+                logger.info("Q8 reached - generating diagnostic consent question")
+                if lang == "sp":
+                    return "¿Le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?"
+                return "Would you like to answer some detailed diagnostic questions related to your symptoms?"
+
+            # ------------------------------------------------------------------
+            # Agent 1: medical context (condition-level reasoning)
+            # ------------------------------------------------------------------
             logger.info(f"Agent 1: Analyzing medical context for '{disease}'")
             medical_context = await self._context_analyzer.analyze_condition(
                 chief_complaint=disease,
                 patient_age=patient_age,
                 patient_gender=patient_gender,
                 recently_travelled=recently_travelled,
-                language=language
+                language=language,
             )
-            
-            # AGENT 2: Extract what's been covered
-            logger.info(f"Agent 2: Extracting covered information from {len(asked_questions)} previous questions")
+
+            # ------------------------------------------------------------------
+            # Agent 2: what has already been covered so far
+            # ------------------------------------------------------------------
+            logger.info(f"Agent 2: Extracting coverage from {len(asked_questions)} questions")
             extracted_info = await self._answer_extractor.extract_covered_information(
                 asked_questions=asked_questions,
                 previous_answers=previous_answers,
                 medical_context=medical_context,
-                language=language
+                language=language,
             )
-            
-            # Log Agent 2 output for debugging
-            logger.info(f"Agent 2 Results - Topics covered: {extracted_info.topics_covered}")
-            logger.info(f"Agent 2 Results - Information gaps: {extracted_info.information_gaps}")
-            logger.info(f"Agent 2 Results - Redundant categories: {extracted_info.redundant_categories}")
-            
+
+            # Basic flags from context
             condition_props = medical_context.condition_properties or {}
-            is_chronic = condition_props.get("is_chronic", False)
-            is_pain_related = condition_props.get("is_pain_related", False)
+            is_chronic_flag = condition_props.get("is_chronic", None)  # None = unknown
+            is_chronic = bool(is_chronic_flag) if is_chronic_flag is not None else False
+            is_pain_related = bool(condition_props.get("is_pain_related", False))
 
-            if is_chronic:
-                monitoring_count = self._enforce_topic_requirement(
-                    extracted_info=extracted_info,
-                    topic_en="chronic_monitoring",
-                    topic_sp="monitoreo_crónico",
-                    required_count=2,
-                    language=language,
-                    insert_after=["current_medications", "medicamentos_actuales"],
-                    log_context="Chronic monitoring",
-                )
-                screening_count = self._enforce_topic_requirement(
-                    extracted_info=extracted_info,
-                    topic_en="screening",
-                    topic_sp="detección",
-                    required_count=1,
-                    language=language,
-                    insert_after=[
-                        "chronic_monitoring", "monitoreo_crónico",
-                        "screening", "detección",
-                        "current_medications", "medicamentos_actuales"
-                    ],
-                    log_context="Screening",
-                )
-                logger.info(
-                    f"Chronic disease topic counts -> monitoring: {monitoring_count}, screening: {screening_count}"
-                )
+            # ------------------------------------------------------------------
+            # 1) UPGRADE CHRONIC FLAG BASED ON DURATION / DISEASE NAME (FALLBACK ONLY)
+            #    - Only when Agent-01 did not specify is_chronic
+            # ------------------------------------------------------------------
+            if is_chronic_flag is None:
+                try:
+                    duration_text = (extracted_info.extracted_facts or {}).get("duration") or ""
+                except Exception:
+                    duration_text = ""
+                duration_lower = duration_text.lower()
 
-            if not is_pain_related:
-                pain_topics = ["pain_assessment", "pain_characterization", "evaluación_dolor", "caracterización_dolor"]
+                months_chronic = False
+                months_match = re.search(r"(\d+)\s*(month|months|mo)", duration_lower)
+                if months_match:
+                    try:
+                        months_value = int(months_match.group(1))
+                        if months_value >= 3:
+                            months_chronic = True
+                    except Exception:
+                        months_chronic = False
+
+                years_match = re.search(r"(\d+)\s*(year|years|yr|yrs)", duration_lower)
+                has_years = bool(years_match)
+
+                if any(
+                    phrase in duration_lower
+                    for phrase in ["many months", "long time", "since childhood", "since i was a child"]
+                ):
+                    months_chronic = True
+
+                if has_years or months_chronic:
+                    is_chronic = True
+                    condition_props["is_chronic"] = True
+                    medical_context.condition_properties = condition_props
+
+                # Also upgrade chronic flag from disease name if it clearly indicates a chronic disease
+                disease_lower = (disease or "").lower()
+                chronic_name_keywords = [
+                    "diabetes",
+                    "hypertension",
+                    "high blood pressure",
+                    "asthma",
+                    "copd",
+                    "chronic",
+                    "heart failure",
+                    "ckd",
+                    "chronic kidney",
+                    "thyroid",
+                ]
+                if any(kw in disease_lower for kw in chronic_name_keywords):
+                    is_chronic = True
+                    condition_props["is_chronic"] = True
+                    medical_context.condition_properties = condition_props
+
+            # ------------------------------------------------------------------
+            # 2) REMOVE DEEP-DIAGNOSTIC-ONLY TOPICS FROM NORMAL FLOW (BEFORE CONSENT)
+            #    - monitoring / labs / screening topics
+            #    - past_evaluation (for non-chronic deep diagnostic domain)
+            # ------------------------------------------------------------------
+            if current_count < 7:
+                info_gaps = list(extracted_info.information_gaps or [])
+                filtered_gaps: List[str] = []
+                for gap in info_gaps:
+                    gl = gap.lower()
+                    if any(
+                        k in gl
+                        for k in [
+                            "monitor",
+                            "lab",
+                            "screen",
+                            "test",
+                            "exam",
+                            "complication",
+                            "hba1c",
+                            "cholesterol",
+                            "kidney",
+                            "glucose",
+                            "blood sugar",
+                            "eye exam",
+                            "foot exam",
+                        ]
+                    ) or gl == "past_evaluation":
+                        logger.debug(f"Stripping deep diagnostic topic before consent: {gap}")
+                        continue
+                    filtered_gaps.append(gap)
+                extracted_info.information_gaps = filtered_gaps
+
+            # ------------------------------------------------------------------
+            # 3) ENFORCE DURATION & MEDICATION QUESTIONS EARLY
+            #    + pain-location/radiation early if pain-related
+            # ------------------------------------------------------------------
+            try:
                 info_gaps = list(extracted_info.information_gaps or [])
                 redundant = list(extracted_info.redundant_categories or [])
-                for pain_topic in pain_topics:
-                    if pain_topic in info_gaps:
-                        info_gaps.remove(pain_topic)
-                        logger.info(f"Removed {pain_topic} from information_gaps - condition not pain-related")
-                    if pain_topic not in redundant:
-                        redundant.append(pain_topic)
+
+                # Duration once and early
+                if not extracted_info.already_mentioned_duration:
+                    info_gaps = [g for g in info_gaps if g != "duration"]
+                    info_gaps.insert(0, "duration")
+
+                # Medications early, just after duration if present
+                if not extracted_info.already_mentioned_medications:
+                    info_gaps = [g for g in info_gaps if g != "current_medications"]
+                    insert_idx = 1 if "duration" in info_gaps else 0
+                    info_gaps.insert(insert_idx, "current_medications")
+
+                # Location & radiation – only when pain-related
+                if is_pain_related:
+                    info_gaps = [g for g in info_gaps if g != "location_radiation"]
+                    insert_idx = 0
+                    if "duration" in info_gaps:
+                        insert_idx = max(insert_idx, info_gaps.index("duration") + 1)
+                    if "current_medications" in info_gaps:
+                        insert_idx = max(insert_idx, info_gaps.index("current_medications") + 1)
+                    info_gaps.insert(insert_idx, "location_radiation")
+
+                extracted_info.information_gaps = info_gaps
+                extracted_info.redundant_categories = redundant
+            except Exception as e:
+                logger.warning(f"Failed to enforce duration/medication/location_radiation ordering: {e}")
+
+            # ------------------------------------------------------------------
+            # 4) REMOVE PAIN TOPICS IF CONDITION IS NOT PAIN-RELATED
+            # ------------------------------------------------------------------
+            if not is_pain_related:
+                pain_topics = ["pain_assessment", "pain_characterization", "location_radiation"]
+                info_gaps = list(extracted_info.information_gaps or [])
+                redundant = list(extracted_info.redundant_categories or [])
+                for p in pain_topics:
+                    if p in info_gaps:
+                        info_gaps.remove(p)
+                    if p not in redundant:
+                        redundant.append(p)
                 extracted_info.information_gaps = info_gaps
                 extracted_info.redundant_categories = redundant
 
-            # CRITICAL: Check if patient answered "yes" to diagnostic consent question
-            # If yes, we need to generate deep diagnostic questions (3 questions)
+            # ------------------------------------------------------------------
+            # 5) TRAVEL HISTORY: Only ask if symptoms are travel-related + cap after first question
+            #    (enforced in medical context analysis, but double-check here)
+            # ------------------------------------------------------------------
+            condition_props = medical_context.condition_properties or {}
+            is_travel_related = bool(condition_props.get("is_travel_related", False))
+
+            # Use persisted travel_questions_count instead of recalculating
+            if not recently_travelled or not is_travel_related or travel_questions_count >= 1:
+                info_gaps = list(extracted_info.information_gaps or [])
+                redundant = list(extracted_info.redundant_categories or [])
+                filtered_travel = False
+                for key in ["travel_history", "historial_viajes"]:
+                    if key in info_gaps:
+                        info_gaps.remove(key)
+                        filtered_travel = True
+                    if key not in redundant:
+                        redundant.append(key)
+                extracted_info.information_gaps = info_gaps
+                extracted_info.redundant_categories = redundant
+                # Also make sure it is in avoid_topics for the generator prompt
+                if "travel_history" not in medical_context.avoid_topics:
+                    medical_context.avoid_topics.append("travel_history")
+                
+                # Log the reason for filtering
+                if filtered_travel:
+                    if not recently_travelled:
+                        logger.info(
+                            f"Filtered travel_history from information_gaps: "
+                            f"recently_travelled=False, chief_complaint='{disease}'"
+                        )
+                    elif not is_travel_related:
+                        logger.info(
+                            f"Filtered travel_history from information_gaps: "
+                            f"is_travel_related=False, chief_complaint='{disease}'"
+                        )
+                    elif travel_questions_count >= 1:
+                        logger.info(
+                            f"Filtered travel_history from information_gaps: "
+                            f"travel_questions_count={travel_questions_count} >= 1 (travel cap enforced)"
+                        )
+
+            # ------------------------------------------------------------------
+            # 5b) EXPLICIT FILTERING: Remove any topics in avoid_topics from information_gaps
+            #    This is a defensive check to ensure conditional rules are never violated
+            # ------------------------------------------------------------------
+            info_gaps_before = list(extracted_info.information_gaps or [])
+            avoid_topics = list(medical_context.avoid_topics or [])
+            filtered_out = []
+            
+            for topic in avoid_topics:
+                if topic in info_gaps_before:
+                    info_gaps_before.remove(topic)
+                    filtered_out.append(topic)
+            
+            if filtered_out:
+                logger.info(
+                    f"Information gaps BEFORE filtering avoid_topics: {extracted_info.information_gaps}. "
+                    f"Filtered out topics: {filtered_out}. "
+                    f"Information gaps AFTER filtering: {info_gaps_before}"
+                )
+            
+            extracted_info.information_gaps = info_gaps_before
+
+            # ------------------------------------------------------------------
+            # 6) EVALUATE DIAGNOSTIC CONSENT STATE (ROBUST, NOT ONLY LAST Q)
+            # ------------------------------------------------------------------
             diagnostic_consent_patterns = [
                 "would you like to answer some detailed diagnostic questions",
                 "detailed diagnostic questions related to your symptoms",
                 "le gustaría responder algunas preguntas diagnósticas detalladas",
-                "preguntas diagnósticas detalladas relacionadas con sus síntomas"
+                "preguntas diagnósticas detalladas relacionadas con sus síntomas",
             ]
-            
-            # Check if last question was diagnostic consent
-            is_after_consent = False
-            if asked_questions and previous_answers and len(asked_questions) == len(previous_answers):
-                last_question = asked_questions[-1].lower()
-                last_answer = previous_answers[-1].lower().strip()
-                is_consent_question = any(pattern in last_question for pattern in diagnostic_consent_patterns)
-                
-                if is_consent_question:
-                    # Check if answer is positive
-                    positive_responses = ["yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
-                                        "sí", "si", "claro", "por supuesto", "por supuesto que sí", "de acuerdo"]
-                    is_positive = any(pos in last_answer for pos in positive_responses) and len(last_answer) < 50
-                    
-                    if is_positive:
-                        is_after_consent = True
-                        logger.info(f"Patient answered YES to diagnostic consent - will generate deep diagnostic questions")
-                        # Update max_count to 14 to allow for 3 deep diagnostic questions + final question
-                        if max_count < 14:
-                            max_count = 14
-                            logger.info(f"Updated max_count to 14 for deep diagnostic questions")
-                    else:
-                        negative_responses = [
-                            "no", "n", "nope", "nah", "not really", "don't", "dont",
-                            "no gracias", "no quiero", "no, gracias", "no, no quiero"
-                        ]
-                        is_negative = any(neg in last_answer for neg in negative_responses) and len(last_answer) < 50
-                        if is_negative:
-                            logger.info("Patient declined diagnostic consent - returning final question immediately")
-                            lang = self._normalize_language(language)
-                            if lang == "sp":
-                                return "¿Hay algo más que le gustaría compartir sobre su condición?"
-                            return "Is there anything else you'd like to share about your condition?"
-            
-            # Gather condition properties (for logging/prompts only, no hardcoded enforcement)
-            
-            # CRITICAL: Check if this is Q10 (current_count == 9) - ask diagnostic consent question
-            if current_count == 9:
-                logger.info("Q10 reached - generating diagnostic consent question")
-                lang = self._normalize_language(language)
-                if lang == "sp":
-                    return "¿Le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?"
-                return "Would you like to answer some detailed diagnostic questions related to your symptoms?"
-            
-            # Validation: Check if we've reached max questions before checking information gaps
-            # This prevents premature fallback to generic questions
-            if current_count >= max_count - 1:
-                logger.info("Reached maximum question count - generating closing question")
-                lang = self._normalize_language(language)
+
+            consent_index: Optional[int] = None
+            has_positive_consent = False
+            has_negative_consent = False
+
+            if asked_questions and previous_answers:
+                # Use the *last* matching consent question if multiple exist
+                for idx, q in enumerate(asked_questions):
+                    q_low = q.lower()
+                    if any(p in q_low for p in diagnostic_consent_patterns):
+                        consent_index = idx
+
+                if consent_index is not None and consent_index < len(previous_answers):
+                    consent_answer = previous_answers[consent_index].lower().strip()
+                    positive_kw = [
+                        "yes",
+                        "y",
+                        "yeah",
+                        "yep",
+                        "sure",
+                        "ok",
+                        "okay",
+                        "of course",
+                        "absolutely",
+                        "sí",
+                        "si",
+                        "claro",
+                        "por supuesto",
+                    ]
+                    negative_kw = [
+                        "no",
+                        "n",
+                        "nope",
+                        "nah",
+                        "not really",
+                        "no gracias",
+                        "no quiero",
+                    ]
+                    if any(k in consent_answer for k in positive_kw):
+                        has_positive_consent = True
+                    elif any(k in consent_answer for k in negative_kw):
+                        has_negative_consent = True
+
+            # If patient clearly declined detailed questions → go straight to closing question
+            if has_negative_consent and not has_positive_consent:
+                logger.info("Patient declined detailed diagnostic questions, returning closing question.")
                 if lang == "sp":
                     return "¿Hay algo más que le gustaría compartir sobre su condición?"
                 return "Is there anything else you'd like to share about your condition?"
-            
-            # If no information gaps but we haven't reached max, let Agent 3 handle it
-            # Agent 3 should generate a relevant follow-up question
-            if not extracted_info.information_gaps or len(extracted_info.information_gaps) == 0:
-                logger.warning("No information gaps in priority list - Agent 3 will generate exploratory question")
-                # Don't return here - let Agent 3 decide what to ask
-            
-            # AGENT 3: Generate question with retry mechanism for duplicates
-            logger.info(f"Agent 3: Generating question {current_count + 1}/{max_count}")
-            
-            max_retries = 2  # Try up to 3 times total
-            question = None
-            validation = None
-            rejected_question = None  # Track the question that was rejected
-            
-            for attempt in range(max_retries + 1):
-                if attempt > 0:
-                    logger.warning(f"Retry attempt {attempt} due to duplicate detection")
-                
-                # Count deep diagnostic questions if we're after consent
-                deeper_count = 0
-                if is_after_consent and asked_questions:
-                    # Count questions asked after the consent question
-                    consent_index = -1
-                    for i, q in enumerate(asked_questions):
-                        if any(pattern in q.lower() for pattern in diagnostic_consent_patterns):
-                            consent_index = i
-                            break
-                    if consent_index >= 0:
-                        # Count questions after consent (excluding the consent question itself)
-                        deeper_count = len(asked_questions) - consent_index - 1
-                
-                # If we've asked 3 deep diagnostic questions, ask final question
-                if is_after_consent and deeper_count >= 3:
-                    logger.info(f"3 deep diagnostic questions completed ({deeper_count} asked) - generating final question")
-                    lang = self._normalize_language(language)
+
+            # If patient accepted → allow up to 3 deep diagnostic questions
+            deep_questions_asked = 0
+            is_deep_diagnostic_mode = False
+            deep_diagnostic_question_num: Optional[int] = None
+
+            if has_positive_consent and consent_index is not None:
+                # Ensure there is room in max_count for 3 deep questions
+                # Use settings max_questions (default 12) as the limit
+                settings = self._settings
+                if max_count < settings.intake.max_questions:
+                    max_count = settings.intake.max_questions
+
+                # How many questions have already been asked AFTER consent?
+                deep_questions_asked = max(0, len(asked_questions) - (consent_index + 1))
+
+                if deep_questions_asked >= 3:
+                    # Already asked all 3 (monitoring, labs, screening OR triggers, impact, past evaluation)
+                    logger.info("Completed 3 deep diagnostic questions - closing.")
                     if lang == "sp":
                         return "¿Hay algo más que le gustaría compartir sobre su condición?"
                     return "Is there anything else you'd like to share about your condition?"
-                
-                question = await self._question_generator.generate_question(
-                    medical_context=medical_context,
-                    extracted_info=extracted_info,
-                    current_count=current_count,
-                    max_count=max_count,
-                    language=language,
-                    avoid_similar_to=rejected_question,  # Tell Agent 3 to avoid this specific question
-                    asked_questions=asked_questions,  # Full Q&A history for context
-                    previous_answers=previous_answers,  # Full Q&A history for context
-                    is_deep_diagnostic=is_after_consent and deeper_count < 3  # Generate deep diagnostic if after consent and less than 3 asked
-                )
-                
-                # AGENT 4: Validate safety
-                logger.info(f"Agent 4: Validating question safety (attempt {attempt + 1})")
-                validation = await self._safety_validator.validate_question(
-                    question=question,
-                    medical_context=medical_context,
-                    asked_questions=asked_questions,
-                    language=language
-                )
-                
-                # Check if it's a duplicate
-                has_duplicate = any("duplicate" in issue.lower() for issue in validation.issues)
-                
-                if not has_duplicate or attempt == max_retries:
-                    # Either valid or we've exhausted retries
-                    break
-                
-                # Add the failed question to asked_questions temporarily to avoid regenerating it
-                asked_questions = asked_questions + [question]
-                rejected_question = question  # Remember this question for the next attempt
-                logger.warning(f"Question was duplicate, retrying with updated context")
-            
-            if not validation.is_valid:
-                logger.warning(f"Question validation issues: {validation.issues}")
-            
-            final_question = validation.corrected_question or question
-            
+                else:
+                    # We are inside the 3-question deep diagnostic window
+                    is_deep_diagnostic_mode = True
+                    deep_diagnostic_question_num = deep_questions_asked + 1
+
+            # ------------------------------------------------------------------
+            # 7) NORMAL MAX-COUNT CLOSE (ONLY WHEN NOT IN DEEP-DIAGNOSTIC MODE)
+            #     - Adjust effective max_count using triage_level (emergency/urgent/routine)
+            # ------------------------------------------------------------------
+
+            # Adjust max_count based on triage_level from medical context
+            triage_level = medical_context.triage_level or "routine"
+            if triage_level == "emergency":
+                max_count = min(max_count, 6)
+            elif triage_level == "urgent":
+                max_count = min(max_count, 8)
+
+            if not is_deep_diagnostic_mode and current_count >= max_count - 1:
+                logger.info("Reached maximum question count - closing.")
+                if lang == "sp":
+                    return "¿Hay algo más que le gustaría compartir sobre su condición?"
+                return "Is there anything else you'd like to share about your condition?"
+
+            # ------------------------------------------------------------------
+            # 8) Agent 3: generate question (deep-diagnostic or normal)
+            # ------------------------------------------------------------------
             logger.info(
-                f"✅ Multi-agent pipeline completed successfully: '{final_question}' "
-                f"(count={current_count+1}/{max_count})"
+                f"Agent 3: Generating question {current_count + 1}/{max_count} "
+                f"(deep_diagnostic={is_deep_diagnostic_mode}, deep_num={deep_diagnostic_question_num})"
             )
-            
+            last_question = asked_questions[-1] if asked_questions else None
+            question = await self._question_generator.generate_question(
+                medical_context=medical_context,
+                extracted_info=extracted_info,
+                current_count=current_count,
+                max_count=max_count,
+                language=language,
+                avoid_similar_to=last_question,
+                asked_questions=asked_questions,
+                previous_answers=previous_answers,
+                is_deep_diagnostic=is_deep_diagnostic_mode,
+                deep_diagnostic_question_num=deep_diagnostic_question_num,
+            )
+
+            # ------------------------------------------------------------------
+            # 9) Agent 4: safety validation
+            # ------------------------------------------------------------------
+            validation = await self._safety_validator.validate_question(
+                question=question,
+                medical_context=medical_context,
+                asked_questions=asked_questions,
+                language=language,
+                recently_travelled=recently_travelled,
+            )
+
+            final_question = validation.corrected_question or question
+            # Enhanced logging: log final question with context
+            logger.info(
+                f"Multi-agent pipeline completed: Question {current_count+1}/{max_count} = '{final_question}'. "
+                f"Condition: {disease}, Issues: {validation.issues}, "
+                f"Remaining gaps: {extracted_info.information_gaps}"
+            )
             return final_question
-            
+
         except Exception as e:
             logger.error(f"Multi-agent question generation failed: {e}", exc_info=True)
-            # Fallback
             lang = self._normalize_language(language)
             if lang == "sp":
                 return "¿Puede contarme más sobre cómo se siente?"
             return "Can you tell me more about how you're feeling?"
-    
+
     async def should_stop_asking(
         self,
         disease: str,
@@ -1798,11 +2477,8 @@ class OpenAIQuestionService(QuestionService):
         current_count: int,
         max_count: int = 10,
     ) -> bool:
-        """Determine if we should stop asking questions"""
-        if current_count >= max_count:
-            return True
-        return False
-    
+        return current_count >= max_count
+
     async def assess_completion_percent(
         self,
         disease: str,
@@ -1813,41 +2489,35 @@ class OpenAIQuestionService(QuestionService):
         prior_summary: Optional[Any] = None,
         prior_qas: Optional[List[str]] = None,
     ) -> int:
-        """Calculate completion percentage"""
         try:
-            progress_ratio = 0.0
-            if max_count > 0:
-                progress_ratio = min(max(current_count / max_count, 0.0), 1.0)
-            return int(progress_ratio * 100)
+            if max_count <= 0:
+                return 0
+            return int(min(max(current_count / max_count, 0.0), 1.0) * 100)
         except Exception:
             return 0
-    
+
     async def is_medication_question(self, question: str) -> bool:
-        """Check if question is about medications (for image upload)"""
-        question_lower = (question or "").lower()
-        
-        # Check for combined self-care/home remedies/medications questions
-        if ("home remedies" in question_lower and "medications" in question_lower) or \
-           ("self-care" in question_lower and "medications" in question_lower) or \
-           ("remedies" in question_lower and "supplements" in question_lower) or \
-           ("autocuidado" in question_lower and "medicamentos" in question_lower) or \
-           ("remedios caseros" in question_lower and "medicamentos" in question_lower):
+        """Check if question is about medications (for image upload)."""
+        q = (question or "").lower()
+        if ("home remedies" in q and "medications" in q) or \
+           ("self-care" in q and "medications" in q) or \
+           ("remedios caseros" in q and "medicamentos" in q):
             return True
-        
+
         medication_terms = [
             "medication", "medications", "medicines", "medicine", "drug", "drugs",
             "prescription", "prescribed", "tablet", "tablets", "capsule", "capsules",
             "syrup", "dose", "dosage", "frequency", "supplement", "supplements",
             "insulin", "otc", "over-the-counter", "medicamento", "medicamentos",
-            "medicina", "medicinas", "medicamento recetado", "suplemento", "suplementos"
+            "medicina", "medicinas", "suplemento", "suplementos"
         ]
-        
-        return any(term in question_lower for term in medication_terms)
-    
-    # ============================================================================
-    # PRESERVED METHODS: Pre-visit summary and red flag detection
-    # ============================================================================
-    
+        return any(term in q for term in medication_terms)
+
+    # ========================================================================
+    # PRE-VISIT SUMMARY & RED-FLAG METHODS ARE INTENTIONALLY EXCLUDED HERE
+    # ========================================================================
+
+
     async def generate_pre_visit_summary(
         self,
         patient_data: Dict[str, Any],
@@ -1856,26 +2526,30 @@ class OpenAIQuestionService(QuestionService):
         medication_images_info: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data with red flag detection."""
-        
+
         # Normalize language code
         lang = self._normalize_language(language)
-        
+
         if lang == "sp":
             prompt = (
                 "Rol y Tarea\n"
                 "Eres un Asistente de Admisión Clínica.\n"
-                "Tu tarea es generar un Resumen Pre-Consulta conciso y clínicamente útil (~180-200 palabras) basado estrictamente en las respuestas de admisión proporcionadas.\n\n"
+                "Tu tarea es generar un Resumen Pre-Consulta conciso y clínicamente útil (~180-200 palabras) "
+                "basado estrictamente en las respuestas de admisión proporcionadas.\n\n"
                 "Reglas Críticas\n"
                 "- No inventes, adivines o expandas más allá de la entrada proporcionada.\n"
-                "- La salida debe ser texto plano con encabezados de sección, una sección por línea (sin líneas en blanco adicionales).\n"
-                "- Usa solo los encabezados exactos listados a continuación. No agregues, renombres o reordenes encabezados.\n"
+                "- La salida debe ser texto plano con encabezados de sección, una sección por línea "
+                "(sin líneas en blanco adicionales).\n"
+                "- Usa solo los encabezados exactos listados a continuación. No agregues, renombres o "
+                "reordenes encabezados.\n"
                 "- Sin viñetas, numeración o formato markdown.\n"
                 "- Escribe en un tono de entrega clínica: corto, factual, sin duplicados y neutral.\n"
                 "- Incluye una sección SOLO si contiene contenido real de las respuestas del paciente.\n"
                 "- No uses marcadores de posición como \"N/A\", \"No proporcionado\", \"no reportado\", o \"niega\".\n"
                 "- No incluyas secciones para temas que no fueron preguntados o discutidos.\n"
                 "- Usa frases orientadas al paciente: \"El paciente reporta...\", \"Niega...\", \"En medicamentos:...\".\n"
-                "- No incluyas observaciones clínicas, diagnósticos, planes, signos vitales o hallazgos del examen (la pre-consulta es solo lo reportado por el paciente).\n"
+                "- No incluyas observaciones clínicas, diagnósticos, planes, signos vitales o hallazgos del examen "
+                "(la pre-consulta es solo lo reportado por el paciente).\n"
                 "- Normaliza pronunciaciones médicas obvias a términos correctos sin agregar nueva información.\n\n"
                 "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos reales de las respuestas del paciente)\n"
                 "Motivo de Consulta:\n"
@@ -1886,20 +2560,37 @@ class OpenAIQuestionService(QuestionService):
                 "Pautas de Contenido por Sección\n"
                 "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible.\n"
                 "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa:\n"
-                "  Inicio, Localización, Duración, Caracterización/calidad, Factores agravantes, Factores aliviadores, Radiación,\n"
+                "  Inicio, Localización, Duración, Caracterización/calidad, Factores agravantes, Factores aliviadores, "
+                "Radiación,\n"
                 "  Patrón temporal, Severidad (1-10), Síntomas asociados, Negativos relevantes.\n"
-                "  Manténlo natural y coherente (ej., \"El paciente reporta...\"). Si algunos elementos OLDCARTS son desconocidos, simplemente omítelos.\n"
-                "- Historia: Una línea combinando cualquier elemento reportado por el paciente usando punto y coma en este orden si está presente:\n"
+                "  Manténlo natural y coherente (ej., \"El paciente reporta...\"). Si algunos elementos OLDCARTS son "
+                "desconocidos, simplemente omítelos.\n"
+                "- Historia: Una línea combinando cualquier elemento reportado por el paciente usando punto y coma en este "
+                "orden si está presente:\n"
                 "  Médica: ...; Quirúrgica: ...; Familiar: ...; Estilo de vida: ...\n"
-                "  (Incluye SOLO las partes que fueron realmente preguntadas y respondidas por el paciente. Si un tema no fue discutido, no lo incluyas en absoluto).\n"
-                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados explícitamente por el paciente. Mantén como prosa, no como lista. Solo incluye si los sistemas fueron realmente revisados.\n"
-                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente (nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las reportó explícitamente. Si el paciente subió imágenes de medicamentos (incluso si no mencionó explícitamente los nombres), menciona esto: \"El paciente proporcionó imágenes de medicamentos: [nombre(s) de archivo(s)]\". Incluye esta sección si los medicamentos fueron discutidos O si se subieron imágenes de medicamentos.\n\n"
+                "  (Incluye SOLO las partes que fueron realmente preguntadas y respondidas por el paciente. Si un tema no fue "
+                "discutido, no lo incluyas en absoluto).\n"
+                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados "
+                "explícitamente por el paciente. Mantén como prosa, no como lista. Solo incluye si los sistemas fueron "
+                "realmente revisados.\n"
+                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente "
+                "(nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las "
+                "reportó explícitamente. Si el paciente subió imágenes de medicamentos (incluso si no mencionó "
+                "explícitamente los nombres), menciona esto: \"El paciente proporcionó imágenes de medicamentos: "
+                "[nombre(s) de archivo(s)]\". Incluye esta sección si los medicamentos fueron discutidos O si se subieron "
+                "imágenes de medicamentos.\n\n"
                 "Ejemplo de Formato\n"
                 "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
                 "Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.\n"
-                "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana y empeoran durante el día, llegando hasta 8/10 en los últimos 3 días. El dolor es sobre ambas sienes y se siente diferente de migrañas previas; la fatiga es prominente y se niega náusea. Los episodios se agravan por estrés y más tarde en el día, con alivio mínimo de analgésicos de venta libre y algo de alivio usando compresas frías.\n"
-                "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador, alcohol ocasional, trabajo de alto estrés.\n"
-                "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad; alergias incluidas solo si el paciente las declaró explícitamente.\n\n"
+                "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana y empeoran "
+                "durante el día, llegando hasta 8/10 en los últimos 3 días. El dolor es sobre ambas sienes y se siente "
+                "diferente de migrañas previas; la fatiga es prominente y se niega náusea. Los episodios se agravan por "
+                "estrés y más tarde en el día, con alivio mínimo de analgésicos de venta libre y algo de alivio usando "
+                "compresas frías.\n"
+                "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador, "
+                "alcohol ocasional, trabajo de alto estrés.\n"
+                "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad; alergias incluidas "
+                "solo si el paciente las declaró explícitamente.\n\n"
                 f"{f'Imágenes de Medicamentos: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Respuestas de Admisión:\n{self._format_intake_answers(intake_answers)}"
             )
@@ -1907,7 +2598,8 @@ class OpenAIQuestionService(QuestionService):
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
-                "Your task is to generate a concise, clinically useful Pre-Visit Summary (~180–200 words) based strictly on the provided intake responses.\n\n"
+                "Your task is to generate a concise, clinically useful Pre-Visit Summary (~180–200 words) based strictly on "
+                "the provided intake responses.\n\n"
                 "Critical Rules\n"
                 "- Do not invent, guess, or expand beyond the provided input.\n"
                 "- Output must be plain text with section headings, one section per line (no extra blank lines).\n"
@@ -1918,8 +2610,10 @@ class OpenAIQuestionService(QuestionService):
                 "- Do not use placeholders like \"N/A\", \"Not provided\", \"not reported\", or \"denies\".\n"
                 "- Do not include sections for topics that were not asked about or discussed.\n"
                 "- Use patient-facing phrasing: \"Patient reports …\", \"Denies …\", \"On meds: …\".\n"
-                "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings (previsit is patient-reported only).\n"
-                '- Normalize obvious medical mispronunciations to correct terms (e.g., "diabetes mellitus" -> "diabetes mellitus") without adding new information.\n\n'
+                "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings "
+                "(previsit is patient-reported only).\n"
+                "- Normalize obvious medical mispronunciations to correct terms (e.g., \"diabities\" -> \"diabetes\") "
+                "without adding new information.\n\n"
                 "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
                 "Chief Complaint:\n"
                 "HPI:\n"
@@ -1931,18 +2625,33 @@ class OpenAIQuestionService(QuestionService):
                 "- HPI: ONE readable paragraph weaving OLDCARTS into prose:\n"
                 "  Onset, Location, Duration, Characterization/quality, Aggravating factors, Relieving factors, Radiation,\n"
                 "  Temporal pattern, Severity (1–10), Associated symptoms, Relevant negatives.\n"
-                "  Keep it natural and coherent (e.g., \"The patient reports …\"). If some OLDCARTS elements are unknown, simply omit them (do not write placeholders).\n"
+                "  Keep it natural and coherent (e.g., \"The patient reports …\"). If some OLDCARTS elements are unknown, "
+                "simply omit them (do not write placeholders).\n"
                 "- History: One line combining any patient-reported items using semicolons in this order if present:\n"
                 "  Medical: …; Surgical: …; Family: …; Lifestyle: …\n"
-                "  (Include ONLY parts that were actually asked about and answered by the patient. If a topic was not discussed, do not include it at all.)\n"
-                "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list. Only include if systems were actually reviewed.\n"
-                "- Current Medication: One narrative line with meds/supplements actually stated by the patient (name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. If the patient uploaded medication images (even if they didn't explicitly name the medications), mention this: \"Patient provided medication images: [filename(s)]\". Include this section if medications were discussed OR if medication images were uploaded.\n\n"
+                "  (Include ONLY parts that were actually asked about and answered by the patient. If a topic was not "
+                "discussed, do not include it at all.)\n"
+                "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by "
+                "the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list. Only include if systems were "
+                "actually reviewed.\n"
+                "- Current Medication: One narrative line with meds/supplements actually stated by the patient "
+                "(name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. "
+                "If the patient uploaded medication images (even if they didn't explicitly name the medications), mention "
+                "this: \"Patient provided medication images: [filename(s)]\". Include this section if medications were "
+                "discussed OR if medication images were uploaded.\n\n"
                 "Example Format\n"
                 "(Structure and tone only—content will differ; each section on a single line.)\n"
                 "Chief Complaint: Patient reports severe headache for 3 days.\n"
-                "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through the day, reaching up to 8/10 over the last 3 days. Pain is over both temples and feels different from prior migraines; fatigue is prominent and nausea is denied. Episodes are aggravated by stress and later in the day, with minimal relief from over-the-counter analgesics and some relief using cold compresses. No radiation is reported, evenings are typically worse, and there have been no recent changes in medications or lifestyle.\n"
-                "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker, occasional alcohol, high-stress job.\n"
-                "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if the patient explicitly stated them.\n\n"
+                "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through the "
+                "day, reaching up to 8/10 over the last 3 days. Pain is over both temples and feels different from prior "
+                "migraines; fatigue is prominent and nausea is denied. Episodes are aggravated by stress and later in the "
+                "day, with minimal relief from over-the-counter analgesics and some relief using cold compresses. No "
+                "radiation is reported, evenings are typically worse, and there have been no recent changes in medications "
+                "or lifestyle.\n"
+                "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker, occasional "
+                "alcohol, high-stress job.\n"
+                "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if the "
+                "patient explicitly stated them.\n\n"
                 f"{f'Medication Images: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Intake Responses:\n{self._format_intake_answers(intake_answers)}"
             )
@@ -1954,7 +2663,7 @@ class OpenAIQuestionService(QuestionService):
             except Exception as e:
                 logger.warning(f"Red flag detection failed, continuing without flags: {e}")
                 red_flags = []
-            
+
             response = await self._chat_completion(
                 messages=[
                     {
@@ -1966,11 +2675,11 @@ class OpenAIQuestionService(QuestionService):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=min(2000, self._settings.openai.max_tokens),  # Use max_tokens from settings
+                max_tokens=min(2000, self._settings.openai.max_tokens),
                 temperature=0.3,
             )
             cleaned = self._clean_summary_markdown(response)
-            
+
             return {
                 "summary": cleaned,
                 "structured_data": {
@@ -1981,93 +2690,134 @@ class OpenAIQuestionService(QuestionService):
             }
         except Exception:
             return await self._generate_fallback_summary(patient_data, intake_answers)
-    
+
     # ----------------------
     # Red Flag Detection
     # ----------------------
-    async def _detect_red_flags(self, intake_answers: Dict[str, Any], language: str = "en") -> List[Dict[str, str]]:
+
+    async def _detect_red_flags(
+        self,
+        intake_answers: Dict[str, Any],
+        language: str = "en",
+    ) -> List[Dict[str, str]]:
         """Hybrid abusive language detection: hardcoded rules + LLM analysis."""
         lang = self._normalize_language(language)
-        
-        red_flags = []
-        
+
+        red_flags: List[Dict[str, str]] = []
+
         if not isinstance(intake_answers, dict) or "questions_asked" not in intake_answers:
             logger.warning("Invalid intake_answers format for red flag detection")
             return red_flags
-            
+
         questions_asked = intake_answers.get("questions_asked", [])
         if not questions_asked:
             logger.warning("No questions found in intake_answers")
             return red_flags
-        
+
         logger.info(f"Starting hybrid abusive language detection for {len(questions_asked)} questions")
-        
+
         # Step 1: Fast hardcoded detection for obvious cases
         obvious_flags = self._detect_obvious_abusive_language(questions_asked, lang)
         red_flags.extend(obvious_flags)
         logger.info(f"Obvious abusive language flags detected: {len(obvious_flags)}")
-        
+
         # Step 2: LLM analysis for subtle/contextual abusive language
         complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, lang)
         red_flags.extend(complex_flags)
         logger.info(f"Subtle abusive language flags detected: {len(complex_flags)}")
-        
+
         logger.info(f"Total abusive language red flags detected: {len(red_flags)}")
         return red_flags
-    
-    def _detect_obvious_abusive_language(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+
+    def _detect_obvious_abusive_language(
+        self,
+        questions_asked: List[Dict[str, Any]],
+        language: str = "en",
+    ) -> List[Dict[str, str]]:
         """Fast hardcoded detection for obvious abusive language."""
         lang = self._normalize_language(language)
-        red_flags = []
-        
+        red_flags: List[Dict[str, str]] = []
+
         for qa in questions_asked:
             answer = qa.get("answer", "").strip()
             question = qa.get("question", "").strip()
-            
-            if not answer or answer.lower() in ["", "n/a", "not provided", "unknown", "don't know", "no se", "no proporcionado"]:
+
+            if not answer or answer.lower() in [
+                "",
+                "n/a",
+                "not provided",
+                "unknown",
+                "don't know",
+                "dont know",
+                "no se",
+                "no proporcionado",
+            ]:
                 continue
-            
+
             # Check for obvious abusive language
             if self._contains_abusive_language(answer, lang):
-                red_flags.append({
-                    "type": "abusive_language",
-                    "question": question,
-                    "answer": answer,
-                    "message": self._get_abusive_language_message(lang),
-                    "detection_method": "hardcoded"
-                })
-        
+                red_flags.append(
+                    {
+                        "type": "abusive_language",
+                        "question": question,
+                        "answer": answer,
+                        "message": self._get_abusive_language_message(lang),
+                        "detection_method": "hardcoded",
+                    }
+                )
+
         return red_flags
-    
-    async def _detect_subtle_abusive_language_with_llm(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+
+    async def _detect_subtle_abusive_language_with_llm(
+        self,
+        questions_asked: List[Dict[str, Any]],
+        language: str = "en",
+    ) -> List[Dict[str, str]]:
         """Use LLM to detect subtle, contextual, or creative abusive language."""
         try:
             lang = self._normalize_language(language)
-            
+
             # Filter out obvious cases already detected
-            subtle_cases = []
+            subtle_cases: List[Dict[str, Any]] = []
             for qa in questions_asked:
                 answer = qa.get("answer", "").strip()
                 question = qa.get("question", "").strip()
-                
-                if (answer and answer.lower() not in ["", "n/a", "not provided", "unknown", "don't know", "no se", "no proporcionado"] 
-                    and not self._contains_abusive_language(answer, lang)):
+
+                if (
+                    answer
+                    and answer.lower()
+                    not in [
+                        "",
+                        "n/a",
+                        "not provided",
+                        "unknown",
+                        "don't know",
+                        "dont know",
+                        "no se",
+                        "no proporcionado",
+                    ]
+                    and not self._contains_abusive_language(answer, lang)
+                ):
                     subtle_cases.append(qa)
-            
+
             if not subtle_cases:
                 return []
-            
+
             # Use LLM to analyze subtle cases
             return await self._analyze_abusive_language_with_llm(subtle_cases, lang)
-            
+
         except Exception as e:
             logger.warning(f"LLM abusive language analysis failed: {e}")
             return []
-    
-    async def _analyze_abusive_language_with_llm(self, questions_asked: List[Dict[str, Any]], language: str = "en") -> List[Dict[str, str]]:
+
+    async def _analyze_abusive_language_with_llm(
+        self,
+        questions_asked: List[Dict[str, Any]],
+        language: str = "en",
+    ) -> List[Dict[str, str]]:
         """Use LLM to analyze question-answer pairs for subtle abusive language."""
         lang = self._normalize_language(language)
-        
+
         if lang == "sp":
             prompt = f"""
 Analiza estas respuestas de admisión del paciente para detectar LENGUAJE ABUSIVO O INAPROPIADO:
@@ -2148,47 +2898,54 @@ Responses to analyze:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a clinical assistant analyzing patient responses for abusive language. Be precise and only flag truly inappropriate or abusive language."
+                        "content": (
+                            "You are a clinical assistant analyzing patient responses for abusive language. "
+                            "Be precise and only flag truly inappropriate or abusive language."
+                        ),
                     },
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
                 max_tokens=1000,
-                temperature=0.1,  # Low temperature for consistent analysis
+                temperature=0.1,
             )
-            
+
             # Parse LLM response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
                 abusive_cases = result.get("abusive_language", [])
-                
-                # Convert to our format
-                formatted_flags = []
+
+                formatted_flags: List[Dict[str, str]] = []
                 for case in abusive_cases:
-                    formatted_flags.append({
-                        "type": "abusive_language",
-                        "question": case.get("question", ""),
-                        "answer": case.get("answer", ""),
-                        "message": self._get_llm_abusive_language_message(case.get("reason", ""), lang),
-                        "detection_method": "llm"
-                    })
-                
+                    formatted_flags.append(
+                        {
+                            "type": "abusive_language",
+                            "question": case.get("question", "") or "",
+                            "answer": case.get("answer", "") or "",
+                            "message": self._get_llm_abusive_language_message(
+                                case.get("reason", "") or "",
+                                lang,
+                            ),
+                            "detection_method": "llm",
+                        }
+                    )
+
                 return formatted_flags
-            
+
         except Exception as e:
             logger.warning(f"Failed to parse LLM abusive language response: {e}")
-        
+
         return []
-    
+
     def _format_qa_pairs(self, questions_asked: List[Dict[str, Any]]) -> str:
         """Format question-answer pairs for LLM analysis."""
-        formatted = []
+        formatted: List[str] = []
         for i, qa in enumerate(questions_asked, 1):
             question = qa.get("question", "N/A")
             answer = qa.get("answer", "N/A")
             formatted.append(f"{i}. Q: {question}\n   A: {answer}")
         return "\n\n".join(formatted)
-    
+
     def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
         """Get message for LLM-detected abusive language."""
         lang = self._normalize_language(language)
@@ -2196,41 +2953,78 @@ Responses to analyze:
             return f"⚠️ BANDERA ROJA: Lenguaje abusivo detectado. Razón: {reason}"
         else:
             return f"⚠️ RED FLAG: Abusive language detected. Reason: {reason}"
-    
+
     def _contains_abusive_language(self, text: str, language: str = "en") -> bool:
         """Check if text contains abusive or inappropriate language."""
         lang = self._normalize_language(language)
         text_lower = text.lower()
-        
-        # Common abusive words/phrases in English
+
         english_abusive = [
-            "fuck", "shit", "damn", "hell", "bitch", "asshole", "bastard", "crap",
-            "stupid", "idiot", "moron", "retard", "gay", "fag", "nigger", "whore",
-            "slut", "cunt", "piss", "pissed", "fucking", "bullshit", "goddamn"
+            "fuck",
+            "shit",
+            "damn",
+            "hell",
+            "bitch",
+            "asshole",
+            "bastard",
+            "crap",
+            "stupid",
+            "idiot",
+            "moron",
+            "retard",
+            "gay",
+            "fag",
+            "nigger",
+            "whore",
+            "slut",
+            "cunt",
+            "piss",
+            "pissed",
+            "fucking",
+            "bullshit",
+            "goddamn",
         ]
-        
-        # Common abusive words/phrases in Spanish
+
         spanish_abusive = [
-            "puta", "puto", "mierda", "joder", "coño", "cabrón", "hijo de puta",
-            "estúpido", "idiota", "imbécil", "retrasado", "maricón", "joto",
-            "pinche", "chingado", "verga", "pendejo", "culero", "mamón"
+            "puta",
+            "puto",
+            "mierda",
+            "joder",
+            "coño",
+            "cabrón",
+            "hijo de puta",
+            "estúpido",
+            "idiota",
+            "imbécil",
+            "retrasado",
+            "maricón",
+            "joto",
+            "pinche",
+            "chingado",
+            "verga",
+            "pendejo",
+            "culero",
+            "mamón",
         ]
-        
+
         abusive_words = spanish_abusive if lang == "sp" else english_abusive
-        
+
         return any(word in text_lower for word in abusive_words)
-    
+
     def _get_abusive_language_message(self, language: str = "en") -> str:
         """Get message for abusive language red flag."""
         lang = self._normalize_language(language)
         if lang == "sp":
-            return "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
+            return (
+                "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
+            )
         else:
             return "⚠️ RED FLAG: Patient used inappropriate or abusive language in their responses."
-    
+
     # ----------------------
     # Helpers
     # ----------------------
+
     def _format_intake_answers(self, intake_answers: Dict[str, Any]) -> str:
         """Format intake answers for prompt."""
         if isinstance(intake_answers, dict) and "questions_asked" in intake_answers:
@@ -2289,17 +3083,22 @@ Responses to analyze:
                 },
             }
 
-    async def _generate_fallback_summary(self, patient_data: Dict[str, Any], intake_answers: Dict[str, Any]) -> Dict[str, Any]:
+    async def _generate_fallback_summary(
+        self,
+        patient_data: Dict[str, Any],
+        intake_answers: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """Generate basic fallback summary with red flag detection."""
-        # Still detect red flags even in fallback mode
-        red_flags = await self._detect_red_flags(intake_answers, "en")  # Default to English for fallback
-        
+        red_flags = await self._detect_red_flags(intake_answers, "en")
+
         summary = f"Pre-visit summary for {patient_data.get('name', 'Patient')}"
-        
+
         return {
             "summary": summary,
             "structured_data": {
-                "chief_complaint": patient_data.get("symptom") or patient_data.get("complaint") or "N/A",
+                "chief_complaint": patient_data.get("symptom")
+                or patient_data.get("complaint")
+                or "N/A",
                 "key_findings": ["See intake responses"],
             },
             "red_flags": red_flags,
@@ -2323,12 +3122,12 @@ Responses to analyze:
         if "key_findings" not in structured:
             structured["key_findings"] = ["See summary"]
 
-        # Attempt extraction from markdown if missing
         def _extract_from_markdown(md: str) -> Dict[str, Any]:
             data: Dict[str, Any] = {}
-            current_section = None
+            current_section: Optional[str] = None
             key_findings: List[str] = []
             chief_bullets: List[str] = []
+
             for raw in (md or "").splitlines():
                 line = raw.strip()
                 if line.startswith("## "):
@@ -2340,12 +3139,14 @@ Responses to analyze:
                     else:
                         current_section = None
                     continue
+
                 if line.startswith("- "):
                     text2 = line[2:].strip()
                     if current_section == "key_points" and text2:
                         key_findings.append(text2)
                     if current_section == "chief" and text2:
                         chief_bullets.append(text2)
+
             if key_findings:
                 data["key_findings"] = key_findings
             if chief_bullets:
@@ -2356,19 +3157,24 @@ Responses to analyze:
             extracted = _extract_from_markdown(summary)
             if extracted.get("key_findings"):
                 structured["key_findings"] = extracted["key_findings"]
-            if extracted.get("chief_complaint") and structured.get("chief_complaint") in (None, "See summary", "N/A"):
+            if extracted.get("chief_complaint") and structured.get("chief_complaint") in (
+                None,
+                "See summary",
+                "N/A",
+            ):
                 structured["chief_complaint"] = extracted["chief_complaint"]
 
         return {
-            "summary": summary, 
+            "summary": summary,
             "structured_data": structured,
-            "red_flags": result.get("red_flags", [])
+            "red_flags": result.get("red_flags", []),
         }
 
     def _clean_summary_markdown(self, summary_md: str) -> str:
         """Remove placeholder lines like [Insert ...] and drop now-empty sections."""
         if not isinstance(summary_md, str) or not summary_md.strip():
             return summary_md
+
         lines = summary_md.splitlines()
         cleaned: List[str] = []
         current_section_start = -1
@@ -2392,13 +3198,16 @@ Responses to analyze:
                 section_has_bullets = False
                 cleaned.append(line)
                 continue
+
             low = line.lower()
             if "[insert" in low:
                 continue
+
             if line.strip().startswith("- "):
                 section_has_bullets = True
                 cleaned.append(line)
             else:
                 cleaned.append(line)
+
         flush_section()
         return "\n".join(cleaned)

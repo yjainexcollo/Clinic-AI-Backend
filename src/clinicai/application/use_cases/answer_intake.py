@@ -11,6 +11,8 @@ from ...domain.errors import (
 )
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
+from ...core.config import get_settings
+from ...core.constants import TRAVEL_KEYWORDS
 from ..dto.patient_dto import (
 AnswerIntakeRequest,
 AnswerIntakeResponse,
@@ -95,7 +97,8 @@ class AnswerIntakeUseCase:
                             current_count=visit.intake_session.current_question_count,
                             max_count=visit.intake_session.max_questions,
                             language=patient.language,
-                            recently_travelled=patient.recently_travelled,
+                            recently_travelled=visit.recently_travelled,  # Use visit.recently_travelled (moved from Patient)
+                            travel_questions_count=visit.intake_session.travel_questions_count,
                             prior_summary=prior_summary,
                             prior_qas=prior_qas,
                             patient_gender=patient.gender,
@@ -111,12 +114,14 @@ class AnswerIntakeUseCase:
                         # On any transient failure, try again once or twice
                         pass
                 # Fallback: if still none, pick a safe generic non-duplicate question
+                # NOTE: Excluded allergies and PMH from fallback pool - these should only be asked conditionally
+                # based on medical context (chronic/allergy-related/high-risk conditions)
                 if not current_question:
                     generic_pool = [
-                        "Do you have any known allergies?",
                         "Are you currently taking any medications?",
                         "Have you experienced fever, cough, or shortness of breath recently?",
-                        "Do you have any past medical conditions we should know about?",
+                        "Can you describe when the symptoms started?",
+                        "How would you rate the severity of your symptoms on a scale of 1 to 10?",
                     ]
                     current_question = next((q for q in generic_pool if q not in asked_questions), generic_pool[0])
 
@@ -125,6 +130,16 @@ class AnswerIntakeUseCase:
             current_question,
             request.answer,
         )
+
+        # Track travel-related questions
+        if any(kw in current_question.lower() for kw in TRAVEL_KEYWORDS):
+            visit.intake_session.travel_questions_count += 1
+            logger.info(
+                f"Travel question detected: '{current_question[:50]}...', "
+                f"travel_questions_count now: {visit.intake_session.travel_questions_count}"
+            )
+            # Save visit immediately to persist travel_questions_count
+            await self._visit_repository.save(visit)
 
         # If this is the first answer, set the visit.symptom from patient's response
         if visit.symptom == "" and visit.intake_session.current_question_count == 1:
@@ -143,19 +158,14 @@ class AnswerIntakeUseCase:
         next_question = None
         is_complete = False
 
-        # Enforce minimum of 5 questions before completion unless service decides to stop after >=5
-        min_questions_required = 5
-        reached_minimum = visit.intake_session.current_question_count >= min_questions_required
-
         logger.info(
-            "Completion check: should_stop=%s, reached_minimum=%s, can_ask_more=%s, current_count=%s",
+            "Completion check: should_stop=%s, can_ask_more=%s, current_count=%s",
             should_stop,
-            reached_minimum,
             visit.can_ask_more_questions(),
             visit.intake_session.current_question_count,
         )
 
-        if (should_stop and reached_minimum) or not visit.can_ask_more_questions():
+        if should_stop or not visit.can_ask_more_questions():
             # Complete the intake
             visit.complete_intake()
             is_complete = True
@@ -183,7 +193,8 @@ class AnswerIntakeUseCase:
                         current_count=visit.intake_session.current_question_count,
                         max_count=visit.intake_session.max_questions,
                         language=patient.language,
-                        recently_travelled=patient.recently_travelled,
+                        recently_travelled=visit.recently_travelled,  # Use visit.recently_travelled (moved from Patient)
+                        travel_questions_count=visit.intake_session.travel_questions_count,
                         prior_summary=prior_summary,
                         prior_qas=prior_qas,
                         patient_gender=patient.gender,
@@ -197,11 +208,13 @@ class AnswerIntakeUseCase:
                 except Exception:
                     continue
             if not next_question:
+                # NOTE: Excluded allergies and PMH from fallback pool - these should only be asked conditionally
+                # based on medical context (chronic/allergy-related/high-risk conditions)
                 generic_pool = [
-                    "Do you have any known allergies?",
                     "Are you currently taking any medications?",
                     "Have you experienced fever, cough, or shortness of breath recently?",
-                    "Do you have any past medical conditions we should know about?",
+                    "Can you describe when the symptoms started?",
+                    "How would you rate the severity of your symptoms on a scale of 1 to 10?",
                 ]
                 next_question = next((q for q in generic_pool if q not in asked_questions), generic_pool[0])
             visit.set_pending_question(next_question)
@@ -282,7 +295,8 @@ class AnswerIntakeUseCase:
             current_count=current_count,
             max_count=max_count,
             language=patient.language,
-            recently_travelled=patient.recently_travelled,
+            recently_travelled=visit.recently_travelled,  # Use visit.recently_travelled (moved from Patient)
+            travel_questions_count=visit.intake_session.travel_questions_count,
             patient_gender=patient.gender,
             patient_age=patient.age,
         )
@@ -320,6 +334,9 @@ class AnswerIntakeUseCase:
         if not visit or not visit.intake_session:
             return
 
+        settings = get_settings()
+        base_max = settings.intake.max_questions  # Default: 12
+
         consent_prompts = {
             "would you like to answer some detailed diagnostic questions related to your symptoms?",
             "¿le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?",
@@ -333,17 +350,20 @@ class AnswerIntakeUseCase:
             "no gracias", "no quiero", "no, gracias", "no, no quiero",
         }
 
-        # Base limit is 10 unless a positive consent appears
-        new_limit = 10
+        # Base limit is max_questions from settings unless a positive consent appears
+        new_limit = base_max
         for qa in visit.intake_session.questions_asked:
             question_text = (qa.question or "").strip().lower()
             if question_text in consent_prompts:
                 answer_text = (qa.answer or "").strip().lower()
                 if any(resp in answer_text for resp in positive_responses):
-                    new_limit = 14
+                    # With consent, allow up to max_questions (already 12)
+                    new_limit = base_max
                     break
                 if any(resp in answer_text for resp in negative_responses):
-                    new_limit = 10
+                    # Without consent, use a lower limit (10, but capped by settings)
+                    new_limit = min(10, base_max)
                     break
 
-        visit.intake_session.max_questions = max(1, min(14, new_limit))
+        # Ensure max never exceeds settings limit
+        visit.intake_session.max_questions = max(1, min(base_max, new_limit))

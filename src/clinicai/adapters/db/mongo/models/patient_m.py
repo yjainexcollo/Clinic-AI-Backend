@@ -31,11 +31,12 @@ class IntakeSessionMongo(BaseModel):
     """MongoDB model for intake session."""
     questions_asked: List[QuestionAnswerMongo] = Field(default_factory=list)
     current_question_count: int = Field(default=0)
-    max_questions: int = Field(default=14)
+    max_questions: int = Field(default=12)
     status: str = Field(default="in_progress")  # in_progress, completed, cancelled
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     pending_question: Optional[str] = Field(None, description="Pending next question to ask")
+    travel_questions_count: int = Field(default=0, description="Number of travel-related questions asked")
 
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
@@ -106,6 +107,9 @@ class VisitMongo(Document):
     )  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Visit-specific travel history (moved from Patient - travel is visit-specific, not lifetime patient attribute)
+    recently_travelled: bool = Field(default=False, description="Has the patient travelled recently for this visit")
 
     # Step 1: Pre-Visit Intake
     intake_session: Optional[IntakeSessionMongo] = None
@@ -148,7 +152,7 @@ class PatientMongo(Document):
     mobile: str = Field(..., description="Mobile number")
     age: int = Field(..., description="Patient age")
     gender: Optional[str] = Field(None, description="Patient gender")
-    recently_travelled: bool = Field(default=False, description="Has the patient travelled recently")
+    # recently_travelled removed - now stored on Visit (travel is visit-specific)
     language: str = Field(default="en", description="Patient preferred language (en for English, es for Spanish)")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -223,7 +227,7 @@ class DoctorPreferencesMongo(Document):
     doctor_id: str = Field(..., description="Doctor ID", unique=True)
     global_categories: list[str] = Field(default_factory=list)
     selected_categories: list[str] = Field(default_factory=list)
-    max_questions: int = Field(default=10)
+    max_questions: int = Field(default=12)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:

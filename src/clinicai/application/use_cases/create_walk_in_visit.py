@@ -5,6 +5,7 @@ from clinicai.domain.entities.visit import Visit
 from clinicai.domain.value_objects.patient_id import PatientId
 from clinicai.domain.value_objects.visit_id import VisitId
 from clinicai.domain.enums.workflow import VisitWorkflowType
+from clinicai.core.config import get_settings
 from clinicai.application.ports.repositories.patient_repo import PatientRepository
 from clinicai.application.ports.repositories.visit_repo import VisitRepository
 from clinicai.domain.errors import DuplicatePatientError, PatientNotFoundError
@@ -57,7 +58,7 @@ class CreateWalkInVisitUseCase:
                 mobile=request.mobile,
                 age=request.age or 0,
                 gender=request.gender,
-                recently_travelled=False,
+                # recently_travelled removed from Patient - now stored on Visit
                 language="en",
             )
             
@@ -67,14 +68,19 @@ class CreateWalkInVisitUseCase:
         # Generate visit ID
         visit_id = VisitId.generate()
 
-        # Create walk-in visit
+        # Create walk-in visit (travel is visit-specific, not lifetime patient attribute)
         visit = Visit(
             visit_id=visit_id,
             patient_id=patient.patient_id.value,
             symptom="",  # No symptom for walk-in
             workflow_type=VisitWorkflowType.WALK_IN,
-            status="walk_in_patient"
+            status="walk_in_patient",
+            recently_travelled=False,  # Default to False for walk-in visits
         )
+        
+        # Initialize max_questions from settings
+        settings = get_settings()
+        visit.intake_session.max_questions = settings.intake.max_questions
 
         # Save visit
         await self._visit_repository.save(visit)

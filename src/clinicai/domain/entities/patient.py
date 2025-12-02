@@ -23,7 +23,7 @@ class Patient:
     mobile: str
     age: int
     gender: Optional[str] = None
-    recently_travelled: bool = False
+    # recently_travelled removed - now stored on Visit (travel is visit-specific, not lifetime patient attribute)
     language: str = "en"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)

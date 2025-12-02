@@ -43,7 +43,7 @@ class AnswerIntakeResponse(BaseModel):
     next_question: Optional[str] = Field(None, description="Next question (if any)")
     is_complete: bool = Field(..., description="Whether intake is complete")
     question_count: int = Field(..., description="Current question count")
-    max_questions: int = Field(..., description="Maximum questions allowed")
+    max_questions: int = Field(..., description="Maximum questions allowed (typically 5-12)")
     completion_percent: int = Field(..., ge=0, le=100, description="LLM-assessed completion percent")
     message: str = Field(..., description="Status message")
     allows_image_upload: bool = Field(False, description="Whether the next question allows image upload")
@@ -98,7 +98,7 @@ class IntakeSummarySchema(BaseModel):
         ..., description="List of questions and answers"
     )
     total_questions: int = Field(..., description="Total questions asked")
-    max_questions: int = Field(..., description="Maximum questions allowed")
+    max_questions: int = Field(..., description="Maximum questions allowed (typically 5-12)")
     intake_status: str = Field(..., description="Intake session status")
     started_at: datetime = Field(..., description="Intake start time")
     completed_at: Optional[datetime] = Field(None, description="Intake completion time")

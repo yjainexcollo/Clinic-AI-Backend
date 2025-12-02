@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from ...adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
+from ...core.config import get_settings
 from ..schemas.common import ApiResponse, ErrorResponse
 from ..utils.responses import ok, fail
 
@@ -27,7 +28,7 @@ class DoctorPreferencesResponse(BaseModel):
 
 class UpsertPreferencesRequest(BaseModel):
     categories: List[str] = Field(default_factory=list)
-    max_questions: int = Field(ge=1, le=14)
+    max_questions: int = Field(ge=1, le=12)
     # Optional authoritative list of global categories (for rename/remove operations)
     global_categories: Optional[List[str]] = None
 
@@ -38,11 +39,13 @@ async def _get_or_default(doctor_id: str) -> Optional[DoctorPreferencesMongo]:
 
 
 def _defaults_for(doctor_id: str) -> DoctorPreferencesResponse:
+    from clinicai.core.config import get_settings
+    settings = get_settings()
     return DoctorPreferencesResponse(
         doctor_id=doctor_id,
         global_categories=DEFAULT_GLOBAL_CATEGORIES.copy(),
         selected_categories=[],
-        max_questions=10,
+        max_questions=settings.intake.max_questions,
     )
 
 
@@ -58,7 +61,7 @@ async def get_doctor_preferences(request: Request):
             doctor_id=doc.doctor_id,
             global_categories=sorted(list(dict.fromkeys([c.lower() for c in (doc.global_categories or [])]))),
             selected_categories=sorted(list(dict.fromkeys([c.lower() for c in (doc.selected_categories or [])]))),
-            max_questions=int(doc.max_questions or 10),
+            max_questions=int(doc.max_questions or get_settings().intake.max_questions),
         ), message="Doctor preferences loaded")
     except Exception as e:
         return fail(request, error="INTERNAL_ERROR", message="Failed to load preferences")
@@ -74,7 +77,8 @@ async def set_doctor_preferences(request: Request, payload: UpsertPreferencesReq
         # Normalize inputs
         incoming_categories = [c.strip().lower() for c in payload.categories if c and isinstance(c, str)]
         incoming_categories = list(dict.fromkeys(incoming_categories))  # dedupe order-preserving
-        max_q = max(1, min(14, int(payload.max_questions)))
+        settings = get_settings()
+        max_q = max(1, min(settings.intake.max_questions, int(payload.max_questions)))
         incoming_global = None
         if payload.global_categories is not None:
             incoming_global = [c.strip().lower() for c in payload.global_categories if c and isinstance(c, str)]

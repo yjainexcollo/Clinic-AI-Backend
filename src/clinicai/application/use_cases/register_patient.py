@@ -11,6 +11,7 @@ from ...domain.entities.visit import Visit
 # Domain events currently not dispatched here; keeping behavior unchanged.
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
+from ...core.config import get_settings
 from ..dto.patient_dto import RegisterPatientRequest, RegisterPatientResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
@@ -43,9 +44,13 @@ class RegisterPatientUseCase:
             # Start a new visit for the existing patient instead of raising duplicate
             visit_id = VisitId.generate()
             visit = Visit(
-                visit_id=visit_id, patient_id=existing_patient.patient_id.value, symptom=""
+                visit_id=visit_id, 
+                patient_id=existing_patient.patient_id.value, 
+                symptom="",
+                recently_travelled=request.recently_travelled,  # Store travel history on visit (travel is visit-specific)
             )
-            visit.intake_session.max_questions = 10
+            settings = get_settings()
+            visit.intake_session.max_questions = settings.intake.max_questions
             # Update patient's language preference for this visit
             existing_patient.language = request.language
             first_question = await self._question_service.generate_first_question(
@@ -80,18 +85,22 @@ class RegisterPatientUseCase:
             mobile=request.mobile,
             age=request.age,
             gender=request.gender,
-            recently_travelled=request.recently_travelled,
+            # recently_travelled removed from Patient - now stored on Visit
             language=request.language,
         )
 
         # Generate visit ID
         visit_id = VisitId.generate()
 
-        # Create visit entity
+        # Create visit entity with recently_travelled (travel is visit-specific, not lifetime patient attribute)
         visit = Visit(
-            visit_id=visit_id, patient_id=patient_id.value, symptom=""
+            visit_id=visit_id, 
+            patient_id=patient_id.value, 
+            symptom="",
+            recently_travelled=request.recently_travelled,
         )
-        visit.intake_session.max_questions = 10
+        settings = get_settings()
+        visit.intake_session.max_questions = settings.intake.max_questions
 
         # Generate first question via QuestionService for consistency
         first_question = await self._question_service.generate_first_question(

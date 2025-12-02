@@ -282,6 +282,24 @@ class AzureSpeechSettings(BaseSettings):
         return v.lower()
 
 
+class IntakeSettings(BaseSettings):
+    """Intake session configuration settings."""
+    
+    model_config = SettingsConfigDict(env_prefix="INTAKE_")
+    
+    max_questions: int = Field(
+        default=12,
+        description="Maximum intake questions allowed (default: 12)"
+    )
+    
+    @validator("max_questions")
+    def validate_max_questions(cls, v: int) -> int:
+        """Validate max questions is reasonable."""
+        if not 1 <= v <= 20:
+            raise ValueError("max_questions must be between 1 and 20")
+        return v
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -317,6 +335,7 @@ class Settings(BaseSettings):
     azure_openai: AzureOpenAISettings = Field(default_factory=AzureOpenAISettings)
     azure_queue: AzureQueueSettings = Field(default_factory=AzureQueueSettings)
     azure_speech: AzureSpeechSettings = Field(default_factory=AzureSpeechSettings)
+    intake: IntakeSettings = Field(default_factory=IntakeSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -371,6 +390,7 @@ class Settings(BaseSettings):
         self.azure_openai = AzureOpenAISettings()
         self.azure_queue = AzureQueueSettings()
         self.azure_speech = AzureSpeechSettings()
+        self.intake = IntakeSettings()
 
     @validator("app_env")
     def validate_app_env(cls, v: str) -> str:
