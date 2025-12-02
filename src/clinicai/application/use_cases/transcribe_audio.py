@@ -321,15 +321,17 @@ class TranscribeAudioUseCase:
             llm_start = speech_end
             llm_end = time.time()
             llm_latency = llm_end - llm_start
+            total_transcript_time = speech_latency + llm_latency
 
             LOGGER.info(
-                f"⏱️ Transcription pipeline: speech={speech_latency:.2f}s, llm={llm_latency:.2f}s",
+                f"⏱️ Transcription pipeline: speech={speech_latency:.2f}s, llm={llm_latency:.2f}s, total={total_transcript_time:.2f}s",
                 extra={
                     "event": "transcription_pipeline_timings",
                     "patient_id": request.patient_id,
                     "visit_id": request.visit_id,
                     "speech_latency_sec": speech_latency,
                     "llm_latency_sec": llm_latency,
+                    "total_transcript_time_sec": total_transcript_time,
                     "transcript_chars": len(raw_transcript),
                     "structured_dialogue_turns": len(structured_dialogue) if structured_dialogue else 0,
                 },
