@@ -5,7 +5,7 @@ Note: These are persisted documents; structure left unchanged to preserve runtim
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from beanie import Document
 from pydantic import BaseModel, Field, validator
@@ -101,6 +101,7 @@ class VisitMongo(Document):
     """MongoDB model for visit."""
     visit_id: str = Field(..., description="Visit ID", unique=True)
     patient_id: str = Field(..., description="Patient ID reference")
+    symptom: str = Field(default="", description="Primary symptom / chief complaint for this visit")
     workflow_type: str = Field(default=VisitWorkflowType.SCHEDULED, description="Workflow type: scheduled or walk_in")
     status: str = Field(
         default="intake"
@@ -233,3 +234,19 @@ class DoctorPreferencesMongo(Document):
     class Settings:
         name = "doctor_preferences"
         indexes = ["doctor_id", "updated_at"]
+
+
+class LLMInteractionMongo(Document):
+    """MongoDB document for logging raw LLM interactions for debugging/QA."""
+
+    agent_name: str = Field(..., description="Logical agent name (e.g., agent1_medical_context)")
+    visit_id: Optional[str] = Field(None, description="Visit ID (if known at log time)")
+    patient_id: Optional[str] = Field(None, description="Patient ID (if known at log time)")
+    system_prompt: str = Field(..., description="System prompt sent to the LLM")
+    user_prompt: str = Field(..., description="User prompt or payload sent to the LLM")
+    response_text: str = Field(..., description="Raw LLM response text")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Normalized structured metadata")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Log creation timestamp")
+
+    class Settings:
+        name = "llm_interactions"

@@ -117,13 +117,31 @@ class AnswerIntakeUseCase:
                 # NOTE: Excluded allergies and PMH from fallback pool - these should only be asked conditionally
                 # based on medical context (chronic/allergy-related/high-risk conditions)
                 if not current_question:
-                    generic_pool = [
-                        "Are you currently taking any medications?",
-                        "Have you experienced fever, cough, or shortness of breath recently?",
-                        "Can you describe when the symptoms started?",
-                        "How would you rate the severity of your symptoms on a scale of 1 to 10?",
+                    # Avoid asking generic medication question if medications were already clearly asked
+                    meds_keywords = [
+                        "medication", "medications", "medicine", "medicines",
+                        "drug", "drugs", "tablet", "tablets", "capsule", "capsules",
+                        "insulin", "supplement", "supplements",
                     ]
-                    current_question = next((q for q in generic_pool if q not in asked_questions), generic_pool[0])
+                    meds_already_asked = any(
+                        any(kw in (q or "").lower() for kw in meds_keywords)
+                        for q in asked_questions
+                    )
+
+                    generic_pool = []
+                    if not meds_already_asked:
+                        generic_pool.append("Are you currently taking any medications?")
+                    generic_pool.extend(
+                        [
+                            "Have you experienced fever, cough, or shortness of breath recently?",
+                            "Can you describe when the symptoms started?",
+                            "How would you rate the severity of your symptoms on a scale of 1 to 10?",
+                        ]
+                    )
+                    current_question = next(
+                        (q for q in generic_pool if q not in asked_questions),
+                        generic_pool[0],
+                    )
 
         # Add the question and answer
         visit.add_question_answer(
@@ -204,24 +222,27 @@ class AnswerIntakeUseCase:
                         next_question = candidate
                         break
                 except DuplicateQuestionError:
+                    # Service signaled a duplicate; try again with a new candidate
                     continue
                 except Exception:
-                    continue
+                    # Any unexpected failure from the multi-agent pipeline – break out
+                    # and let completion logic decide whether to stop instead of
+                    # falling back to generic questions.
+                    break
+
             if not next_question:
-                # NOTE: Excluded allergies and PMH from fallback pool - these should only be asked conditionally
-                # based on medical context (chronic/allergy-related/high-risk conditions)
-                generic_pool = [
-                    "Are you currently taking any medications?",
-                    "Have you experienced fever, cough, or shortness of breath recently?",
-                    "Can you describe when the symptoms started?",
-                    "How would you rate the severity of your symptoms on a scale of 1 to 10?",
-                ]
-                next_question = next((q for q in generic_pool if q not in asked_questions), generic_pool[0])
-            visit.set_pending_question(next_question)
-            message = (
-                f"Question {visit.intake_session.current_question_count + 1} "
-                f"of {visit.intake_session.max_questions}"
-            )
+                # No safe next question from the multi-agent pipeline after several
+                # attempts. Instead of asking a generic fallback question (which can
+                # re-open already covered topics), treat this as an early completion.
+                visit.complete_intake()
+                is_complete = True
+                message = "Intake completed; no further questions were needed."
+            else:
+                visit.set_pending_question(next_question)
+                message = (
+                    f"Question {visit.intake_session.current_question_count + 1} "
+                    f"of {visit.intake_session.max_questions}"
+                )
 
         # Compute completion percent (LLM or deterministic fallback)
         completion_percent = await self._question_service.assess_completion_percent(

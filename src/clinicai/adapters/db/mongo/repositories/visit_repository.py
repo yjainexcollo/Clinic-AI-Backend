@@ -359,6 +359,7 @@ class MongoVisitRepository(VisitRepository):
             existing_visit.status = visit.status
             existing_visit.updated_at = datetime.utcnow()
             existing_visit.recently_travelled = getattr(visit, "recently_travelled", False)
+            existing_visit.symptom = visit.symptom
             existing_visit.intake_session = intake_session_mongo
             existing_visit.pre_visit_summary = visit.pre_visit_summary
             existing_visit.transcription_session = transcription_session_mongo
@@ -371,6 +372,7 @@ class MongoVisitRepository(VisitRepository):
             return VisitMongo(
                 visit_id=visit.visit_id.value,
                 patient_id=visit.patient_id,
+                symptom=visit.symptom,
                 workflow_type=visit.workflow_type.value,
                 status=visit.status,
                 created_at=visit.created_at,
@@ -402,7 +404,7 @@ class MongoVisitRepository(VisitRepository):
                 questions_asked.append(qa)
 
             intake_session = IntakeSession(
-                symptom="",  # No symptom field in database, use empty string
+                symptom=getattr(visit_mongo, "symptom", "") or "",
                 questions_asked=questions_asked,
                 current_question_count=visit_mongo.intake_session.current_question_count,
                 max_questions=visit_mongo.intake_session.max_questions,
@@ -470,10 +472,12 @@ class MongoVisitRepository(VisitRepository):
                 confidence_score=visit_mongo.soap_note.confidence_score,
             )
 
+        visit_symptom = getattr(visit_mongo, "symptom", "") or ""
+
         visit = Visit(
             visit_id=VisitId(visit_mongo.visit_id),
             patient_id=visit_mongo.patient_id,
-            symptom=intake_session.symptom if intake_session else "",  # Use intake session symptom or empty string
+            symptom=visit_symptom,
             workflow_type=VisitWorkflowType(visit_mongo.workflow_type),
             status=visit_mongo.status,
             created_at=visit_mongo.created_at,
@@ -487,5 +491,7 @@ class MongoVisitRepository(VisitRepository):
         )
         # Attach vitals if present
         visit.vitals = getattr(visit_mongo, "vitals", None)
+        if intake_session:
+            intake_session.symptom = visit_symptom
         
         return visit
