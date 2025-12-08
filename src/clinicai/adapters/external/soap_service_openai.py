@@ -10,6 +10,8 @@ from clinicai.core.ai_factory import get_ai_client
 
 from clinicai.application.ports.services.soap_service import SoapService
 from clinicai.core.config import get_settings
+from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
+from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 
 
 class OpenAISoapService(SoapService):
@@ -316,11 +318,21 @@ Generate the SOAP note now:
 
     async def _generate_soap_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
         """Async SOAP generation method."""
-        response = await self._client.chat(
+        # Get prompt version for telemetry
+        prompt_version = PROMPT_VERSIONS.get(PromptScenario.SOAP, "UNKNOWN")
+        
+        # Include version in prompt (optional but recommended)
+        system_message = f"""Prompt version: {prompt_version}
+
+You are a clinical scribe. Generate accurate, structured SOAP notes from medical consultations. Always respond with valid JSON only, no extra text."""
+        
+        response = await call_llm_with_telemetry(
+            ai_client=self._client,
+            scenario=PromptScenario.SOAP,
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are a clinical scribe. Generate accurate, structured SOAP notes from medical consultations. Always respond with valid JSON only, no extra text."
+                    "content": system_message
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -713,11 +725,21 @@ Generate the post-visit summary now:
 
     async def _generate_post_visit_summary_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
         """Async post-visit summary generation method."""
-        response = await self._client.chat(
+        # Get prompt version for telemetry
+        prompt_version = PROMPT_VERSIONS.get(PromptScenario.POSTVISIT_SUMMARY, "UNKNOWN")
+        
+        # Include version in prompt (optional but recommended)
+        system_message = f"""Prompt version: {prompt_version}
+
+You are a medical assistant generating patient-friendly post-visit summaries. Always respond with valid JSON only, no extra text."""
+        
+        response = await call_llm_with_telemetry(
+            ai_client=self._client,
+            scenario=PromptScenario.POSTVISIT_SUMMARY,
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are a medical assistant generating patient-friendly post-visit summaries. Always respond with valid JSON only, no extra text."
+                    "content": system_message
                 },
                 {"role": "user", "content": prompt}
             ],

@@ -69,6 +69,7 @@ async def lifespan(app: FastAPI):
                 AudioFileMongo,
             )
             from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
+            from .adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
 
             # Use configured URI
             mongo_uri = settings.database.uri
@@ -94,7 +95,7 @@ async def lifespan(app: FastAPI):
             db = client[db_name]
             await init_beanie(
                 database=db,
-                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference],
+                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference, PromptVersionMongo],
             )
             msg = "✅ Database connection established"
             print(msg, flush=True)
@@ -210,6 +211,29 @@ async def lifespan(app: FastAPI):
             logger.warning(msg)
             # Don't fail startup, but log the error
             logging.error(f"HIPAA Audit Logger failed to initialize: {e}")
+
+        # Initialize automatic prompt version detection
+        try:
+            msg = "Initializing automatic prompt version detection..."
+            print(msg, flush=True)
+            logger.info(msg)
+            from clinicai.adapters.external.prompt_version_manager import (
+                get_prompt_version_manager,
+            )
+            version_manager = get_prompt_version_manager()
+            versions = await version_manager.initialize_versions()
+            msg = f"✅ Prompt versions initialized: {len(versions)} scenarios"
+            print(msg, flush=True)
+            logger.info(msg)
+            for scenario, version in versions.items():
+                logger.info(f"   {scenario.value}: {version}")
+        except Exception as e:
+            # Don't fail startup if prompt version detection fails
+            warning_msg = f"⚠️  Prompt version detection failed: {e}"
+            print(warning_msg, flush=True)
+            logger.warning(warning_msg)
+            logger.warning("Using fallback versions from prompt_registry.py")
+            logging.warning(f"Prompt version detection error: {e}", exc_info=True)
 
         # Validate Azure OpenAI configuration
         try:

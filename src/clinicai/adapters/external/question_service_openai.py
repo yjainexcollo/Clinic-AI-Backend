@@ -19,6 +19,8 @@ from clinicai.core.constants import (
     SIMILARITY_STOPWORDS,
 )
 from clinicai.adapters.db.mongo.models.patient_m import LLMInteractionMongo
+from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
+from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 
 logger = logging.getLogger("clinicai")
 
@@ -439,12 +441,17 @@ Analyze this case following the system instructions. Return ONLY the JSON object
                 recently_travelled,
             )
 
-            response = await self._client.chat(
-                model=self._settings.openai.model,
+            # Get prompt version for telemetry
+            prompt_version = PROMPT_VERSIONS.get(PromptScenario.RED_FLAG, "UNKNOWN")
+            
+            response = await call_llm_with_telemetry(
+                ai_client=self._client,
+                scenario=PromptScenario.RED_FLAG,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                model=self._settings.openai.model,
                 max_tokens=2000,
                 temperature=0.1,
             )
@@ -1255,12 +1262,15 @@ Analyze ALL {qa_count} previous question-answer pairs and determine:
 Follow the JSON schema and rules from your system instructions and return ONLY the JSON object."""
 
         try:
-            response = await self._client.chat(
-                model=self._settings.openai.model,
+            # Agent-02 is part of intake flow
+            response = await call_llm_with_telemetry(
+                ai_client=self._client,
+                scenario=PromptScenario.INTAKE,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                model=self._settings.openai.model,
                 max_tokens=600,
                 temperature=0.1,
             )
@@ -1813,12 +1823,15 @@ OUTPUT REQUIREMENTS:
 Generate the next deep diagnostic question now, strictly about this domain."""
 
             try:
-                response = await self._client.chat(
-                    model=self._settings.openai.model,
+                # Deep diagnostic is part of intake flow
+                response = await call_llm_with_telemetry(
+                    ai_client=self._client,
+                    scenario=PromptScenario.INTAKE,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
+                    model=self._settings.openai.model,
                     max_tokens=400,  # Reduced to enforce shorter, single-topic questions
                     temperature=0.1,
                 )
@@ -2309,12 +2322,15 @@ TASK: Generate the next most clinically important question that:
 Return ONLY the question text. No quotes, no explanations."""
 
         try:
-            response = await self._client.chat(
-                model=self._settings.openai.model,
+            # Agent-03 is the main intake question generator
+            response = await call_llm_with_telemetry(
+                ai_client=self._client,
+                scenario=PromptScenario.INTAKE,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                model=self._settings.openai.model,
                 max_tokens=400,  # Reduced to enforce shorter, single-topic questions
                 temperature=0.1,
             )
@@ -2757,7 +2773,10 @@ class OpenAIQuestionService(QuestionService):
             if self._debug_prompts:
                 logger.debug("[QuestionService] Sending messages:\n%s", messages)
 
-            resp = await self._client.chat(
+            # This is used for pre-visit summary generation
+            resp = await call_llm_with_telemetry(
+                ai_client=self._client,
+                scenario=PromptScenario.PREVISIT_SUMMARY,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
