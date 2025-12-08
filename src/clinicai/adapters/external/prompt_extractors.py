@@ -153,14 +153,24 @@ def extract_intake_prompt() -> str:
             if method:
                 source = inspect.getsource(method)
                 # Extract English system_prompt (else block)
+                # Pattern: else:  # English\n            system_prompt = """..."""
                 match = re.search(
                     r'else:\s*#\s*English\s+system_prompt\s*=\s*"""(.*?)"""',
                     source,
                     re.DOTALL
                 )
+                if not match:
+                    # Try without comment
+                    match = re.search(
+                        r'else:\s+system_prompt\s*=\s*"""You are AGENT-01(.*?)"""',
+                        source,
+                        re.DOTALL
+                    )
                 if match:
-                    agent1_prompt = normalize_template(match.group(1))
+                    agent1_prompt = normalize_template(match.group(1) if match.group(1).startswith("You are") else "You are AGENT-01" + match.group(1))
                     combined_prompts.append(f"=== AGENT-01: MEDICAL CONTEXT ANALYZER ===\n{agent1_prompt}")
+                else:
+                    logging.warning("Could not extract Agent-01 prompt with regex")
     except Exception as e:
         logging.warning(f"Could not extract Agent-01 prompt: {e}")
     
@@ -174,14 +184,24 @@ def extract_intake_prompt() -> str:
             if method:
                 source = inspect.getsource(method)
                 # Extract English system_prompt (else block)
+                # Pattern: else:\n            # CHANGE NOTE (2025-12): Aligned English Agent-2 schema...\n            system_prompt = """..."""
                 match = re.search(
-                    r'else:\s+#.*?English\s+system_prompt\s*=\s*"""(.*?)"""',
+                    r'else:\s+#.*?system_prompt\s*=\s*"""(.*?)"""',
                     source,
                     re.DOTALL
                 )
+                if not match:
+                    # Try simpler pattern
+                    match = re.search(
+                        r'else:\s+system_prompt\s*=\s*"""You are AGENT-02(.*?)"""',
+                        source,
+                        re.DOTALL
+                    )
                 if match:
-                    agent2_prompt = normalize_template(match.group(1))
+                    agent2_prompt = normalize_template(match.group(1) if match.group(1).startswith("You are") else "You are AGENT-02" + match.group(1))
                     combined_prompts.append(f"=== AGENT-02: COVERAGE & FACT EXTRACTOR ===\n{agent2_prompt}")
+                else:
+                    logging.warning("Could not extract Agent-02 prompt with regex")
     except Exception as e:
         logging.warning(f"Could not extract Agent-02 prompt: {e}")
     
@@ -196,14 +216,20 @@ def extract_intake_prompt() -> str:
                 source = inspect.getsource(method)
                 # Extract English system_prompt (else block, non-deep-diagnostic)
                 # Look for the main system_prompt assignment (not deep diagnostic)
-                match = re.search(
+                # Pattern: else:\n            system_prompt = """..."""
+                # We need to find the FIRST occurrence (not the deep diagnostic ones)
+                matches = list(re.finditer(
                     r'else:\s+system_prompt\s*=\s*"""(.*?)"""',
                     source,
                     re.DOTALL
-                )
-                if match:
+                ))
+                if matches:
+                    # Take the first match (main prompt, not deep diagnostic)
+                    match = matches[0]
                     agent3_prompt = normalize_template(match.group(1))
                     combined_prompts.append(f"=== AGENT-03: QUESTION GENERATOR ===\n{agent3_prompt}")
+                else:
+                    logging.warning("Could not extract Agent-03 prompt with regex")
     except Exception as e:
         logging.warning(f"Could not extract Agent-03 prompt: {e}")
     
