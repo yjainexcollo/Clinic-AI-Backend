@@ -508,7 +508,9 @@ Analyze this case following the system instructions. Return ONLY the JSON object
             if severity not in {"mild", "moderate", "severe"}:
                 severity = None
 
-            
+            acuity = condition_properties.get("acuity_level")
+            if acuity not in {"acute", "subacute", "chronic"}:
+                acuity = None
 
             condition_properties["severity_level"] = severity
             condition_properties["acuity_level"] = acuity
@@ -534,7 +536,7 @@ Analyze this case following the system instructions. Return ONLY the JSON object
             )
             if unknown_topics:
                 logger.warning(
-                    "Agent 1: Dropping unknown topic labels from LLM: %s",
+                    "Agent 1: Dropping unknown topic label from LLM: %s",
                     sorted(unknown_topics),
                 )
 
