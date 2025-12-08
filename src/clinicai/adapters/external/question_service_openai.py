@@ -508,9 +508,7 @@ Analyze this case following the system instructions. Return ONLY the JSON object
             if severity not in {"mild", "moderate", "severe"}:
                 severity = None
 
-            acuity = condition_properties.get("acuity_level")
-            if acuity not in {"acute", "subacute", "chronic"}:
-                acuity = None
+            
 
             condition_properties["severity_level"] = severity
             condition_properties["acuity_level"] = acuity
