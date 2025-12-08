@@ -127,56 +127,97 @@ def extract_postvisit_prompt() -> str:
 
 
 def extract_intake_prompt() -> str:
-    """Extract intake question prompt template (uses system_prompt from Agent-03)"""
+    """
+    Extract intake prompt template combining all 3 agents.
+    
+    CHANGE NOTE (2025-12): Updated to extract prompts from all 3 intake agents:
+    - Agent-01 (Medical Context Analyzer)
+    - Agent-02 (Coverage & Fact Extractor) 
+    - Agent-03 (Question Generator)
+    
+    This ensures that a change to ANY agent will trigger a new INTAKE version.
+    """
     import inspect
+    import logging
     from clinicai.adapters.external import question_service_openai
     
-    # Try to get Agent-03's system prompt from QuestionGenerator class
+    combined_prompts = []
+    
+    # ============================================================================
+    # Extract Agent-01 (Medical Context Analyzer) prompt
+    # ============================================================================
     try:
-        question_gen_class = getattr(question_service_openai, 'QuestionGenerator', None)
-        if question_gen_class:
-            method = getattr(question_gen_class, '_generate_question', None)
+        analyzer_class = getattr(question_service_openai, 'MedicalContextAnalyzer', None)
+        if analyzer_class:
+            method = getattr(analyzer_class, 'analyze_condition', None)
             if method:
                 source = inspect.getsource(method)
-                # Extract English system_prompt (else block for Agent-03)
+                # Extract English system_prompt (else block)
+                match = re.search(
+                    r'else:\s*#\s*English\s+system_prompt\s*=\s*"""(.*?)"""',
+                    source,
+                    re.DOTALL
+                )
+                if match:
+                    agent1_prompt = normalize_template(match.group(1))
+                    combined_prompts.append(f"=== AGENT-01: MEDICAL CONTEXT ANALYZER ===\n{agent1_prompt}")
+    except Exception as e:
+        logging.warning(f"Could not extract Agent-01 prompt: {e}")
+    
+    # ============================================================================
+    # Extract Agent-02 (Coverage & Fact Extractor) prompt
+    # ============================================================================
+    try:
+        extractor_class = getattr(question_service_openai, 'AnswerExtractor', None)
+        if extractor_class:
+            method = getattr(extractor_class, 'extract_covered_information', None)
+            if method:
+                source = inspect.getsource(method)
+                # Extract English system_prompt (else block)
+                match = re.search(
+                    r'else:\s+#.*?English\s+system_prompt\s*=\s*"""(.*?)"""',
+                    source,
+                    re.DOTALL
+                )
+                if match:
+                    agent2_prompt = normalize_template(match.group(1))
+                    combined_prompts.append(f"=== AGENT-02: COVERAGE & FACT EXTRACTOR ===\n{agent2_prompt}")
+    except Exception as e:
+        logging.warning(f"Could not extract Agent-02 prompt: {e}")
+    
+    # ============================================================================
+    # Extract Agent-03 (Question Generator) prompt
+    # ============================================================================
+    try:
+        generator_class = getattr(question_service_openai, 'QuestionGenerator', None)
+        if generator_class:
+            method = getattr(generator_class, 'generate_question', None)
+            if method:
+                source = inspect.getsource(method)
+                # Extract English system_prompt (else block, non-deep-diagnostic)
+                # Look for the main system_prompt assignment (not deep diagnostic)
                 match = re.search(
                     r'else:\s+system_prompt\s*=\s*"""(.*?)"""',
                     source,
                     re.DOTALL
                 )
                 if match:
-                    template = match.group(1)
-                    return normalize_template(template)
-    except Exception:
-        pass
+                    agent3_prompt = normalize_template(match.group(1))
+                    combined_prompts.append(f"=== AGENT-03: QUESTION GENERATOR ===\n{agent3_prompt}")
+    except Exception as e:
+        logging.warning(f"Could not extract Agent-03 prompt: {e}")
     
-    # Fallback: try to extract from generate_next_question method
-    method = getattr(question_service_openai.QuestionServiceOpenAI, 'generate_next_question', None)
-    if not method:
-        raise ValueError("Could not find generate_next_question method")
+    # ============================================================================
+    # Combine all prompts
+    # ============================================================================
+    if not combined_prompts:
+        raise ValueError("Could not extract any intake agent prompts")
     
-    source = inspect.getsource(method)
+    # Join all prompts with separator
+    combined_template = "\n\n".join(combined_prompts)
     
-    # Extract English system_prompt (else block for Agent-03)
-    match = re.search(
-        r'else:\s+system_prompt\s*=\s*"""(.*?)"""',
-        source,
-        re.DOTALL
-    )
-    
-    if not match:
-        # Try to find Agent-03 prompt specifically
-        match = re.search(
-            r'system_prompt\s*=\s*"""You are AGENT-03(.*?)"""',
-            source,
-            re.DOTALL
-        )
-    
-    if not match:
-        raise ValueError("Could not extract intake prompt template")
-    
-    template = match.group(1)
-    return normalize_template(template)
+    # Return the combined, normalized template
+    return combined_template
 
 
 def extract_previsit_prompt() -> str:
@@ -284,4 +325,3 @@ def extract_template(scenario: PromptScenario) -> str:
         raise ValueError(f"No extractor found for scenario: {scenario}")
     
     return extractor()
-
