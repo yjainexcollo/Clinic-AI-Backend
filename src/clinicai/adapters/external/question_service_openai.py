@@ -295,7 +295,7 @@ CHRONIC CONDITIONS (is_chronic = true):
   ✓ Known chronic diseases: diabetes, hypertension, asthma, COPD, CKD, arthritis, 
     heart disease, depression, anxiety, epilepsy, autoimmune conditions
   ✓ Follow-up for chronic condition: "diabetes check", "BP medication refill"
-  ✗ Recent onset: "cough for 2 weeks" (use false or null)
+  
 
 ACUTE CONDITIONS (is_chronic = false):
   ✓ Recent onset <3 months: "fever for 3 days", "ankle sprain yesterday"
