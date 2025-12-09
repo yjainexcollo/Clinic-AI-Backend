@@ -24,8 +24,12 @@ class PromptVersionMongo(Document):
     created_at: datetime = Field(default_factory=datetime.utcnow, description="When this version was created")
     git_commit: Optional[str] = Field(None, description="Git commit hash (if available)")
     
+    # Semantic Versioning
+    major_version: int = Field(default=1, description="Major version (manually incremented)")
+    minor_version: int = Field(default=0, description="Minor version (auto-incremented on change)")
+    
     # Version number extraction (for sorting)
-    version_number: int = Field(..., description="Numeric version (1, 2, 3, etc.)")
+    version_number: int = Field(..., description="Numeric sorting value (major * 1000 + minor)")
 
     class Settings:
         name = "prompt_versions"
@@ -36,6 +40,7 @@ class PromptVersionMongo(Document):
             "is_current",
             [("scenario", 1), ("is_current", 1)],  # Compound index for finding current version by scenario
             [("scenario", 1), ("version_number", -1)],  # Compound index for version history queries
+            [("scenario", 1), ("major_version", 1), ("minor_version", 1)],  # Semantic version index
         ]
 
 
