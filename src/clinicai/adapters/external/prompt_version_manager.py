@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
-from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
+from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS, MAJOR_VERSIONS
 from clinicai.adapters.external.prompt_extractors import extract_template
 from clinicai.adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
 
@@ -63,8 +63,9 @@ class PromptVersionManager:
                 else:
                     raise
         
-        # Process all scenarios concurrently
-        tasks = [process_scenario(scenario) for scenario in PromptScenario]
+        # Process all tracked scenarios concurrently (defined in MAJOR_VERSIONS)
+        # This automatically excludes scenarios not in MAJOR_VERSIONS (like RED_FLAG)
+        tasks = [process_scenario(scenario) for scenario in MAJOR_VERSIONS.keys()]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Collect results and handle exceptions
@@ -86,8 +87,9 @@ class PromptVersionManager:
         """
         Check if prompt changed and create new version if needed.
         
-        Returns:
-            Current version string (existing or newly created)
+        Handles:
+        1. Major version changes (manual via MAJOR_VERSIONS)
+        2. Minor version changes (auto-detected via hash)
         """
         # Extract current template from code
         try:
@@ -99,6 +101,9 @@ class PromptVersionManager:
         # Calculate hash
         template_hash = self._calculate_hash(current_template)
         
+        # Get desired major version from code configuration
+        target_major = MAJOR_VERSIONS.get(scenario, 1)
+        
         # Find current version in DB
         current_version_doc = await PromptVersionMongo.find_one(
             PromptVersionMongo.scenario == scenario.value,
@@ -106,28 +111,44 @@ class PromptVersionManager:
         )
         
         if current_version_doc:
-            # Check if hash changed
-            if current_version_doc.template_hash == template_hash:
-                # No change - return existing version
-                logger.debug(f"{scenario.value}: No change detected (hash: {template_hash[:8]}...)")
-                return current_version_doc.version
+            current_major = getattr(current_version_doc, 'major_version', 1) # Backward compat default
+            current_minor = getattr(current_version_doc, 'minor_version', 0) # Backward compat default
             
-            # Hash changed - create new version
-            logger.info(f"{scenario.value}: Template changed! Creating new version...")
-            return await self._create_new_version(
-                scenario=scenario,
-                template=current_template,
-                template_hash=template_hash,
-                previous_version_number=current_version_doc.version_number
-            )
+            # Case 1: Major version upgrade (Manual trigger)
+            if target_major > current_major:
+                logger.info(f"{scenario.value}: Major version change detected ({current_major} -> {target_major})")
+                return await self._create_new_version(
+                    scenario=scenario,
+                    template=current_template,
+                    template_hash=template_hash,
+                    major_version=target_major,
+                    minor_version=0
+                )
+            
+            # Case 2: Template changed (Auto minor increment)
+            if current_version_doc.template_hash != template_hash:
+                logger.info(f"{scenario.value}: Template changed! Auto-incrementing minor version...")
+                return await self._create_new_version(
+                    scenario=scenario,
+                    template=current_template,
+                    template_hash=template_hash,
+                    major_version=current_major,
+                    minor_version=current_minor + 1
+                )
+                
+            # Case 3: No change
+            logger.debug(f"{scenario.value}: No change detected (v{current_version_doc.version})")
+            return current_version_doc.version
+            
         else:
             # No version exists - create first version
-            logger.info(f"{scenario.value}: No version found in DB, creating initial version...")
+            logger.info(f"{scenario.value}: No version found in DB, creating initial version {target_major}.0...")
             return await self._create_new_version(
                 scenario=scenario,
                 template=current_template,
                 template_hash=template_hash,
-                previous_version_number=0
+                major_version=target_major,
+                minor_version=0
             )
 
     async def _create_new_version(
@@ -135,24 +156,21 @@ class PromptVersionManager:
         scenario: PromptScenario,
         template: str,
         template_hash: str,
-        previous_version_number: int
+        major_version: int,
+        minor_version: int
     ) -> str:
         """Create a new prompt version in MongoDB."""
-        # Mark old version as not current (use transaction-like approach)
+        # Mark old version as not current
         await PromptVersionMongo.find(
             PromptVersionMongo.scenario == scenario.value,
             PromptVersionMongo.is_current == True
         ).update_many({"$set": {"is_current": False}})
         
-        # Generate new version string with timestamp for uniqueness
-        new_version_number = previous_version_number + 1
-        now = datetime.utcnow()
-        today = now.strftime("%Y-%m-%d")
-        timestamp = now.strftime("%H%M%S")  # Add time for uniqueness
+        # Generate version string: X.Y
+        version_string = f"{major_version}.{minor_version}"
+        version_number = (major_version * 1000) + minor_version
         
-        # Format: SCENARIO_V{NUMBER}_{DATE}_{TIMESTAMP}
-        scenario_name = scenario.value.upper().replace("_", "")
-        version_string = f"{scenario_name}_V{new_version_number}_{today}_{timestamp}"
+        now = datetime.utcnow()
         
         # Create new version document
         version_doc = PromptVersionMongo(
@@ -161,8 +179,11 @@ class PromptVersionManager:
             template_hash=template_hash,
             template_content=template,
             is_current=True,
-            version_number=new_version_number,
-            created_at=now
+            created_at=now,
+            # Semantic fields
+            major_version=major_version,
+            minor_version=minor_version,
+            version_number=version_number
         )
         
         await version_doc.insert()

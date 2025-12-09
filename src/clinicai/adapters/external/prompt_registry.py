@@ -25,12 +25,20 @@ class PromptScenario(str, Enum):
 
 # Default/fallback versions (used before DB initialization)
 _DEFAULT_VERSIONS: dict[PromptScenario, str] = {
-    PromptScenario.INTAKE: "INTAKE_V1_2025-01-15",
-    PromptScenario.PREVISIT_SUMMARY: "PREVISIT_V1_2025-01-15",
-    PromptScenario.RED_FLAG: "RED_FLAG_V1_2025-01-15",
-    PromptScenario.SOAP: "SOAP_V1_2025-01-15",
-    PromptScenario.POSTVISIT_SUMMARY: "POSTVISIT_V1_2025-01-15",
-    # Add defaults for your scenarios
+    PromptScenario.INTAKE: "1.0",
+    PromptScenario.PREVISIT_SUMMARY: "1.0",
+    PromptScenario.SOAP: "1.0",
+    PromptScenario.POSTVISIT_SUMMARY: "1.0",
+    # RED_FLAG is excluded from version tracking
+}
+
+# Manual Major Version Control
+# Developers: Increment these values to start a new major version series (e.g., 1 -> 2 starts 2.0)
+MAJOR_VERSIONS: dict[PromptScenario, int] = {
+    PromptScenario.INTAKE: 1,
+    PromptScenario.PREVISIT_SUMMARY: 1,
+    PromptScenario.SOAP: 1,
+    PromptScenario.POSTVISIT_SUMMARY: 1,
 }
 
 # Runtime versions (updated by PromptVersionManager on startup)
