@@ -405,8 +405,14 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
 
         import json as _json
         sentences = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", raw) if _s.strip()]
-        is_gpt4 = str(deployment_name).startswith("gpt-4")
-        max_chars_per_chunk = 8000 if is_gpt4 else 6000
+        # More specific model detection for chunk sizing
+        deployment_name_lower = str(deployment_name).lower()
+        if 'gpt-4o-mini' in deployment_name_lower:
+            max_chars_per_chunk = 6000  # Conservative for mini model
+        elif deployment_name_lower.startswith('gpt-4'):
+            max_chars_per_chunk = 8000  # Full GPT-4 models
+        else:
+            max_chars_per_chunk = 5000  # Other models
         overlap_chars = 500
 
         if len(raw) <= max_chars_per_chunk:

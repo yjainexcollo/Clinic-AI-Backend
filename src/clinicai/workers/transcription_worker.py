@@ -170,6 +170,7 @@ class TranscriptionWorker:
             
             # Start visibility extension task
             visibility_task = asyncio.create_task(extend_visibility())
+            heartbeat_task = None  # Initialize for cleanup
             
             try:
                 # Create transcription request
@@ -193,6 +194,21 @@ class TranscriptionWorker:
                 logger.info(f"Starting transcription processing for {patient_id}/{visit_id}")
                 print(f"🔵 Worker: starting transcription for {patient_id}/{visit_id}")
                 
+                # Add heartbeat logging task to show progress
+                async def heartbeat_logger():
+                    """Log progress every 2 minutes to show worker is still processing."""
+                    heartbeat_interval = 120  # 2 minutes
+                    while True:
+                        await asyncio.sleep(heartbeat_interval)
+                        elapsed = time.time() - transcription_start
+                        logger.info(
+                            f"💓 Transcription heartbeat: {patient_id}/{visit_id}, "
+                            f"elapsed={elapsed:.1f}s, still processing..."
+                        )
+                        print(f"💓 Worker: Still processing transcription (elapsed: {elapsed:.1f}s)")
+                
+                heartbeat_task = asyncio.create_task(heartbeat_logger())
+                
                 # Add timeout for transcription (30 minutes max)
                 try:
                     result = await asyncio.wait_for(
@@ -208,6 +224,14 @@ class TranscriptionWorker:
                     )
                     logger.error(f"❌ {error_msg}")
                     raise TimeoutError(error_msg)
+                finally:
+                    # Cancel heartbeat task when done (success or timeout)
+                    if heartbeat_task:
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
                 
                 transcription_duration = time.time() - transcription_start
                 total_duration = time.time() - job_start_time
@@ -246,11 +270,17 @@ class TranscriptionWorker:
                 print(f"✅ Worker: job removed from queue: {message_id}")
                 
             finally:
-                # Cancel visibility extension task
+                # Cancel visibility extension task and heartbeat task
                 if visibility_task:
                     visibility_task.cancel()
                     try:
                         await visibility_task
+                    except asyncio.CancelledError:
+                        pass
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
                     except asyncio.CancelledError:
                         pass
                     
@@ -266,9 +296,15 @@ class TranscriptionWorker:
             print(f"❌ Worker: transcription job failed: {str(e)}")
             print(f"❌ Full error traceback:\n{error_details}")
             
-            # Cancel visibility task if running
+            # Cancel visibility task and heartbeat task if running
             if visibility_task:
                 visibility_task.cancel()
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
             
             # Check if this is a permanent error that shouldn't be retried
             from clinicai.domain.errors import VisitNotFoundError
