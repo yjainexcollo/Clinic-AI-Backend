@@ -251,13 +251,39 @@ def extract_previsit_prompt() -> str:
     import inspect
     from clinicai.adapters.external import question_service_openai
     
-    method = getattr(question_service_openai.QuestionServiceOpenAI, 'generate_previsit_summary', None)
+    # FIXED: Changed QuestionServiceOpenAI -> OpenAIQuestionService
+    # FIXED: Changed generate_previsit_summary -> generate_pre_visit_summary
+    method = getattr(question_service_openai.OpenAIQuestionService, 'generate_pre_visit_summary', None)
     if not method:
-        raise ValueError("Could not find generate_previsit_summary method")
+        raise ValueError("Could not find generate_pre_visit_summary method")
     
     source = inspect.getsource(method)
     
     # Try to find prompt in messages construction
+    # The prompt is constructed with string concatenation, not triple quotes
+    match = re.search(
+        r'prompt\s*=\s*\(',
+        source
+    )
+    
+    if match:
+        # Extract the multi-line string concatenation
+        # Pattern: prompt = ("line1" "line2" ...)
+        prompt_match = re.search(
+            r'prompt\s*=\s*\((.*?)\)\s*$',
+            source,
+            re.DOTALL | re.MULTILINE
+        )
+        if prompt_match:
+            # Extract just the string content, removing quotes and concatenation
+            template = prompt_match.group(1)
+            # Clean up the extracted content
+            template = re.sub(r'"\s*"', '', template)  # Remove quote concatenation
+            template = re.sub(r'^"', '', template)  # Remove leading quote
+            template = re.sub(r'"$', '', template)  # Remove trailing quote
+            return normalize_template(template)
+    
+    # Fallback: try triple-quoted strings
     match = re.search(
         r'prompt\s*=\s*f?"""(.*?)"""',
         source,
@@ -282,6 +308,7 @@ def extract_previsit_prompt() -> str:
 def extract_redflag_prompt() -> str:
     """Extract red-flag checker prompt template (from Agent-01 analyze_condition)"""
     import inspect
+    import logging
     from clinicai.adapters.external import question_service_openai
     
     # Agent-01 is MedicalContextAnalyzer
@@ -292,6 +319,37 @@ def extract_redflag_prompt() -> str:
             if method:
                 source = inspect.getsource(method)
                 # Extract English system_prompt (else block)
+                # Pattern: else:  # English\n            system_prompt = """..."""
+                match = re.search(
+                    r'else:\s*#\s*English\s+system_prompt\s*=\s*"""(.*?)"""',
+                    source,
+                    re.DOTALL
+                )
+                if not match:
+                    # Try without comment
+                    match = re.search(
+                        r'else:\s+system_prompt\s*=\s*"""You are AGENT-01(.*?)"""',
+                        source,
+                        re.DOTALL
+                    )
+                if match:
+                    template = match.group(1) if match.group(1).startswith("You are") else "You are AGENT-01" + match.group(1)
+                    return normalize_template(template)
+                else:
+                    logging.warning("Could not extract Agent-01 prompt with regex in extract_redflag_prompt")
+    except Exception as e:
+        logging.warning(f"Could not extract Agent-01 prompt in extract_redflag_prompt: {e}")
+    
+    # FIXED: Changed QuestionServiceOpenAI -> OpenAIQuestionService
+    # Fallback: try to find in OpenAIQuestionService (though analyze_condition is in MedicalContextAnalyzer)
+    try:
+        service_class = getattr(question_service_openai, 'OpenAIQuestionService', None)
+        if service_class:
+            # The service class doesn't have analyze_condition, it's in MedicalContextAnalyzer
+            # So this fallback will fail, but we keep it for completeness
+            method = getattr(service_class, 'analyze_condition', None)
+            if method:
+                source = inspect.getsource(method)
                 match = re.search(
                     r'else:\s+system_prompt\s*=\s*"""(.*?)"""',
                     source,
@@ -300,36 +358,10 @@ def extract_redflag_prompt() -> str:
                 if match:
                     template = match.group(1)
                     return normalize_template(template)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Fallback extraction failed in extract_redflag_prompt: {e}")
     
-    # Fallback: try to find in QuestionServiceOpenAI
-    method = getattr(question_service_openai.QuestionServiceOpenAI, 'analyze_condition', None)
-    if not method:
-        raise ValueError("Could not find analyze_condition method")
-    
-    source = inspect.getsource(method)
-    
-    # Extract English system_prompt (else block)
-    match = re.search(
-        r'else:\s+system_prompt\s*=\s*"""(.*?)"""',
-        source,
-        re.DOTALL
-    )
-    
-    if not match:
-        # Try to find Agent-01 prompt specifically
-        match = re.search(
-            r'system_prompt\s*=\s*"""You are AGENT-01(.*?)"""',
-            source,
-            re.DOTALL
-        )
-    
-    if not match:
-        raise ValueError("Could not extract red-flag prompt template")
-    
-    template = match.group(1)
-    return normalize_template(template)
+    raise ValueError("Could not extract red-flag prompt template from any source")
 
 
 # Registry of extractors
