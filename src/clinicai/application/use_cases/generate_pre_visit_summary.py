@@ -79,7 +79,8 @@ class GeneratePreVisitSummaryUseCase:
                 "name": patient.name,
                 "age": patient.age,
                 "mobile": patient.mobile,
-                "symptom": visit.symptom
+                "symptom": visit.symptom,
+                "visit_id": visit.visit_id.value,
             }
             
             # Check for medication images first (before AI generation) so we can pass info to AI

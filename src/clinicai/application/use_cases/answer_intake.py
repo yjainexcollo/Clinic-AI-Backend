@@ -79,6 +79,9 @@ class AnswerIntakeUseCase:
                 current_question = await self._question_service.generate_first_question(
                     disease=visit.symptom or "general consultation",
                     language=patient.language,
+                    visit_id=visit.visit_id.value,
+                    patient_id=patient.patient_id.value,
+                    question_number=1,
                 )
             else:
                 previous_answers = [qa.answer for qa in visit.intake_session.questions_asked]
@@ -103,6 +106,9 @@ class AnswerIntakeUseCase:
                             prior_qas=prior_qas,
                             patient_gender=patient.gender,
                             patient_age=patient.age,
+                            visit_id=visit.visit_id.value,
+                            patient_id=patient.patient_id.value,
+                            question_number=visit.intake_session.current_question_count + 1,
                         )
                         if candidate and candidate.strip() and candidate not in asked_questions:
                             current_question = candidate
@@ -217,6 +223,9 @@ class AnswerIntakeUseCase:
                         prior_qas=prior_qas,
                         patient_gender=patient.gender,
                         patient_age=patient.age,
+                        visit_id=visit.visit_id.value,
+                        patient_id=patient.patient_id.value,
+                        question_number=visit.intake_session.current_question_count + 1,
                     )
                     if candidate and candidate.strip() and candidate not in asked_questions:
                         next_question = candidate

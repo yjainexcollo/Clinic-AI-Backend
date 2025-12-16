@@ -19,6 +19,10 @@ from clinicai.core.constants import (
     SIMILARITY_STOPWORDS,
 )
 from clinicai.adapters.db.mongo.models.patient_m import LLMInteractionMongo
+from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
+    append_intake_agent_log,
+    append_phase_call,
+)
 from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 
@@ -121,7 +125,10 @@ class MedicalContextAnalyzer:
         patient_age: Optional[int],
         patient_gender: Optional[str],
         recently_travelled: bool = False,
-        language: str = "en"
+        language: str = "en",
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> MedicalContext:
         """
         Analyze the medical condition to understand what information is needed.
@@ -465,7 +472,7 @@ Analyze this case following the system instructions. Return ONLY the JSON object
             print(log_msg, flush=True)
             logger.info(log_msg)
 
-            # Persist interaction to MongoDB with internal normalized fields (best-effort)
+            # Persist interaction to legacy log and structured per-visit log (best-effort)
             try:
                 await LLMInteractionMongo(
                     agent_name="agent1_medical_context",
@@ -481,6 +488,39 @@ Analyze this case following the system instructions. Return ONLY the JSON object
                 ).insert()
             except Exception as e:
                 logger.warning(f"Failed to persist Agent1 LLM interaction: {e}")
+
+            # Log Agent 1 interaction (store actual user prompt)
+            try:
+                settings = get_settings()
+                if settings.llm_interaction.enabled and visit_id and patient_id and question_number is not None:
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(
+                            f"[Agent1] Logging: visit_id={visit_id}, patient_id={patient_id}, "
+                            f"question_number={question_number}"
+                        )
+                    await append_intake_agent_log(
+                        visit_id=visit_id,
+                        patient_id=patient_id,
+                        question_number=question_number,
+                        question_text=None,
+                        agent_name="agent1_medical_context",
+                        user_prompt=user_prompt,  # Store actual user prompt string
+                        response_text=response_text,
+                        metadata={
+                            "chief_complaint": chief_complaint,
+                            "prompt_version": prompt_version,
+                        },
+                    )
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(f"[Agent1] Successfully logged to llm_interaction")
+                elif settings.llm_interaction.enable_debug_logging:
+                    logger.warning(
+                        f"[Agent1] Skipped logging: enabled={settings.llm_interaction.enabled}, "
+                        f"visit_id={bool(visit_id)}, patient_id={bool(patient_id)}, "
+                        f"question_number={question_number}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to append structured Agent1 log: {e}", exc_info=True)
             # TODO (2025-12): Consider using json.loads() directly with more robust error handling
             # instead of regex extraction, to handle edge cases like nested JSON or malformed responses
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -955,7 +995,10 @@ class AnswerExtractor:
         asked_questions: List[str],
         previous_answers: List[str],
         medical_context: MedicalContext,
-        language: str = "en"
+        language: str = "en",
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> ExtractedInformation:
 
         all_qa = []
@@ -1414,7 +1457,7 @@ Follow the JSON schema and rules from your system instructions and return ONLY t
                 f"Gaps={information_gaps}, Redundant={redundant_categories}"
             )
 
-            # Persist interaction to MongoDB with internal coverage metadata (best-effort)
+            # Persist interaction to legacy log and structured per-visit log (best-effort)
             try:
                 await LLMInteractionMongo(
                     agent_name="agent2_extractor",
@@ -1435,6 +1478,45 @@ Follow the JSON schema and rules from your system instructions and return ONLY t
                 ).insert()
             except Exception as e:
                 logger.warning(f"Failed to persist Agent2 LLM interaction: {e}")
+
+            # Log Agent 2 interaction (store actual user prompt)
+            try:
+                settings = get_settings()
+                if settings.llm_interaction.enabled and visit_id and patient_id and question_number is not None:
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(
+                            f"[Agent2] Logging: visit_id={visit_id}, patient_id={patient_id}, "
+                            f"question_number={question_number}"
+                        )
+                    await append_intake_agent_log(
+                        visit_id=visit_id,
+                        patient_id=patient_id,
+                        question_number=question_number,
+                        question_text=None,
+                        agent_name="agent2_extractor",
+                        user_prompt=user_prompt,  # Store actual user prompt string
+                        response_text=response_text,
+                        metadata={
+                            "topics_covered": topics_covered,
+                            "information_gaps": information_gaps,
+                            "redundant_categories": redundant_categories,
+                            "extracted_facts": extracted_facts,
+                            "already_mentioned_duration": already_mentioned_duration,
+                            "already_mentioned_medications": already_mentioned_medications,
+                            "topic_counts": topic_counts,
+                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        },
+                    )
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(f"[Agent2] Successfully logged to llm_interaction")
+                elif settings.llm_interaction.enable_debug_logging:
+                    logger.warning(
+                        f"[Agent2] Skipped logging: enabled={settings.llm_interaction.enabled}, "
+                        f"visit_id={bool(visit_id)}, patient_id={bool(patient_id)}, "
+                        f"question_number={question_number}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to append structured Agent2 log: {e}", exc_info=True)
 
             return ExtractedInformation(
                 topics_covered=topics_covered,
@@ -1490,6 +1572,9 @@ class QuestionGenerator:
         previous_answers: Optional[List[str]] = None,
         is_deep_diagnostic: bool = False,
         deep_diagnostic_question_num: Optional[int] = None,
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> str:
         """
         Generate next medical question based on context and what's been covered.
@@ -1867,6 +1952,40 @@ Generate the next deep diagnostic question now, strictly about this domain."""
                 ).insert()
             except Exception as e:
                 logger.warning(f"Failed to persist Agent3-DEEP LLM interaction: {e}")
+
+            # Log Agent 3 Deep Diagnostic interaction
+            try:
+                settings = get_settings()
+                if settings.llm_interaction.enabled and visit_id and patient_id and question_number is not None:
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(
+                            f"[Agent3-DEEP] Logging: visit_id={visit_id}, patient_id={patient_id}, "
+                            f"question_number={question_number}"
+                        )
+                    await append_intake_agent_log(
+                        visit_id=visit_id,
+                        patient_id=patient_id,
+                        question_number=question_number,
+                        question_text=question,
+                        agent_name="agent3_question_generator_deep",
+                        user_prompt=user_prompt,  # Combined prompt: includes Agent 1 & Agent 2 outputs
+                        response_text=question,
+                        metadata={
+                            "is_chronic_condition": is_chronic_condition,
+                            "deep_diagnostic_question_num": q_num,
+                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        },
+                    )
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(f"[Agent3-DEEP] Successfully logged to llm_interaction")
+                elif settings.llm_interaction.enable_debug_logging:
+                    logger.warning(
+                        f"[Agent3-DEEP] Skipped logging: enabled={settings.llm_interaction.enabled}, "
+                        f"visit_id={bool(visit_id)}, patient_id={bool(patient_id)}, "
+                        f"question_number={question_number}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to append structured Agent3-DEEP log: {e}", exc_info=True)
 
             question = self._postprocess_question_text(question)
             logger.info(f"Generated deep diagnostic question (cleaned): {question}")
@@ -2364,6 +2483,42 @@ Return ONLY the question text. No quotes, no explanations."""
             except Exception as e:
                 logger.warning(f"Failed to persist Agent3 LLM interaction: {e}")
 
+            # Log Agent 3 interaction (store actual user prompt)
+            try:
+                settings = get_settings()
+                if settings.llm_interaction.enabled and visit_id and patient_id and question_number is not None:
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(
+                            f"[Agent3] Logging: visit_id={visit_id}, patient_id={patient_id}, "
+                            f"question_number={question_number}"
+                        )
+                    await append_intake_agent_log(
+                        visit_id=visit_id,
+                        patient_id=patient_id,
+                        question_number=question_number,
+                        question_text=question,
+                        agent_name="agent3_question_generator",
+                        user_prompt=user_prompt,  # Store actual user prompt string
+                        response_text=response_text,
+                        metadata={
+                            "chosen_topic": chosen_topic,
+                            "information_gaps": list(extracted_info.information_gaps or []),
+                            "topics_covered": list(extracted_info.topics_covered or []),
+                            "redundant_categories": list(extracted_info.redundant_categories or []),
+                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        },
+                    )
+                    if settings.llm_interaction.enable_debug_logging:
+                        logger.info(f"[Agent3] Successfully logged to llm_interaction")
+                elif settings.llm_interaction.enable_debug_logging:
+                    logger.warning(
+                        f"[Agent3] Skipped logging: enabled={settings.llm_interaction.enabled}, "
+                        f"visit_id={bool(visit_id)}, patient_id={bool(patient_id)}, "
+                        f"question_number={question_number}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to append structured Agent3 log: {e}", exc_info=True)
+
             # Optional semantic similarity guard for avoid_similar_to (normal mode only)
             if avoid_similar_to and self._too_similar(question, avoid_similar_to):
                 logger.warning(
@@ -2804,7 +2959,14 @@ class OpenAIQuestionService(QuestionService):
             return "¿Hay algo más que le gustaría compartir sobre su condición?"
         return "Is there anything else you'd like to share about your condition?"
 
-    async def generate_first_question(self, disease: str, language: str = "en") -> str:
+    async def generate_first_question(
+        self,
+        disease: str,
+        language: str = "en",
+        visit_id: str | None = None,
+        patient_id: str | None = None,
+        question_number: int | None = None,
+    ) -> str:
         lang = self._normalize_language(language)
         if lang == "sp":
             return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?"
@@ -2825,9 +2987,15 @@ class OpenAIQuestionService(QuestionService):
         patient_gender: Optional[str] = None,
         patient_age: Optional[int] = None,
         language: str = "en",
+        visit_id: str | None = None,
+        patient_id: str | None = None,
+        question_number: int | None = None,
     ) -> str:
 
         try:
+            q_num = question_number or (current_count + 1)
+            v_id = visit_id
+            p_id = patient_id
             # Clamp max_count to settings limit
             settings = self._settings
             max_count = max(1, min(settings.intake.max_questions, max_count))
@@ -2865,6 +3033,9 @@ class OpenAIQuestionService(QuestionService):
                 patient_gender=patient_gender,
                 recently_travelled=recently_travelled,
                 language=language,
+                visit_id=v_id,
+                patient_id=p_id,
+                question_number=q_num,
             )
 
             # Compact summary log so we can see Agent-1's effect on downstream agents
@@ -2891,6 +3062,9 @@ class OpenAIQuestionService(QuestionService):
                 previous_answers=previous_answers,
                 medical_context=medical_context,
                 language=language,
+                visit_id=v_id,
+                patient_id=p_id,
+                question_number=q_num,
             )
 
             # Basic flags from context
@@ -3230,6 +3404,9 @@ class OpenAIQuestionService(QuestionService):
                 previous_answers=previous_answers,
                 is_deep_diagnostic=is_deep_diagnostic_mode,
                 deep_diagnostic_question_num=deep_diagnostic_question_num,
+                visit_id=v_id,
+                patient_id=p_id,
+                question_number=q_num,
             )
 
             # ------------------------------------------------------------------
@@ -3482,6 +3659,27 @@ class OpenAIQuestionService(QuestionService):
                 temperature=0.1,
             )
             cleaned = self._clean_summary_markdown(response)
+
+            # Structured per-visit log (no system prompt)
+            try:
+                await append_phase_call(
+                    visit_id=str(patient_data.get("visit_id") or ""),
+                    patient_id=str(patient_data.get("patient_id") or ""),
+                    phase="pre_visit_summary",
+                    agent_name="previsit_summary_generator",
+                    user_prompt={
+                        "patient_data": patient_data,
+                        "intake_answers": intake_answers,
+                        "medication_images_info": medication_images_info,
+                    },
+                    response_text=cleaned,
+                    metadata={
+                        "prompt_version": "previsit_v1",
+                        "language": lang,
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Failed to append structured pre-visit log: {e}")
 
             return {
                 "summary": cleaned,

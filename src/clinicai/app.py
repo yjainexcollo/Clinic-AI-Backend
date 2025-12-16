@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
                 MedicationImageMongo,
                 DoctorPreferencesMongo,
                 AudioFileMongo,
+                LLMInteractionVisit,
             )
             from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
             from .adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
@@ -95,7 +96,7 @@ async def lifespan(app: FastAPI):
             db = client[db_name]
             await init_beanie(
                 database=db,
-                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference, PromptVersionMongo],
+                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference, PromptVersionMongo, LLMInteractionVisit],
             )
             msg = "✅ Database connection established"
             print(msg, flush=True)
