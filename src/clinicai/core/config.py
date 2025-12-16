@@ -384,6 +384,40 @@ class IntakeSettings(BaseSettings):
         return v
 
 
+class LLMInteractionSettings(BaseSettings):
+    """LLM interaction logging configuration settings."""
+    
+    model_config = SettingsConfigDict(env_prefix="LLM_INTERACTION_")
+    
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM interaction logging to database (default: True)"
+    )
+    log_system_prompts: bool = Field(
+        default=False,
+        description="Include system prompts in logs (default: False for privacy/optimization)"
+    )
+    batch_mode: bool = Field(
+        default=False,
+        description="Use batch mode for logging (reduces database writes, default: False)"
+    )
+    batch_size: int = Field(
+        default=10,
+        description="Batch size for batch mode (default: 10)"
+    )
+    enable_debug_logging: bool = Field(
+        default=False,
+        description="Enable debug logging for LLM interaction tracking (default: False)"
+    )
+    
+    @validator("batch_size")
+    def validate_batch_size(cls, v: int) -> int:
+        """Validate batch size."""
+        if v < 1 or v > 100:
+            raise ValueError("Batch size must be between 1 and 100")
+        return v
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -420,6 +454,7 @@ class Settings(BaseSettings):
     azure_queue: AzureQueueSettings = Field(default_factory=AzureQueueSettings)
     azure_speech: AzureSpeechSettings = Field(default_factory=AzureSpeechSettings)
     intake: IntakeSettings = Field(default_factory=IntakeSettings)
+    llm_interaction: LLMInteractionSettings = Field(default_factory=LLMInteractionSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

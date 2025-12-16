@@ -10,7 +10,14 @@ class QuestionService(ABC):
     """Abstract service for generating adaptive questions."""
 
     @abstractmethod
-    async def generate_first_question(self, disease: str, language: str = "en") -> str:
+    async def generate_first_question(
+        self,
+        disease: str,
+        language: str = "en",
+        visit_id: str | None = None,
+        patient_id: str | None = None,
+        question_number: int | None = None,
+    ) -> str:
         """Generate the first question based on primary symptom (backward param name)."""
         pass
 
@@ -29,6 +36,9 @@ class QuestionService(ABC):
         patient_gender: Optional[str] = None,
         patient_age: Optional[int] = None,
         language: str = "en",
+        visit_id: str | None = None,
+        patient_id: str | None = None,
+        question_number: int | None = None,
     ) -> str:
         """Generate the next question based on context."""
         pass

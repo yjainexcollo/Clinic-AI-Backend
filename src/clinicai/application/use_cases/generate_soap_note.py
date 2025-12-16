@@ -7,6 +7,9 @@ from ..dto.patient_dto import SoapGenerationRequest, SoapGenerationResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.soap_service import SoapService
+from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
+    append_phase_call,
+)
 
 
 class GenerateSoapNoteUseCase:
@@ -125,6 +128,31 @@ class GenerateSoapNoteUseCase:
 
             # Save updated visit
             await self._visit_repository.save(visit)
+
+            # Structured per-visit LLM interaction log (no system prompt)
+            try:
+                await append_phase_call(
+                    visit_id=visit.visit_id.value,
+                    patient_id=patient.patient_id.value,
+                    phase="soap",
+                    agent_name="soap_note_generator",
+                    user_prompt={
+                        "transcript": transcript,
+                        "patient_context": patient_context,
+                        "intake_data": intake_data,
+                        "pre_visit_summary": pre_visit_summary,
+                        "vitals": vitals,
+                        "language": patient_language,
+                    },
+                    response_text=soap_result,
+                    metadata={"prompt_version": "soap_v1"},
+                )
+            except Exception as e:
+                import logging
+
+                logging.getLogger("clinicai").warning(
+                    f"Failed to append structured SOAP log: {e}"
+                )
 
             return SoapGenerationResponse(
                 patient_id=patient.patient_id.value,

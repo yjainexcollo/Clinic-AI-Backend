@@ -11,6 +11,9 @@ from ...api.schemas import PostVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.soap_service import SoapService
+from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
+    append_phase_call,
+)
 
 
 class GeneratePostVisitSummaryUseCase:
@@ -116,6 +119,28 @@ class GeneratePostVisitSummaryUseCase:
             reassurance_note=parsed_summary.get("reassurance_note", "Please contact us if symptoms worsen or if you have questions."),
             generated_at=datetime.utcnow().isoformat()
         )
+
+        # Structured per-visit LLM interaction log (no system prompt)
+        try:
+            await append_phase_call(
+                visit_id=visit.visit_id.value,
+                patient_id=patient.patient_id.value,
+                phase="post_visit_summary",
+                agent_name="postvisit_summary_generator",
+                user_prompt={
+                    "patient_data": patient_data,
+                    "soap_data": soap_data,
+                    "language": patient.language,
+                },
+                response_text=summary_result,
+                metadata={"prompt_version": "postvisit_v1"},
+            )
+        except Exception as e:
+            import logging
+
+            logging.getLogger("clinicai").warning(
+                f"Failed to append structured post-visit log: {e}"
+            )
 
         # Persist to visit for future retrieval
         try:
