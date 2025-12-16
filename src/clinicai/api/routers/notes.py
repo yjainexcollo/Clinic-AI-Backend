@@ -119,13 +119,8 @@ async def transcribe_audio(
     # Set IDs in request state for HIPAA audit middleware
     request.state.audit_patient_id = patient_id
     request.state.audit_visit_id = visit_id
-    # Visible console breadcrumbs
-    print("🔵 === Visit transcription request received ===")
-    print(f"🔵 patient_id={patient_id}, visit_id={visit_id}, language={language}")
-    print(f"🔵 Content-Type: {request.headers.get('content-type', 'not set')}")
-    print(f"🔵 Filename: {audio_file.filename if audio_file else 'None'}")
-    logger.info(f"Transcribe audio request received for patient_id: {patient_id}, visit_id: {visit_id}, language: {language}")
-    print("🔵 Step 1: Request received, starting validation...")
+    # Log request (no PHI)
+    logger.info(f"Transcribe audio request received: visit_id={visit_id}, language={language}, filename={audio_file.filename if audio_file else 'None'}")
 
     if not audio_file.filename:
         raise HTTPException(
@@ -214,17 +209,94 @@ async def transcribe_audio(
         )
         print(f"🔵 Step 4e: Temp file created successfully in {upload_duration:.2f}s")
 
+        # Audio normalization: convert video/mpeg or non-audio .mpeg to WAV 16kHz mono PCM
+        normalized_file_path = temp_file_path
+        conversion_time = 0.0
+        normalized_audio = False
+        original_content_type = content_type
+        normalized_format = None
+        final_content_type = content_type
+        audio_duration_seconds = None
+        
+        normalize_enabled = os.getenv("NORMALIZE_AUDIO", "true").lower() == "true"
+        needs_normalization = (
+            normalize_enabled and
+            (content_type.startswith("video/") or (not is_audio_like and content_type in ("video/mpeg", "video/mpg", "application/mpeg")))
+        )
+        
+        if needs_normalization:
+            try:
+                from ...core.audio_utils import normalize_audio_to_wav, get_audio_duration
+                
+                logger.info(f"Audio normalization required: content_type={content_type}, is_audio_like={is_audio_like}")
+                
+                # Create normalized output file
+                normalized_fd, normalized_file_path = tempfile.mkstemp(suffix=".wav", prefix="normalized_")
+                os.close(normalized_fd)
+                
+                # Convert to WAV 16kHz mono PCM
+                normalized_file_path, conversion_time = normalize_audio_to_wav(
+                    input_path=temp_file_path,
+                    output_path=normalized_file_path,
+                    timeout_seconds=300,
+                )
+                
+                # Get audio duration using ffprobe
+                try:
+                    audio_duration_seconds = get_audio_duration(normalized_file_path, timeout_seconds=30)
+                except Exception as duration_error:
+                    logger.warning(f"Could not get audio duration: {duration_error}, will get from Azure Speech result")
+                    # Continue without duration - Azure Speech will provide it
+                
+                normalized_audio = True
+                normalized_format = "wav_16khz_mono_pcm"
+                final_content_type = "audio/wav"
+                
+                logger.info(
+                    f"Audio normalized: {temp_file_path} -> {normalized_file_path}, "
+                    f"conversion_time={conversion_time:.2f}s, duration={audio_duration_seconds}s"
+                )
+                
+            except FileNotFoundError as e:
+                # ffmpeg not found - return clear error
+                logger.error(f"ffmpeg not found for audio normalization: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "AUDIO_NORMALIZATION_FAILED",
+                        "message": "Audio normalization requires ffmpeg. Please install ffmpeg or set FFMPEG_PATH env var.",
+                        "details": {"original_error": str(e)},
+                    },
+                )
+            except (TimeoutError, RuntimeError) as e:
+                # Conversion failed - return clear error
+                logger.error(f"Audio normalization failed: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "AUDIO_NORMALIZATION_FAILED",
+                        "message": f"Failed to normalize audio file: {str(e)}",
+                        "details": {"original_error": str(e)},
+                    },
+                )
+        else:
+            # Try to get duration for non-normalized files too (if ffprobe available)
+            try:
+                from ...core.audio_utils import get_audio_duration
+                audio_duration_seconds = get_audio_duration(temp_file_path, timeout_seconds=30)
+            except Exception:
+                # Duration extraction is optional - Azure Speech will provide it
+                pass
+
         # Mark visit as queued if possible (best-effort via use case during processing)
-        print("🔵 Step 5: Starting patient/visit validation...")
         try:
             # Check if patient and visit exist and are in correct status
             from clinicai.domain.value_objects.patient_id import PatientId
-            print(f"🔵 Step 5a: Looking up patient {internal_patient_id}...")
             patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
             if not patient:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {internal_patient_id} not found", "details": {}},
+                    detail={"error": "PATIENT_NOT_FOUND", "message": "Patient not found", "details": {}},
                 )
             
             from ...domain.value_objects.visit_id import VisitId
@@ -239,7 +311,7 @@ async def transcribe_audio(
                     detail={"error": "VISIT_NOT_FOUND", "message": f"Visit {visit_id} not found", "details": {}},
                 )
             
-            logger.info(f"Patient {internal_patient_id} and visit {visit_id} found. Visit status: {visit.status}")
+            logger.info(f"Patient and visit {visit_id} found. Visit status: {visit.status}")
             
             # Check if visit is ready for transcription before starting
             if not visit.can_proceed_to_transcription():
@@ -279,10 +351,20 @@ async def transcribe_audio(
             print(f"🔵 Step 6a: Calling create_audio_file_from_path with file_path={temp_file_path}, size={file_size} bytes")
             
             repo_call_start = time.time()
+            # Use normalized file if normalization was performed
+            upload_file_path = normalized_file_path if normalized_audio else temp_file_path
+            upload_filename = (audio_file.filename or "unknown_audio")
+            if normalized_audio:
+                # Change extension to .wav if normalized
+                if "." in upload_filename:
+                    upload_filename = upload_filename.rsplit(".", 1)[0] + ".wav"
+                else:
+                    upload_filename = upload_filename + ".wav"
+            
             audio_file_record = await audio_repo.create_audio_file_from_path(
-                file_path=temp_file_path,
-                filename=audio_file.filename or "unknown_audio",
-                content_type=audio_file.content_type or "audio/mpeg",
+                file_path=upload_file_path,
+                filename=upload_filename,
+                content_type=final_content_type,
                 patient_id=internal_patient_id,
                 visit_id=visit_id,
                 audio_type="visit",
@@ -295,11 +377,24 @@ async def transcribe_audio(
             )
             print(f"✅ Audio file saved to database: {audio_file_record.audio_id} (repo_call={repo_call_duration:.3f}s, total={blob_upload_duration:.3f}s)")
 
-            # Start transcription session
-            visit.start_transcription(None)  # No file path needed
+            # Queue transcription job (sets status to 'queued', not 'processing')
+            # The worker will atomically claim it and set status to 'processing'
+            enqueued_at = datetime.utcnow()
+            visit.queue_transcription(None, enqueued_at=enqueued_at)  # No file path needed
+            # Store normalization metadata and duration
+            if visit.transcription_session:
+                visit.transcription_session.normalized_audio = normalized_audio
+                visit.transcription_session.original_content_type = original_content_type
+                visit.transcription_session.normalized_format = normalized_format
+                visit.transcription_session.file_content_type = final_content_type
+                if audio_duration_seconds is not None:
+                    visit.transcription_session.audio_duration_seconds = audio_duration_seconds
             await visit_repo.save(visit)
-            logger.info(f"Started transcription session for patient {internal_patient_id}, visit {visit_id}")
-            print(f"🔵 Visit transcription status set to started for {internal_patient_id}/{visit_id}")
+            logger.info(
+                f"Started transcription session for visit {visit_id}, enqueued_at={enqueued_at.isoformat()}, "
+                f"normalized_audio={normalized_audio}, file_content_type={final_content_type}, "
+                f"audio_duration_seconds={audio_duration_seconds}"
+            )
             
             # Enqueue transcription job to Azure Queue
             if not QUEUE_SERVICE_AVAILABLE:
@@ -315,11 +410,17 @@ async def transcribe_audio(
             queue_service = get_azure_queue_service()
             # Note: Queue existence is ensured at startup, not per request
             
+            # Get request_id for log correlation (if available)
+            request_id = getattr(request.state, "request_id", None)
+            
             message_id = await queue_service.enqueue_transcription_job(
                 patient_id=internal_patient_id,
                 visit_id=visit_id,
                 audio_file_id=audio_file_record.audio_id,
-                language=language
+                language=language,
+                retry_count=0,
+                delay_seconds=0,
+                request_id=request_id
             )
             
             total_duration = time.time() - upload_start_time
@@ -338,15 +439,19 @@ async def transcribe_audio(
                 detail={"error": "QUEUE_ERROR", "message": f"Failed to queue transcription: {str(e)}", "details": {}},
             )
         finally:
-            # Clean up temp file
-            try:
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                    logger.info(f"Cleaned up temp file: {temp_file_path}")
-                    print(f"🔵 Cleaned up temp file: {temp_file_path}")
-            except Exception as cleanup_error:
-                logger.error(f"Failed to clean up temp file: {cleanup_error}")
-                print(f"⚠️ Failed to clean up temp file: {cleanup_error}")
+            # Clean up temp files (original and normalized if created)
+            cleanup_paths = []
+            if temp_file_path and os.path.exists(temp_file_path):
+                cleanup_paths.append(temp_file_path)
+            if normalized_audio and normalized_file_path and os.path.exists(normalized_file_path) and normalized_file_path != temp_file_path:
+                cleanup_paths.append(normalized_file_path)
+            
+            for cleanup_path in cleanup_paths:
+                try:
+                    os.unlink(cleanup_path)
+                    logger.debug(f"Cleaned up temp file: {cleanup_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up temp file {cleanup_path}: {cleanup_error}")
 
         # Return 202 Accepted for async operation
         return JSONResponse(
@@ -421,22 +526,55 @@ async def get_transcription_status(
                 "message": "Transcription not started"
             })
         
-        transcription_status = visit.transcription_session.transcription_status
+        transcription_session = visit.transcription_session
+        transcription_status = transcription_session.transcription_status
+        
+        # Check for stale processing state (> 30 minutes with no recent activity)
+        from datetime import timedelta
+        now = datetime.utcnow()
+        is_stale = False
+        if transcription_status == "processing" and transcription_session.started_at:
+            age_minutes = (now - transcription_session.started_at).total_seconds() / 60
+            last_poll_age_minutes = (now - transcription_session.last_poll_at).total_seconds() / 60 if transcription_session.last_poll_at else age_minutes
+            # Consider stale if processing > 30 min and last poll > 20 min ago (or never polled)
+            if age_minutes > 30 and (last_poll_age_minutes > 20 or not transcription_session.last_poll_at):
+                is_stale = True
+                transcription_status = "stale_processing"
+        
         status_info = {
-            "status": transcription_status,  # pending, processing, completed, failed
-            "progress": "unknown"
+            "status": transcription_status,  # pending, processing, completed, failed, stale_processing
+            "transcription_id": transcription_session.transcription_id,
+            "started_at": transcription_session.started_at.isoformat() if transcription_session.started_at else None,
+            "last_poll_status": transcription_session.last_poll_status,
+            "last_poll_at": transcription_session.last_poll_at.isoformat() if transcription_session.last_poll_at else None,
+            "error_message": transcription_session.error_message,
+            "enqueued_at": transcription_session.enqueued_at.isoformat() if transcription_session.enqueued_at else None,
+            "dequeued_at": transcription_session.dequeued_at.isoformat() if transcription_session.dequeued_at else None,
         }
         
         if transcription_status == "completed":
             status_info["transcript_available"] = True
-            status_info["word_count"] = visit.transcription_session.word_count
-            status_info["duration"] = visit.transcription_session.audio_duration_seconds
+            status_info["word_count"] = transcription_session.word_count
+            status_info["duration"] = transcription_session.audio_duration_seconds
+            status_info["audio_duration_seconds"] = transcription_session.audio_duration_seconds
+            status_info["file_content_type"] = transcription_session.file_content_type
+            status_info["normalized_audio"] = transcription_session.normalized_audio
+            status_info["completed_at"] = transcription_session.completed_at.isoformat() if transcription_session.completed_at else None
             status_info["message"] = "Transcription completed successfully"
+        elif transcription_status in ["processing", "stale_processing"]:
+            status_info["audio_duration_seconds"] = transcription_session.audio_duration_seconds
+            status_info["file_content_type"] = transcription_session.file_content_type
+            status_info["normalized_audio"] = transcription_session.normalized_audio
+        elif transcription_status == "stale_processing":
+            status_info["message"] = f"Transcription appears stuck (processing for {age_minutes:.1f} minutes). May need manual intervention."
+            status_info["next_action"] = "retry_or_reset"
         elif transcription_status == "processing":
-            status_info["message"] = "Transcription in progress"
+            age_seconds = (now - transcription_session.started_at).total_seconds() if transcription_session.started_at else 0
+            status_info["message"] = f"Transcription in progress (running for {age_seconds:.0f} seconds)"
+            status_info["progress_seconds"] = age_seconds
         elif transcription_status == "failed":
-            status_info["error"] = visit.transcription_session.error_message
-            status_info["message"] = f"Transcription failed: {visit.transcription_session.error_message}"
+            status_info["error"] = transcription_session.error_message
+            status_info["message"] = f"Transcription failed: {transcription_session.error_message}"
         else:
             status_info["message"] = f"Transcription status: {transcription_status}"
         

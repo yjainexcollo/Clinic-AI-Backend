@@ -399,7 +399,7 @@ class AudioRepository:
     ) -> List[Dict[str, Any]]:
         """Get structured dialogue for audio files instead of full metadata."""
         try:
-            from ..models.patient_m import AdhocTranscriptMongo, VisitMongo
+            from ..models.patient_m import VisitMongo
             
             dialogue_list = []
             
@@ -445,21 +445,9 @@ class AudioRepository:
                 }
                 
                 # Get structured dialogue based on audio type
-                if audio_file.audio_type == "adhoc" and audio_file.adhoc_id:
-                    try:
-                        adhoc_doc = await AdhocTranscriptMongo.get(PydanticObjectId(audio_file.adhoc_id))
-                        if adhoc_doc and adhoc_doc.structured_dialogue:
-                            # Ensure structured_dialogue is a list
-                            if isinstance(adhoc_doc.structured_dialogue, list):
-                                dialogue_data["structured_dialogue"] = adhoc_doc.structured_dialogue
-                            else:
-                                logger.warning(f"structured_dialogue is not a list for adhoc {audio_file.audio_id}")
-                                dialogue_data["structured_dialogue"] = []
-                    except Exception as e:
-                        logger.warning(f"Failed to get adhoc dialogue for {audio_file.audio_id}: {e}")
-                        dialogue_data["structured_dialogue"] = []
-                        
-                elif audio_file.audio_type == "visit" and audio_file.patient_id and audio_file.visit_id:
+                # NOTE: AdhocTranscriptMongo has been removed from the codebase.
+                # For audio_type == "adhoc", structured_dialogue will remain an empty list.
+                if audio_file.audio_type == "visit" and audio_file.patient_id and audio_file.visit_id:
                     try:
                         visit = await VisitMongo.find_one(
                             VisitMongo.patient_id == audio_file.patient_id,

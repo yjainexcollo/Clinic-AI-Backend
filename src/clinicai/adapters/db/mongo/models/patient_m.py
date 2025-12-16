@@ -47,13 +47,29 @@ class TranscriptionSessionMongo(BaseModel):
     """Embedded model for transcription session (no revision_id)."""
     audio_file_path: Optional[str] = Field(None, description="Path to audio file")
     transcript: Optional[str] = Field(None, description="Transcribed text")
-    transcription_status: str = Field(default="pending", description="Status: pending, processing, completed, failed")
+    transcription_status: str = Field(default="pending", description="Status: pending, queued, processing, completed, failed")
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = Field(None, description="Error message if failed")
+    worker_id: Optional[str] = Field(None, description="Worker that claimed/processed this job (format: hostname:pid)")
     audio_duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
     word_count: Optional[int] = Field(None, description="Word count of transcript")
     structured_dialogue: Optional[list[dict]] = Field(None, description="Ordered Doctor/Patient turns")
+    transcription_id: Optional[str] = Field(None, description="Azure Speech Service transcription job ID for tracking")
+    last_poll_status: Optional[str] = Field(None, description="Last polled status from Azure Speech Service (Succeeded, Running, Failed, etc.)")
+    last_poll_at: Optional[datetime] = Field(None, description="Timestamp of last status poll from Azure Speech Service")
+    # Observability timestamps for latency analysis
+    enqueued_at: Optional[datetime] = Field(None, description="When job was enqueued to Azure Queue")
+    dequeued_at: Optional[datetime] = Field(None, description="When worker dequeued the job")
+    azure_job_created_at: Optional[datetime] = Field(None, description="When Azure Speech job was created")
+    first_poll_at: Optional[datetime] = Field(None, description="When first status poll was made")
+    results_downloaded_at: Optional[datetime] = Field(None, description="When transcription results were downloaded")
+    db_saved_at: Optional[datetime] = Field(None, description="When transcript was saved to database")
+    # Audio normalization metadata
+    normalized_audio: Optional[bool] = Field(None, description="Whether audio was normalized/converted")
+    original_content_type: Optional[str] = Field(None, description="Original content type before normalization")
+    normalized_format: Optional[str] = Field(None, description="Format after normalization (e.g., wav_16khz_mono_pcm)")
+    file_content_type: Optional[str] = Field(None, description="Final content type used for transcription")
 
 
 class SoapNoteMongo(BaseModel):

@@ -36,42 +36,78 @@ class Patient:
         """Validate patient data according to business rules."""
         # Validate name
         if not self.name or len(self.name.strip()) < 2:
-            raise InvalidPatientDataError("name", self.name)
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Name must be at least 2 characters, got {len(self.name.strip()) if self.name else 0}",
+                422,
+                {"field": "name", "value": self.name}
+            )
 
         if len(self.name) > 80:
-            raise InvalidPatientDataError("name", "Name too long (max 80 characters)")
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Name too long (max 80 characters), got {len(self.name)}",
+                422,
+                {"field": "name", "value": self.name[:50]}  # Truncate for details
+            )
 
         # Validate mobile
         if not self.mobile or len(self.mobile.strip()) < 10:
-            raise InvalidPatientDataError("mobile", self.mobile)
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Mobile number must be at least 10 digits, got {len(self.mobile.strip()) if self.mobile else 0}",
+                422,
+                {"field": "mobile", "value": self.mobile}
+            )
 
         # Clean mobile number and validate
         clean_mobile = "".join(filter(str.isdigit, self.mobile))
         if len(clean_mobile) < 10 or len(clean_mobile) > 15:
             raise InvalidPatientDataError(
-                "mobile", f"Invalid mobile number length: {len(clean_mobile)}"
+                "INVALID_PATIENT_DATA",
+                f"Mobile number must be between 10 and 15 digits, got {len(clean_mobile)} digits",
+                422,
+                {"field": "mobile", "value": self.mobile, "cleaned_value": clean_mobile}
             )
 
         # Validate age
         if not isinstance(self.age, int) or self.age < 0 or self.age > 120:
-            raise InvalidPatientDataError("age", self.age)
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Age must be between 0 and 120, got {self.age}",
+                422,
+                {"field": "age", "value": self.age}
+            )
         
         # Validate language - accept both "en", "es", and "sp" (normalize "es" to "sp" for consistency)
         if self.language and self.language.lower() in ["es", "sp"]:
             self.language = "sp"  # Normalize to "sp" for consistency
         elif self.language not in ["en", "sp"]:
-            raise InvalidPatientDataError("language", f"Invalid language: {self.language}")
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Invalid language: {self.language}. Must be 'en' or 'sp'",
+                422,
+                {"field": "language", "value": self.language}
+            )
 
     def update_contact_info(self, name: str, mobile: str) -> None:
         """Update patient contact information."""
         # Validate new data
         if not name or len(name.strip()) < 2:
-            raise InvalidPatientDataError("name", name)
+            raise InvalidPatientDataError(
+                "INVALID_PATIENT_DATA",
+                f"Name must be at least 2 characters, got {len(name.strip()) if name else 0}",
+                422,
+                {"field": "name", "value": name}
+            )
 
         clean_mobile = "".join(filter(str.isdigit, mobile))
         if len(clean_mobile) < 10 or len(clean_mobile) > 15:
             raise InvalidPatientDataError(
-                "mobile", f"Invalid mobile number length: {len(clean_mobile)}"
+                "INVALID_PATIENT_DATA",
+                f"Mobile number must be between 10 and 15 digits, got {len(clean_mobile)} digits",
+                422,
+                {"field": "mobile", "value": mobile, "cleaned_value": clean_mobile}
             )
 
         self.name = name

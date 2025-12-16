@@ -193,11 +193,13 @@ class AudioTranscriptionRequest:
     
     patient_id: str
     visit_id: str
-    audio_file_path: str
+    audio_file_path: Optional[str] = None  # Optional when sas_url provided
     language: str = "en"
     audio_duration: Optional[float] = None
     # Optional: direct SAS URL to existing blob for Azure Speech (avoids re-upload)
     sas_url: Optional[str] = None
+    # P1-5: Optional diarization toggle (defaults to service config if not provided)
+    enable_diarization: Optional[bool] = None
 
 
 # Post-Visit Summary DTOs

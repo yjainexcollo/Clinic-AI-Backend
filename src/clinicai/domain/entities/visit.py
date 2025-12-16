@@ -148,14 +148,30 @@ class TranscriptionSession:
     
     audio_file_path: Optional[str] = None
     transcript: Optional[str] = None
-    transcription_status: str = "pending"  # pending, processing, completed, failed
+    transcription_status: str = "pending"  # pending, queued, processing, completed, failed
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    worker_id: Optional[str] = None  # Worker that claimed/processed this job (format: "hostname:pid")
     audio_duration_seconds: Optional[float] = None
     word_count: Optional[int] = None
     # Cached structured dialogue turns (ordered Doctor/Patient), to avoid re-structuring on the fly
     structured_dialogue: Optional[List[Dict[str, Any]]] = None
+    transcription_id: Optional[str] = None  # Azure Speech Service transcription job ID for tracking
+    last_poll_status: Optional[str] = None  # Last polled status from Azure Speech Service (Succeeded, Running, Failed, etc.)
+    last_poll_at: Optional[datetime] = None  # Timestamp of last status poll from Azure Speech Service
+    # Observability timestamps for latency analysis
+    enqueued_at: Optional[datetime] = None  # When job was enqueued to Azure Queue
+    dequeued_at: Optional[datetime] = None  # When worker dequeued the job
+    azure_job_created_at: Optional[datetime] = None  # When Azure Speech job was created
+    first_poll_at: Optional[datetime] = None  # When first status poll was made
+    results_downloaded_at: Optional[datetime] = None  # When transcription results were downloaded
+    db_saved_at: Optional[datetime] = None  # When transcript was saved to database
+    # Audio normalization metadata
+    normalized_audio: Optional[bool] = None  # Whether audio was normalized/converted
+    original_content_type: Optional[str] = None  # Original content type before normalization
+    normalized_format: Optional[str] = None  # Format after normalization (e.g., wav_16khz_mono_pcm)
+    file_content_type: Optional[str] = None  # Final content type used for transcription
 
 
 @dataclass
@@ -419,16 +435,72 @@ class Visit:
 
     # Step-03: Audio Transcription & SOAP Generation Methods
 
-    def start_transcription(self, audio_file_path: str) -> None:
+    def queue_transcription(self, audio_file_path: Optional[str] = None, enqueued_at: Optional[datetime] = None) -> None:
+        """
+        Queue a transcription job (sets status to 'queued', not 'processing').
+        Used when enqueuing to Azure Queue - actual processing is claimed by worker atomically.
+        """
+        if not self.can_proceed_to_transcription():
+            raise ValueError(f"Cannot queue transcription. Current status: {self.status}")
+        
+        now = datetime.utcnow()
+        # Only update if not already completed (idempotency)
+        if self.transcription_session and self.transcription_session.transcription_status == "completed":
+            return  # Already completed, don't overwrite
+        
+        # Preserve existing transcription_session fields if it exists (e.g., transcription_id, last_poll_status)
+        if self.transcription_session:
+            # Update existing session instead of replacing it
+            if audio_file_path is not None:
+                self.transcription_session.audio_file_path = audio_file_path
+            self.transcription_session.transcription_status = "queued"
+            self.transcription_session.started_at = None  # Will be set when worker claims it
+            self.transcription_session.enqueued_at = enqueued_at or now
+            self.transcription_session.dequeued_at = None  # Will be set when worker claims it
+            self.transcription_session.worker_id = None  # Will be set when worker claims it
+            self.transcription_session.error_message = None  # Clear any previous errors
+        else:
+            # Create new session only if none exists
+            self.transcription_session = TranscriptionSession(
+                audio_file_path=audio_file_path,
+                transcription_status="queued",  # Set to queued, not processing
+                started_at=None,  # Will be set when worker claims it
+                enqueued_at=enqueued_at or now,
+                dequeued_at=None,  # Will be set when worker claims it
+                worker_id=None,  # Will be set when worker claims it
+                error_message=None  # Clear any previous errors
+            )
+        if self.is_walk_in_workflow():
+            self.status = "transcription"
+        else:
+            self.status = "transcription"
+        self.updated_at = datetime.utcnow()
+
+    def start_transcription(self, audio_file_path: str, enqueued_at: Optional[datetime] = None) -> None:
         """Start the transcription process."""
         if not self.can_proceed_to_transcription():
             raise ValueError(f"Cannot start transcription. Current status: {self.status}")
         
-        self.transcription_session = TranscriptionSession(
-            audio_file_path=audio_file_path,
-            transcription_status="processing",
-            started_at=datetime.utcnow()
-        )
+        now = datetime.utcnow()
+        # Preserve existing transcription_session fields if it exists (e.g., transcription_id, last_poll_status)
+        if self.transcription_session:
+            # Update existing session instead of replacing it
+            self.transcription_session.audio_file_path = audio_file_path
+            self.transcription_session.transcription_status = "processing"
+            if not self.transcription_session.started_at:
+                self.transcription_session.started_at = now
+            if enqueued_at:
+                self.transcription_session.enqueued_at = enqueued_at
+            elif not self.transcription_session.enqueued_at:
+                self.transcription_session.enqueued_at = now
+        else:
+            # Create new session only if none exists
+            self.transcription_session = TranscriptionSession(
+                audio_file_path=audio_file_path,
+                transcription_status="processing",
+                started_at=now,
+                enqueued_at=enqueued_at or now  # Use provided enqueued_at or fallback to now
+            )
         if self.is_walk_in_workflow():
             self.status = "transcription"
         else:

@@ -4,14 +4,19 @@ Run this as a separate process/service for production deployments.
 """
 import os
 import sys
-import asyncio
-import logging
 from pathlib import Path
 
-# Add src to path
-current_dir = Path(__file__).parent
-src_path = current_dir / "src"
-sys.path.insert(0, str(src_path))
+# Bootstrap: Add src directory to Python path for src-layout convenience
+# This allows the script to be run directly without PYTHONPATH=./src
+# Uses resolve() to get absolute paths, works from any working directory
+_script_dir = Path(__file__).resolve().parent
+_src_dir = _script_dir / "src"
+_src_dir_str = str(_src_dir)
+if _src_dir_str not in sys.path:
+    sys.path.insert(0, _src_dir_str)
+
+import asyncio
+import logging
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +25,19 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Reduce Azure SDK HTTP logging verbosity (only log WARNING and above)
+# This can be overridden by setting AZURE_SDK_LOG_LEVEL environment variable
+azure_sdk_log_level = os.getenv("AZURE_SDK_LOG_LEVEL", "WARNING").upper()
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    getattr(logging, azure_sdk_log_level, logging.WARNING)
+)
+logging.getLogger("azure.storage.queue").setLevel(
+    getattr(logging, azure_sdk_log_level, logging.WARNING)
+)
+logging.getLogger("azure.storage.blob").setLevel(
+    getattr(logging, azure_sdk_log_level, logging.WARNING)
+)
 
 
 async def main():
@@ -35,7 +53,6 @@ async def main():
             PatientMongo,
             VisitMongo,
             MedicationImageMongo,
-            AdhocTranscriptMongo,
             DoctorPreferencesMongo,
             AudioFileMongo,
         )
@@ -68,7 +85,6 @@ async def main():
                 PatientMongo,
                 VisitMongo,
                 MedicationImageMongo,
-                AdhocTranscriptMongo,
                 DoctorPreferencesMongo,
                 AudioFileMongo,
                 BlobFileReference

@@ -88,3 +88,51 @@ class VisitRepository:
         - walk_in_visits_count: int
         """
         raise NotImplementedError
+    
+    async def try_mark_processing(
+        self,
+        patient_id: str,
+        visit_id: VisitId,
+        worker_id: str,
+        stale_seconds: int
+    ) -> bool:
+        """
+        Atomically claim a transcription job by marking it as processing.
+        
+        Returns True only if the job was successfully claimed (modified_count == 1).
+        This ensures only one worker processes each job.
+        
+        Conditions for claiming:
+        - status == "queued"
+        - OR status == "processing" but started_at is None
+        - OR status == "processing" and started_at <= now - stale_seconds (stale)
+        
+        Updates on successful claim:
+        - status = "processing"
+        - started_at = now (UTC)
+        - dequeued_at = now (UTC)
+        - worker_id = worker_id
+        - error_message = None
+        """
+        raise NotImplementedError
+    
+    async def update_transcription_session_fields(
+        self,
+        patient_id: str,
+        visit_id: VisitId,
+        fields: Dict[str, Any]
+    ) -> bool:
+        """
+        Atomically update specific fields in the transcription_session of a visit.
+        
+        Args:
+            patient_id: Patient ID
+            visit_id: Visit ID
+            fields: Dictionary of field names and values to update.
+                   Field names should be top-level transcription_session field names
+                   (e.g., "transcription_id", "last_poll_status", "last_poll_at")
+        
+        Returns:
+            True if the visit was found and updated (modified_count == 1), False otherwise
+        """
+        raise NotImplementedError

@@ -10,7 +10,7 @@ from typing import List, Optional
 import os
 from pathlib import Path
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator, model_validator, validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -235,22 +235,105 @@ class AzureOpenAISettings(BaseSettings):
 
 
 class AzureQueueSettings(BaseSettings):
-    """Azure Queue Storage configuration settings."""
+    """Azure Queue Storage configuration settings with backward-compatible fallbacks."""
     
     model_config = SettingsConfigDict(env_prefix="AZURE_QUEUE_")
     
     connection_string: str = Field(default="", description="Azure Storage Connection String (same as Blob Storage)")
     queue_name: str = Field(default="transcription-queue", description="Queue name for transcription jobs")
-    visibility_timeout: int = Field(default=600, description="Message visibility timeout in seconds (10 min default)")
+    visibility_timeout: int = Field(default=3600, description="Message visibility timeout in seconds (60 min default, aligned with stale threshold)")
     max_retry_attempts: int = Field(default=3, description="Maximum retry attempts for failed jobs")
+    max_dequeue_count: int = Field(default=5, description="Maximum dequeue count before moving to poison queue")
+    processing_stale_seconds: int = Field(default=4000, description="Seconds before a processing job is considered stale and can be claimed (must be >= visibility_timeout)")
     poll_interval: int = Field(default=5, description="Worker poll interval in seconds")
     
-    @validator("connection_string")
+    @classmethod
+    def _get_connection_string_fallback(cls) -> str:
+        """Get connection string with backward-compatible fallbacks."""
+        # Try AZURE_QUEUE_CONNECTION_STRING first (current standard)
+        conn_str = os.getenv("AZURE_QUEUE_CONNECTION_STRING", "")
+        if conn_str:
+            return conn_str
+        # Fallback to AZURE_STORAGE_CONNECTION_STRING (old naming)
+        conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+        if conn_str:
+            return conn_str
+        # Fallback to AZURE_BLOB_CONNECTION_STRING (same storage account)
+        conn_str = os.getenv("AZURE_BLOB_CONNECTION_STRING", "")
+        if conn_str:
+            return conn_str
+        return ""
+    
+    @classmethod
+    def _get_queue_name_fallback(cls) -> str:
+        """Get queue name with backward-compatible fallback."""
+        # Try AZURE_QUEUE_QUEUE_NAME first (current standard)
+        queue_name = os.getenv("AZURE_QUEUE_QUEUE_NAME", "")
+        if queue_name:
+            return queue_name
+        # Fallback to AZURE_QUEUE_NAME (old naming)
+        queue_name = os.getenv("AZURE_QUEUE_NAME", "")
+        if queue_name:
+            return queue_name
+        # Default fallback
+        return "transcription-queue"
+    
+    @model_validator(mode='before')
+    @classmethod
+    def apply_fallbacks(cls, data: any) -> any:
+        """Apply fallbacks before validation."""
+        if isinstance(data, dict):
+            # Apply connection_string fallback if empty
+            if not data.get("connection_string"):
+                fallback = cls._get_connection_string_fallback()
+                if fallback:
+                    data["connection_string"] = fallback
+            
+            # Apply queue_name fallback if default
+            if data.get("queue_name") == "transcription-queue":
+                fallback = cls._get_queue_name_fallback()
+                if fallback and fallback != "transcription-queue":
+                    data["queue_name"] = fallback
+        
+        return data
+    
+    @field_validator("connection_string", mode='before')
+    @classmethod
     def validate_connection_string(cls, v: str) -> str:
-        """Validate Azure Storage connection string."""
-        if v and not v.startswith("DefaultEndpointsProtocol="):
-            raise ValueError("Invalid Azure Storage connection string format")
+        """Validate Azure Storage connection string format."""
+        # Allow empty string for validation (will be caught later if needed)
+        if not v:
+            return v
+        if not v.startswith("DefaultEndpointsProtocol="):
+            raise ValueError("Invalid Azure Storage connection string format. Must start with 'DefaultEndpointsProtocol='")
         return v
+    
+    def model_post_init(self, __context) -> None:
+        """Apply fallbacks after model initialization if values are still empty."""
+        # Apply connection_string fallback if still empty
+        if not self.connection_string:
+            fallback = self._get_connection_string_fallback()
+            if fallback:
+                # Validate the fallback
+                if not fallback.startswith("DefaultEndpointsProtocol="):
+                    raise ValueError("Fallback Azure Storage connection string has invalid format")
+                object.__setattr__(self, "connection_string", fallback)
+        
+        # Apply queue_name fallback if still default
+        if self.queue_name == "transcription-queue":
+            fallback = self._get_queue_name_fallback()
+            if fallback and fallback != "transcription-queue":
+                object.__setattr__(self, "queue_name", fallback)
+        
+        # Validate stale_seconds >= visibility_timeout to prevent churn
+        if self.processing_stale_seconds < self.visibility_timeout:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"⚠️  PROCESSING_STALE_SECONDS ({self.processing_stale_seconds}s) < VISIBILITY_TIMEOUT ({self.visibility_timeout}s). "
+                f"This can cause message churn. Setting stale_seconds to {self.visibility_timeout + 400}s"
+            )
+            object.__setattr__(self, "processing_stale_seconds", self.visibility_timeout + 400)
 
 
 class AzureSpeechSettings(BaseSettings):
@@ -262,6 +345,7 @@ class AzureSpeechSettings(BaseSettings):
     region: str = Field(default="", description="Azure Speech Service region (e.g., 'eastus', 'westus2')")
     endpoint: str = Field(default="", description="Azure Speech Service endpoint (optional, auto-generated if not provided)")
     enable_speaker_diarization: bool = Field(default=True, description="Enable speaker diarization (identifies different speakers)")
+    enable_word_level_timestamps: bool = Field(default=False, description="Enable word-level timestamps (slower, disable for faster transcription)")
     max_speakers: int = Field(default=2, description="Maximum number of speakers to identify (default: 2 for Doctor/Patient)")
     transcription_mode: str = Field(default="batch", description="Transcription mode: 'batch' (recommended) or 'realtime'")
     batch_polling_interval: int = Field(default=5, description="Polling interval in seconds for batch transcription status")

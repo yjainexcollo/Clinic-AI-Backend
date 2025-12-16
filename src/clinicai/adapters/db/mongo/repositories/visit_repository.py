@@ -328,9 +328,23 @@ class MongoVisitRepository(VisitRepository):
                 started_at=visit.transcription_session.started_at,
                 completed_at=visit.transcription_session.completed_at,
                 error_message=visit.transcription_session.error_message,
+                worker_id=getattr(visit.transcription_session, "worker_id", None),
                 audio_duration_seconds=visit.transcription_session.audio_duration_seconds,
                 word_count=visit.transcription_session.word_count,
                 structured_dialogue=getattr(visit.transcription_session, "structured_dialogue", None),
+                transcription_id=getattr(visit.transcription_session, "transcription_id", None),
+                last_poll_status=getattr(visit.transcription_session, "last_poll_status", None),
+                last_poll_at=getattr(visit.transcription_session, "last_poll_at", None),
+                enqueued_at=getattr(visit.transcription_session, "enqueued_at", None),
+                dequeued_at=getattr(visit.transcription_session, "dequeued_at", None),
+                azure_job_created_at=getattr(visit.transcription_session, "azure_job_created_at", None),
+                first_poll_at=getattr(visit.transcription_session, "first_poll_at", None),
+                results_downloaded_at=getattr(visit.transcription_session, "results_downloaded_at", None),
+                db_saved_at=getattr(visit.transcription_session, "db_saved_at", None),
+                normalized_audio=getattr(visit.transcription_session, "normalized_audio", None),
+                original_content_type=getattr(visit.transcription_session, "original_content_type", None),
+                normalized_format=getattr(visit.transcription_session, "normalized_format", None),
+                file_content_type=getattr(visit.transcription_session, "file_content_type", None),
             )
 
         # Convert SOAP note
@@ -425,9 +439,23 @@ class MongoVisitRepository(VisitRepository):
                 started_at=visit_mongo.transcription_session.started_at,
                 completed_at=visit_mongo.transcription_session.completed_at,
                 error_message=visit_mongo.transcription_session.error_message,
+                worker_id=getattr(visit_mongo.transcription_session, "worker_id", None),
                 audio_duration_seconds=visit_mongo.transcription_session.audio_duration_seconds,
                 word_count=visit_mongo.transcription_session.word_count,
                 structured_dialogue=getattr(visit_mongo.transcription_session, "structured_dialogue", None),
+                transcription_id=getattr(visit_mongo.transcription_session, "transcription_id", None),
+                last_poll_status=getattr(visit_mongo.transcription_session, "last_poll_status", None),
+                last_poll_at=getattr(visit_mongo.transcription_session, "last_poll_at", None),
+                enqueued_at=getattr(visit_mongo.transcription_session, "enqueued_at", None),
+                dequeued_at=getattr(visit_mongo.transcription_session, "dequeued_at", None),
+                azure_job_created_at=getattr(visit_mongo.transcription_session, "azure_job_created_at", None),
+                first_poll_at=getattr(visit_mongo.transcription_session, "first_poll_at", None),
+                results_downloaded_at=getattr(visit_mongo.transcription_session, "results_downloaded_at", None),
+                db_saved_at=getattr(visit_mongo.transcription_session, "db_saved_at", None),
+                normalized_audio=getattr(visit_mongo.transcription_session, "normalized_audio", None),
+                original_content_type=getattr(visit_mongo.transcription_session, "original_content_type", None),
+                normalized_format=getattr(visit_mongo.transcription_session, "normalized_format", None),
+                file_content_type=getattr(visit_mongo.transcription_session, "file_content_type", None),
             )
 
         # Convert SOAP note
@@ -495,3 +523,135 @@ class MongoVisitRepository(VisitRepository):
             intake_session.symptom = visit_symptom
         
         return visit
+    
+    async def try_mark_processing(
+        self,
+        patient_id: str,
+        visit_id: VisitId,
+        worker_id: str,
+        stale_seconds: int
+    ) -> bool:
+        """
+        Atomically claim a transcription job by marking it as processing.
+        
+        Returns True only if the job was successfully claimed (modified_count == 1).
+        This ensures only one worker processes each job.
+        
+        Conditions for claiming:
+        - status == "queued"
+        - OR status == "processing" but started_at is None
+        - OR status == "processing" and started_at <= now - stale_seconds (stale)
+        
+        Updates on successful claim:
+        - status = "processing"
+        - started_at = now (UTC)
+        - dequeued_at = now (UTC)
+        - worker_id = worker_id
+        - error_message = None
+        """
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from clinicai.core.config import get_settings
+        from datetime import datetime, timedelta
+        
+        settings = get_settings()
+        client = AsyncIOMotorClient(settings.database.uri)
+        db = client[settings.database.db_name]
+        collection = db["visits"]
+        
+        now = datetime.utcnow()
+        stale_threshold = now - timedelta(seconds=stale_seconds)
+        
+        # Build query conditions for claiming
+        # Condition 1: status == "queued"
+        # Condition 2: status == "processing" and started_at is None
+        # Condition 3: status == "processing" and started_at <= stale_threshold
+        claim_conditions = {
+            "patient_id": patient_id,
+            "visit_id": visit_id.value,
+            "$or": [
+                # Status is queued
+                {"transcription_session.transcription_status": "queued"},
+                # Status is processing but started_at is None (inconsistent state)
+                {
+                    "transcription_session.transcription_status": "processing",
+                    "$or": [
+                        {"transcription_session.started_at": None},
+                        {"transcription_session.started_at": {"$exists": False}}
+                    ]
+                },
+                # Status is processing but stale
+                {
+                    "transcription_session.transcription_status": "processing",
+                    "transcription_session.started_at": {"$lte": stale_threshold}
+                }
+            ]
+        }
+        
+        # Update operation - atomically claim the job
+        update_operation = {
+            "$set": {
+                "transcription_session.transcription_status": "processing",
+                "transcription_session.started_at": now,
+                "transcription_session.dequeued_at": now,
+                "transcription_session.worker_id": worker_id,
+                "transcription_session.error_message": None,
+                "updated_at": now
+            }
+        }
+        
+        result = await collection.update_one(
+            claim_conditions,
+            update_operation
+        )
+        
+        return result.modified_count == 1
+    
+    async def update_transcription_session_fields(
+        self,
+        patient_id: str,
+        visit_id: VisitId,
+        fields: Dict[str, Any]
+    ) -> bool:
+        """
+        Atomically update specific fields in the transcription_session of a visit.
+        
+        Args:
+            patient_id: Patient ID
+            visit_id: Visit ID
+            fields: Dictionary of field names and values to update.
+                   Field names should be top-level transcription_session field names
+                   (e.g., "transcription_id", "last_poll_status", "last_poll_at")
+        
+        Returns:
+            True if the visit was found and updated (modified_count == 1), False otherwise
+        """
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from clinicai.core.config import get_settings
+        from datetime import datetime
+        
+        settings = get_settings()
+        client = AsyncIOMotorClient(settings.database.uri)
+        db = client[settings.database.db_name]
+        collection = db["visits"]
+        
+        # Build update operation using dot notation for nested transcription_session fields
+        update_operation = {
+            "$set": {
+                "updated_at": datetime.utcnow()
+            }
+        }
+        
+        # Add transcription_session fields with dot notation
+        for field_name, field_value in fields.items():
+            update_operation["$set"][f"transcription_session.{field_name}"] = field_value
+        
+        # Update the visit document
+        result = await collection.update_one(
+            {
+                "patient_id": patient_id,
+                "visit_id": visit_id.value
+            },
+            update_operation
+        )
+        
+        return result.modified_count == 1

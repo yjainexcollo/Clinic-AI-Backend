@@ -17,7 +17,7 @@ import logging
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ...core.ai_client import AzureAIClient
 from ...core.ai_factory import get_ai_client
@@ -176,13 +176,17 @@ class TranscribeAudioUseCase:
                 raise ValueError(f"Visit not ready for transcription. Current status: {visit.status}.")
 
         try:
-            # Validate audio file
-            validation_result = await self._transcription_service.validate_audio_file(
-                request.audio_file_path
-            )
-            
-            if not validation_result.get("is_valid", False):
-                raise ValueError(f"Invalid audio file: {validation_result.get('error', 'Unknown error')}")
+            # Validate audio file only if local file path provided (skip if SAS URL only)
+            if request.audio_file_path and not getattr(request, "sas_url", None):
+                validation_result = await self._transcription_service.validate_audio_file(
+                    request.audio_file_path
+                )
+                
+                if not validation_result.get("is_valid", False):
+                    raise ValueError(f"Invalid audio file: {validation_result.get('error', 'Unknown error')}")
+            elif getattr(request, "sas_url", None):
+                # SAS URL provided - skip local file validation
+                LOGGER.debug(f"Skipping local file validation (SAS URL provided for visit {request.visit_id})")
 
             # Get language from request or fallback to patient language
             transcription_language = request.language or getattr(patient, 'language', 'en') or 'en'
@@ -196,27 +200,65 @@ class TranscribeAudioUseCase:
             if visit.transcription_session and visit.transcription_session.transcription_status == "processing":
                 # Session already exists and is processing, just update the audio_file_path
                 LOGGER.info(f"Transcription session already exists for visit {request.visit_id}, updating audio_file_path")
-                visit.transcription_session.audio_file_path = request.audio_file_path
+                visit.transcription_session.audio_file_path = request.audio_file_path or ""  # Can be None when using SAS URL
                 visit.updated_at = datetime.utcnow()
             else:
                 # No session or session is not processing, create new one
-                visit.start_transcription(request.audio_file_path)
+                visit.start_transcription(request.audio_file_path or "")  # Can be None when using SAS URL
             
             await self._visit_repository.save(visit)
 
             # Transcribe audio using Azure Speech Service
-            LOGGER.info(f"Starting transcription for file: {request.audio_file_path}, language: {transcription_language}")
+            audio_source = getattr(request, "sas_url", None) or request.audio_file_path or "unknown"
+            LOGGER.info(f"Starting transcription for visit {request.visit_id}, source={('SAS URL' if getattr(request, 'sas_url', None) else 'local file')}, language: {transcription_language}")
             
             from ...core.utils.timing import TimingContext
             
+            # Create callback to persist transcription metadata during job creation and polling
+            async def status_update_callback(update_fields: Dict[str, Any]) -> None:
+                """Callback to persist transcription session fields to database."""
+                try:
+                    # Filter and map fields that should be persisted
+                    fields_to_update = {}
+                    if "transcription_id" in update_fields:
+                        fields_to_update["transcription_id"] = update_fields["transcription_id"]
+                    if "azure_job_created_at" in update_fields:
+                        fields_to_update["azure_job_created_at"] = update_fields["azure_job_created_at"]
+                    if "first_poll_at" in update_fields:
+                        fields_to_update["first_poll_at"] = update_fields["first_poll_at"]
+                    if "results_downloaded_at" in update_fields:
+                        fields_to_update["results_downloaded_at"] = update_fields["results_downloaded_at"]
+                    if "last_poll_status" in update_fields:
+                        fields_to_update["last_poll_status"] = update_fields["last_poll_status"]
+                    if "last_poll_at" in update_fields:
+                        fields_to_update["last_poll_at"] = update_fields["last_poll_at"]
+                    if "transcription_status" in update_fields:
+                        fields_to_update["transcription_status"] = update_fields["transcription_status"]
+                    if "error_message" in update_fields:
+                        fields_to_update["error_message"] = update_fields["error_message"]
+                    
+                    if fields_to_update:
+                        await self._visit_repository.update_transcription_session_fields(
+                            request.patient_id,
+                            visit_id,
+                            fields_to_update
+                        )
+                        LOGGER.debug(f"Persisted transcription session fields: {list(fields_to_update.keys())} for visit {request.visit_id}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to persist transcription session fields: {e}")
+            
+            # P1-4: Timestamps are now set exactly by Azure Speech service via callbacks
+            # No more approximate calculations needed
             speech_start = time.time()
             with TimingContext("AzureSpeech_Transcription", LOGGER) as timing_ctx:
-                timing_ctx.set_input_size(len(request.audio_file_path))
+                timing_ctx.set_input_size(len(audio_source) if audio_source else 0)
             transcription_result = await self._transcription_service.transcribe_audio(
-                request.audio_file_path,
+                request.audio_file_path or "",  # Can be None when using SAS URL only
                 language=transcription_language,
                 medical_context=True,
                 sas_url=getattr(request, "sas_url", None),
+                status_update_callback=status_update_callback,
+                enable_diarization=getattr(request, "enable_diarization", None),  # P1-5: Pass diarization toggle
             )
             speech_end = time.time()
             # Calculate duration after context exits (duration is set in __exit__)
@@ -248,9 +290,15 @@ class TranscribeAudioUseCase:
                 # Raise with detailed error information
                 raise ValueError(f"Transcription failed: {error_message} (code: {error_code})")
 
+            # P1-4: transcription_id and timestamps are already persisted via callbacks
+            # No need to update them here - they're set exactly when events occur
+            transcription_id = transcription_result.get("transcription_id")
+            if transcription_id:
+                LOGGER.info(f"Transcription completed with transcription_id={transcription_id} for visit {request.visit_id}")
+            
             raw_transcript = transcription_result.get("transcript", "") or ""
-            LOGGER.info(f"Transcription completed. Transcript length: {len(raw_transcript)} characters")
-            LOGGER.info(f"Raw transcript preview: {raw_transcript[:300]}...")
+            LOGGER.info(f"Transcription completed. Transcript length: {len(raw_transcript)} characters, word_count: {transcription_result.get('word_count', 0)}")
+            # REMOVED: Raw transcript preview logging (PHI safety)
             
             if not raw_transcript or raw_transcript.strip() == "":
                 raise ValueError("Transcription returned empty transcript")
@@ -259,11 +307,15 @@ class TranscribeAudioUseCase:
             pre_structured_dialogue = transcription_result.get("structured_dialogue")
             speaker_info = transcription_result.get("speaker_labels", {})
             
+            # P1-5: Handle case where diarization is disabled (may have empty or single-speaker dialogue)
             if not pre_structured_dialogue or not isinstance(pre_structured_dialogue, list):
-                raise ValueError(
-                    "Azure Speech Service did not provide structured dialogue. "
-                    "Ensure speaker diarization is enabled in your Azure Speech Service configuration."
+                LOGGER.warning(
+                    f"Azure Speech Service did not provide structured dialogue for visit {request.visit_id}. "
+                    f"This may occur if diarization is disabled. Creating single-speaker dialogue from transcript."
                 )
+                # Create a single-speaker dialogue from the raw transcript
+                pre_structured_dialogue = [{"Speaker 1": raw_transcript}] if raw_transcript else []
+                speaker_info = {"speakers": [{"label": "Speaker 1"}]}
             
             # Map speakers from Azure Speech Service (Speaker 1, Speaker 2) to Doctor/Patient
             LOGGER.info(f"Using pre-structured dialogue from Azure Speech Service ({len(pre_structured_dialogue)} turns)")
@@ -391,11 +443,40 @@ class TranscribeAudioUseCase:
             LOGGER.info(f"Transcript length: {len(raw_transcript) if raw_transcript else 0}")
             LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
-            # Save updated visit
+            # Save updated visit with db_saved_at timestamp
+            db_saved_at = datetime.utcnow()
+            if visit.transcription_session:
+                visit.transcription_session.db_saved_at = db_saved_at
+            
             with TimingContext("Database_Save", LOGGER) as timing_ctx:
                 timing_ctx.set_input_size(len(raw_transcript))
             await self._visit_repository.save(visit)
-            LOGGER.info(f"Transcription completed successfully for patient {patient.patient_id.value}, visit {visit.visit_id.value}")
+            
+            # Calculate latency timings
+            enqueued_at = visit.transcription_session.enqueued_at if visit.transcription_session else None
+            dequeued_at = visit.transcription_session.dequeued_at if visit.transcription_session else None
+            azure_job_created_at = visit.transcription_session.azure_job_created_at if visit.transcription_session else None
+            first_poll_at = visit.transcription_session.first_poll_at if visit.transcription_session else None
+            results_downloaded_at = visit.transcription_session.results_downloaded_at if visit.transcription_session else None
+            started_at = visit.transcription_session.started_at if visit.transcription_session else None
+            
+            # Calculate stage durations - ensure all are numeric (default to 0.0 if missing)
+            queue_wait = (dequeued_at - enqueued_at).total_seconds() if enqueued_at and dequeued_at else 0.0
+            azure_run = (results_downloaded_at - azure_job_created_at).total_seconds() if azure_job_created_at and results_downloaded_at else 0.0
+            download_parse = (db_saved_at - results_downloaded_at).total_seconds() if results_downloaded_at and db_saved_at else 0.0
+            total_elapsed = (db_saved_at - started_at).total_seconds() if started_at and db_saved_at else 0.0
+            
+            # Clear INFO-level success log with all metrics (always numeric)
+            LOGGER.info(
+                f"✅ TRANSCRIPTION COMPLETED: visit_id={visit.visit_id.value}, "
+                f"transcription_id={transcription_id or 'N/A'}, "
+                f"duration_seconds={transcription_result.get('duration') or 0.0}, "
+                f"word_count={transcription_result.get('word_count', 0)}, "
+                f"transcript_chars={len(raw_transcript)}, "
+                f"structured_dialogue_turns={len(structured_dialogue) if structured_dialogue else 0}, "
+                f"total_elapsed_seconds={total_elapsed:.2f}, "
+                f"timeline=[queue_wait={queue_wait:.2f}s, azure_run={azure_run:.2f}s, download_parse={download_parse:.2f}s]"
+            )
 
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
@@ -408,12 +489,37 @@ class TranscribeAudioUseCase:
             )
 
         except Exception as e:
-            # Log the full error for debugging
-            LOGGER.error(f"Transcription failed for patient {patient.patient_id.value}, visit {visit.visit_id.value}: {str(e)}", exc_info=True)
+            # Extract clean error information (no __name__ bug)
+            error_type = type(e).__name__
+            error_message = str(e)
             
-            # Mark transcription as failed
-            visit.fail_transcription(str(e))
+            # Avoid double-prefixing error messages
+            if error_message.startswith("Transcription failed:"):
+                clean_error_message = error_message
+            else:
+                clean_error_message = f"{error_type}: {error_message}"
+            
+            # Log the full error for debugging (no PHI in message)
+            LOGGER.error(f"Transcription failed for visit {visit.visit_id.value}: {clean_error_message}", exc_info=True)
+            
+            # Calculate elapsed time for failure log - ensure numeric
+            started_at = visit.transcription_session.started_at if visit.transcription_session else None
+            failure_time = datetime.utcnow()
+            total_elapsed = (failure_time - started_at).total_seconds() if started_at else 0.0
+            transcription_id = visit.transcription_session.transcription_id if visit.transcription_session else None
+            
+            # Mark transcription as failed with clean error message
+            visit.fail_transcription(clean_error_message)
             await self._visit_repository.save(visit)
+            
+            # Clear ERROR-level failure log with all identifiers (always numeric)
+            LOGGER.error(
+                f"❌ TRANSCRIPTION FAILED: visit_id={visit.visit_id.value}, "
+                f"transcription_id={transcription_id or 'N/A'}, "
+                f"error_type={error_type}, "
+                f"error_message={clean_error_message[:200]}, "  # Truncate long messages
+                f"total_elapsed_seconds={total_elapsed:.2f}"
+            )
             
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
@@ -422,7 +528,7 @@ class TranscribeAudioUseCase:
                 word_count=0,
                 audio_duration=None,
                 transcription_status="failed",
-                message=f"Transcription failed: {str(e)}"
+                message=clean_error_message
             )
 
     def _remove_pii_from_text(self, text: str) -> str:

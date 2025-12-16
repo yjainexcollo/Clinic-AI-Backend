@@ -28,6 +28,7 @@ from ...domain.errors import (
     DuplicateQuestionError,
     IntakeAlreadyCompletedError,
     InvalidDiseaseError,
+    InvalidPatientDataError,
     PatientNotFoundError,
     QuestionLimitExceededError,
     VisitNotFoundError,
@@ -134,12 +135,55 @@ async def register_patient(
         return ok(http_request, data=response, message="Created")
 
     except DuplicatePatientError as e:
-        return fail(http_request, error="DUPLICATE_PATIENT", message=e.message)
+        return fail(
+            http_request, 
+            error="DUPLICATE_PATIENT", 
+            message=e.message, 
+            status_code=status.HTTP_409_CONFLICT
+        )
     except InvalidDiseaseError as e:
-        return fail(http_request, error="INVALID_DISEASE", message=e.message)
+        return fail(
+            http_request, 
+            error="INVALID_DISEASE", 
+            message=e.message, 
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+    except InvalidPatientDataError as e:
+        # InvalidPatientDataError indicates validation failure (mobile number, name, age, etc.)
+        return fail(
+            http_request,
+            error="INVALID_PATIENT_DATA",
+            message=e.message or "Invalid patient data provided",
+            details=e.details or {},
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
     except Exception as e:
-        logger.exception("Unhandled error in patient registration")
-        return fail(http_request, error="INTERNAL_ERROR", message="Internal error occurred.")
+        # Log full exception details for debugging
+        error_type = type(e).__name__
+        error_message = str(e)
+        logger.exception(
+            f"Unhandled error in patient registration: {error_type}: {error_message}",
+            exc_info=True,
+            extra={
+                "error_type": error_type,
+                "error_message": error_message,
+                "request_data": {
+                    "first_name": getattr(request, 'first_name', None),
+                    "mobile": getattr(request, 'mobile', None),
+                }
+            }
+        )
+        # Return error response with more detail in development mode
+        import os
+        is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
+        error_msg = f"{error_type}: {error_message}" if is_dev else "Internal error occurred."
+        return fail(
+            http_request, 
+            error="INTERNAL_ERROR", 
+            message=error_msg,
+            details={"error_type": error_type} if is_dev else {},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @router.get(
@@ -191,7 +235,8 @@ async def list_patients(
                 return fail(
                     request,
                     error="INVALID_WORKFLOW_TYPE",
-                    message=f"Invalid workflow_type: {workflow_type}. Must be 'scheduled' or 'walk_in'"
+                    message=f"Invalid workflow_type: {workflow_type}. Must be 'scheduled' or 'walk_in'",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
         
         # Validate sort parameters
@@ -260,7 +305,12 @@ async def list_patients(
         
     except Exception as e:
         logger.error("Error listing patients", exc_info=True)
-        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        return fail(
+            request, 
+            error="INTERNAL_ERROR", 
+            message="An unexpected error occurred",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @router.post(
@@ -474,12 +524,27 @@ async def edit_intake_answer(
             allows_image_upload=result.allows_image_upload,
         )
     except PatientNotFoundError as e:
-        return fail(http_request, error="PATIENT_NOT_FOUND", message=e.message)
+        return fail(
+            http_request, 
+            error="PATIENT_NOT_FOUND", 
+            message=e.message,
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     except VisitNotFoundError as e:
-        return fail(http_request, error="VISIT_NOT_FOUND", message=e.message)
+        return fail(
+            http_request, 
+            error="VISIT_NOT_FOUND", 
+            message=e.message,
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     except Exception as e:
         logger.error("Unhandled error in edit_intake_answer", exc_info=True)
-        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
+        return fail(
+            http_request, 
+            error="INTERNAL_ERROR", 
+            message="An unexpected error occurred",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 # Endpoint for medication image uploads (supports both single and multiple images)
@@ -1003,13 +1068,28 @@ async def generate_pre_visit_summary(
 
     except ValueError as e:
         logger.error(f"ValueError in generate_pre_visit_summary: {e}", exc_info=True)
-        return fail(http_request, error="INTAKE_NOT_COMPLETED", message=str(e))
+        return fail(
+            http_request, 
+            error="INTAKE_NOT_COMPLETED", 
+            message=str(e),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
     except PatientNotFoundError as e:
         logger.error(f"PatientNotFoundError in generate_pre_visit_summary: patient_id={request.patient_id[:20] if request.patient_id else None}, error={e.message}")
-        return fail(http_request, error="PATIENT_NOT_FOUND", message=e.message)
+        return fail(
+            http_request, 
+            error="PATIENT_NOT_FOUND", 
+            message=e.message,
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     except VisitNotFoundError as e:
         logger.error(f"VisitNotFoundError in generate_pre_visit_summary: visit_id={request.visit_id}, error={e.message}")
-        return fail(http_request, error="VISIT_NOT_FOUND", message=e.message)
+        return fail(
+            http_request, 
+            error="VISIT_NOT_FOUND", 
+            message=e.message,
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     except Exception as e:
         # Log the full error with traceback and context for debugging
         error_type = type(e).__name__
@@ -1028,7 +1108,12 @@ async def generate_pre_visit_summary(
         import os
         is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
         error_msg = f"{error_type}: {error_message}" if is_dev else "An unexpected error occurred"
-        return fail(http_request, error="INTERNAL_ERROR", message=error_msg)
+        return fail(
+            http_request, 
+            error="INTERNAL_ERROR", 
+            message=error_msg,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @router.get(

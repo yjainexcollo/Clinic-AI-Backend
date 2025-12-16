@@ -143,6 +143,7 @@ backend/
 - Docker & Docker Compose
 - MongoDB (local or cloud)
 - OpenAI API key
+- **ffmpeg** (required for audio normalization) - Install instructions below
 
 ### Environment Setup
 
@@ -157,7 +158,30 @@ backend/
    cp .env.example .env
    ```
 
-3. **Configure environment variables**
+3. **Install ffmpeg** (required for audio normalization)
+   
+   **macOS**:
+   ```bash
+   brew install ffmpeg
+   ```
+   
+   **Ubuntu/Debian**:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y ffmpeg
+   ```
+   
+   **Windows**:
+   - Download from https://ffmpeg.org/download.html
+   - Add to PATH or set `FFMPEG_PATH` and `FFPROBE_PATH` env vars
+   
+   **Verify installation**:
+   ```bash
+   ffmpeg -version
+   ffprobe -version
+   ```
+
+4. **Configure environment variables**
    ```bash
    # Required
    OPENAI_API_KEY=your_openai_api_key
@@ -165,6 +189,10 @@ backend/
    
    # Optional
    TRANSCRIPTION_SERVICE=azure_speech  # Azure Speech Service with speaker diarization
+   NORMALIZE_AUDIO=true  # Enable audio normalization (default: true)
+   FFMPEG_PATH=ffmpeg  # Path to ffmpeg executable (default: "ffmpeg")
+   FFPROBE_PATH=ffprobe  # Path to ffprobe executable (default: "ffprobe")
+   TRANSCRIPTION_WORKER_CONCURRENCY=5  # Worker concurrency (default: 5)
    ```
 
 ### Local Development
@@ -458,6 +486,54 @@ curl -X POST "https://api.openai.com/v1/audio/transcriptions" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -F "file=@test.mp3" \
   -F "model=whisper-1"
+```
+
+#### Azure Queue Debugging
+
+The transcription worker uses Azure Queue Storage for asynchronous job processing. Use these tools to debug queue issues:
+
+**View Queue Statistics**
+```bash
+python3 scripts/queue_stats.py
+```
+Shows approximate message count, queue configuration, and connection status.
+
+**Peek at Queue Messages**
+```bash
+python3 scripts/queue_peek.py
+```
+Displays the first 5 messages without removing them from the queue. Useful for inspecting payload structure.
+
+**Use a Dedicated Dev Queue**
+To avoid production backlog during development, use a separate queue name:
+```bash
+export AZURE_QUEUE_QUEUE_NAME=transcription-queue-dev
+```
+
+**Clear Queue (Manual)**
+To manually clear messages from the queue (use with caution):
+```bash
+# Using Azure CLI
+az storage message clear --queue-name transcription-queue --connection-string "$AZURE_QUEUE_CONNECTION_STRING"
+```
+
+**Poison Queue**
+Messages that fail repeatedly (exceeding `AZURE_QUEUE_MAX_DEQUEUE_COUNT`, default: 5) are automatically moved to a poison queue named `{queue-name}-poison`. 
+
+- Poison messages are NOT processed by the worker
+- Inspect poison queue: `python3 scripts/queue_peek.py` (after setting `AZURE_QUEUE_QUEUE_NAME=transcription-queue-poison`)
+- Poison messages contain original message content plus metadata (`original_message_id`, `reason`, `moved_at`)
+
+**Worker Logging**
+- Empty queue polls are logged at DEBUG level every ~30 seconds (not every poll)
+- Successful dequeues log: `message_id`, `visit_id`, `audio_file_id`, `retry_count`, `insertion_time`
+- Poison messages log: `⚠️ Poison message detected` with move to poison queue
+- Invalid JSON messages: Logged with content preview (first 200 chars), moved to poison queue in dev, deleted in production
+
+**Reducing Azure SDK HTTP Log Noise**
+Azure SDK HTTP request/response logs are reduced by default (WARNING level). To override:
+```bash
+export AZURE_SDK_LOG_LEVEL=INFO  # or DEBUG for verbose logging
 ```
 
 ### Performance Optimization
