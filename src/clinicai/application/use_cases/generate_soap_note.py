@@ -112,6 +112,7 @@ class GenerateSoapNoteUseCase:
                 pre_visit_summary=pre_visit_summary,
                 vitals=vitals,
                 language=patient_language,
+                doctor_id="D123",  # Temporary hardcoded doctor_id for preferences
             )
 
             # Validate SOAP structure

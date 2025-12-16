@@ -61,6 +61,15 @@ from .visits import (
     SoapNoteSchema
 )
 
+# Doctor preferences
+from .doctor_preferences import (
+    PreVisitSectionConfig,
+    PreVisitAIConfig,
+    SoapAIConfig,
+    DoctorPreferencesResponse,
+    UpsertDoctorPreferencesRequest,
+)
+
 # Health schemas
 # from .health import (
 #     HealthResponse,
@@ -115,6 +124,13 @@ __all__ = [
     "VisitListResponse",
     "TranscriptionSessionSchema",
     "SoapNoteSchema",
+
+    # Doctor preferences
+    "PreVisitSectionConfig",
+    "PreVisitAIConfig",
+    "SoapAIConfig",
+    "DoctorPreferencesResponse",
+    "UpsertDoctorPreferencesRequest",
     
     # Health
     # "HealthResponse",

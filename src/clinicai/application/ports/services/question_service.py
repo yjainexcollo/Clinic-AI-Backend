@@ -51,6 +51,7 @@ class QuestionService(ABC):
         intake_answers: Dict[str, Any],
         language: str = "en",
         medication_images_info: Optional[str] = None,
+        doctor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data."""
         pass

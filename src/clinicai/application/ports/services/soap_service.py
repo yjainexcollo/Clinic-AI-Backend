@@ -17,6 +17,7 @@ class SoapService(ABC):
         intake_data: Optional[Dict[str, Any]] = None,
         pre_visit_summary: Optional[Dict[str, Any]] = None,
         vitals: Optional[Dict[str, Any]] = None,
+        doctor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate SOAP note from transcript and context.

@@ -633,7 +633,8 @@ def create_app() -> FastAPI:
     app.include_router(patients.router)
     app.include_router(workflow.router)
     app.include_router(notes.router)
-    app.include_router(doctor_router.router, include_in_schema=False)
+    # Expose doctor preferences routes in OpenAPI/Swagger while keeping runtime behavior unchanged
+    app.include_router(doctor_router.router, include_in_schema=True)
 
     # Global exception handler for domain errors
     @app.exception_handler(DomainError)

@@ -138,7 +138,11 @@ class GeneratePreVisitSummaryUseCase:
             try:
                 logger.info(f"Generating pre-visit summary for visit {request.visit_id}, patient {request.patient_id[:50]}")
                 summary_result = await self._question_service.generate_pre_visit_summary(
-                    patient_data, intake_answers, language=patient.language, medication_images_info=medication_images_info
+                    patient_data,
+                    intake_answers,
+                    language=patient.language,
+                    medication_images_info=medication_images_info,
+                    doctor_id="D123",  # Temporary hardcoded doctor_id for preferences
                 )
             except Exception as ai_error:
                 logger.error(

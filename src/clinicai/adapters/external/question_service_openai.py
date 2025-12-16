@@ -18,7 +18,7 @@ from clinicai.core.constants import (
     HIGH_RISK_COMPLAINT_KEYWORDS,
     SIMILARITY_STOPWORDS,
 )
-from clinicai.adapters.db.mongo.models.patient_m import LLMInteractionMongo
+from clinicai.adapters.db.mongo.models.patient_m import LLMInteractionMongo, DoctorPreferencesMongo
 from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 
@@ -3320,6 +3320,20 @@ class OpenAIQuestionService(QuestionService):
     # PRE-VISIT SUMMARY & RED-FLAG METHODS ARE INTENTIONALLY EXCLUDED HERE
     # ========================================================================
 
+    async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Fetch doctor preferences with 1s timeout; fail-open on error."""
+        if not doctor_id:
+            return None
+        try:
+            prefs = await asyncio.wait_for(
+                DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id),
+                timeout=1.0
+            )
+            return prefs.dict() if prefs else None
+        except Exception as e:
+            logger.warning(f"[DoctorPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}")
+            return None
+
 
     async def generate_pre_visit_summary(
         self,
@@ -3327,11 +3341,28 @@ class OpenAIQuestionService(QuestionService):
         intake_answers: Dict[str, Any],
         language: str = "en",
         medication_images_info: Optional[str] = None,
+        doctor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate pre-visit clinical summary from intake data with red flag detection."""
 
         # Normalize language code
         lang = self._normalize_language(language)
+
+        # Load doctor preferences with fail-open defaults
+        prefs = await self._get_doctor_preferences(doctor_id)
+        pv_config = (prefs or {}).get("pre_visit_ai_config") or {}
+        style_pref = (pv_config.get("style") or "standard").strip().lower()
+        focus_areas = pv_config.get("focus_areas") or []
+        include_red_flags = pv_config.get("include_red_flags")
+        if include_red_flags is None:
+            include_red_flags = True
+        focus_text = ", ".join(focus_areas) if focus_areas else "all relevant areas"
+        prefs_snippet = (
+            f"\nDoctor Preferences:\n"
+            f"- Summary style: {style_pref}\n"
+            f"- Focus areas: {focus_text}\n"
+            f"- Include red flags: {'yes' if include_red_flags else 'no'}\n"
+        )
 
         if lang == "sp":
             prompt = (
@@ -3339,6 +3370,7 @@ class OpenAIQuestionService(QuestionService):
                 "Eres un Asistente de Admisión Clínica.\n"
                 "Tu tarea es generar un Resumen Pre-Consulta conciso y clínicamente útil (~180-200 palabras) "
                 "basado estrictamente en las respuestas de admisión proporcionadas.\n\n"
+                f"{prefs_snippet}"
                 "Reglas Críticas\n"
                 "- No inventes, adivines o expandas más allá de la entrada proporcionada.\n"
                 "- La salida debe ser texto plano con encabezados de sección, una sección por línea "
@@ -3403,6 +3435,7 @@ class OpenAIQuestionService(QuestionService):
                 "You are a Clinical Intake Assistant.\n"
                 "Your task is to generate a concise, clinically useful Pre-Visit Summary (~180–200 words) based strictly on "
                 "the provided intake responses.\n\n"
+                f"{prefs_snippet}"
                 "Critical Rules\n"
                 "- Do not invent, guess, or expand beyond the provided input.\n"
                 "- Output must be plain text with section headings, one section per line (no extra blank lines).\n"

@@ -241,10 +241,21 @@ class AudioFileMongo(Document):
 
 class DoctorPreferencesMongo(Document):
     """MongoDB model for storing doctor preferences (standalone; independent of intake)."""
+
+    # Legacy intake preferences (must remain for backward compatibility)
     doctor_id: str = Field(..., description="Doctor ID", unique=True)
     global_categories: list[str] = Field(default_factory=list)
     selected_categories: list[str] = Field(default_factory=list)
     max_questions: int = Field(default=12)
+
+    # New optional preference fields (stored as plain JSON-serializable structures for flexibility)
+    # AI configs: simple dicts; validated and defaulted at service/API layer
+    pre_visit_ai_config: Optional[dict] = None
+    soap_ai_config: Optional[dict] = None
+    # Frontend configuration: order + per-section config (stored as list[dict])
+    soap_order: Optional[list[str]] = None
+    pre_visit_config: Optional[list[dict]] = None
+
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:

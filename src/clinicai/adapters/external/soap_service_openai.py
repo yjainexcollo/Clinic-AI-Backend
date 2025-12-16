@@ -12,6 +12,7 @@ from clinicai.application.ports.services.soap_service import SoapService
 from clinicai.core.config import get_settings
 from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
+from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 
 
 class OpenAISoapService(SoapService):
@@ -98,6 +99,20 @@ class OpenAISoapService(SoapService):
         if normalized in ['es', 'sp']:
             return 'sp'
         return normalized if normalized in ['en', 'sp'] else 'en'
+
+    async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Fetch doctor preferences with 1s timeout; fail-open on errors."""
+        if not doctor_id:
+            return None
+        try:
+            prefs = await asyncio.wait_for(
+                DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id),
+                timeout=1.0
+            )
+            return prefs.dict() if prefs else None
+        except Exception as e:
+            logging.getLogger("clinicai").warning(f"[SoapPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}")
+            return None
     
     async def generate_soap_note(
         self,
@@ -106,11 +121,21 @@ class OpenAISoapService(SoapService):
         intake_data: Optional[Dict[str, Any]] = None,
         pre_visit_summary: Optional[Dict[str, Any]] = None,
         vitals: Optional[Dict[str, Any]] = None,
-        language: str = "en"
+        language: str = "en",
+        doctor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate SOAP note using OpenAI GPT-4."""
         # Normalize language code
         lang = self._normalize_language(language)
+
+        # Load doctor preferences (fail-open)
+        prefs = await self._get_doctor_preferences(doctor_id)
+        soap_ai_cfg = (prefs or {}).get("soap_ai_config") or {}
+        detail_level = (soap_ai_cfg.get("detail_level") or "standard").lower()
+        formatting_pref = (soap_ai_cfg.get("formatting") or "bullet_points").lower()
+        language_override = soap_ai_cfg.get("language")
+        if language_override:
+            lang = self._normalize_language(language_override)
         
         # Build context from available data
         context_parts = []
@@ -187,6 +212,14 @@ class OpenAISoapService(SoapService):
         
         context = "\n\n".join(context_parts) if context_parts else "No additional context available"
         
+        # Build preference snippet
+        pref_snippet = (
+            f"Doctor Preferences:\n"
+            f"- Detail level: {detail_level}\n"
+            f"- Formatting: {formatting_pref}\n"
+            f"- Language override: {language_override or 'none'}\n"
+        )
+
         # Create language-aware prompt
         if lang == "sp":
             prompt = f"""
@@ -199,12 +232,15 @@ TRANSCRIPCIÓN DE CONSULTA:
 {transcript}
 
 INSTRUCCIONES:
+{pref_snippet}
 1. Genera una nota SOAP completa basada en la transcripción y contexto
 2. NO hagas diagnósticos o recomendaciones de tratamiento a menos que sean explícitamente declarados por el médico
 3. Usa terminología médica apropiadamente
 4. Sé objetivo y factual
 5. Si la información no está clara o falta, marca como "No claro" o "No discutido"
 6. Enfócate en lo que realmente se dijo durante la consulta
+7. Nivel de detalle preferido: {detail_level}
+8. Formato preferido: {formatting_pref}
 
 FORMATO REQUERIDO (JSON):
 {{
@@ -253,6 +289,7 @@ CONSULTATION TRANSCRIPT:
 {transcript}
 
 INSTRUCTIONS:
+{pref_snippet}
 1. Generate a comprehensive SOAP note based on the transcript and context
 2. Do NOT make diagnoses or treatment recommendations unless explicitly stated by the physician
 3. Use medical terminology appropriately
@@ -264,6 +301,8 @@ INSTRUCTIONS:
    - Physical exam and other transcript-derived observable findings (e.g., general appearance, HEENT, cardiac, respiratory, abdominal, neuro, extremities, gait) when mentioned
    If explicit exam elements are not stated, include any transcript-derived objective observations (e.g., affect, speech, respiratory effort) when available.
 8. Incorporate the Objective Vitals provided in CONTEXT succinctly; do not replace transcript-derived exam with vitals—combine them.
+9. Preferred detail level: {detail_level}
+10. Preferred formatting: {formatting_pref}
 
 REQUIRED FORMAT (JSON):
 {{
