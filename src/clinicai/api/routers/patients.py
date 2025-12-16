@@ -466,7 +466,21 @@ async def answer_intake_question(
                 "details": e.details or {},
             },
         )
-    except (QuestionLimitExceededError, DuplicateQuestionError) as e:
+
+    except DuplicateQuestionError as e:
+        # Legacy DuplicateQuestionError does not expose structured error codes;
+        # return a safe, explicit payload instead of 500.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "DUPLICATE_QUESTION",
+                "message": str(e),
+                "details": {},
+            },
+        )
+
+    
+    except (QuestionLimitExceededError) as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={

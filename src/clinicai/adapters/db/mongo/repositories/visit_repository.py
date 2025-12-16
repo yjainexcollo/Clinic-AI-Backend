@@ -316,6 +316,7 @@ class MongoVisitRepository(VisitRepository):
                 completed_at=visit.intake_session.completed_at,
                 pending_question=visit.intake_session.pending_question,
                 travel_questions_count=getattr(visit.intake_session, "travel_questions_count", 0),
+                asked_categories=getattr(visit.intake_session, "asked_categories", []),
             )
 
         # Convert transcription session
@@ -426,6 +427,7 @@ class MongoVisitRepository(VisitRepository):
                 started_at=visit_mongo.intake_session.started_at,
                 completed_at=visit_mongo.intake_session.completed_at,
                 travel_questions_count=getattr(visit_mongo.intake_session, "travel_questions_count", 0),
+                asked_categories=getattr(visit_mongo.intake_session, "asked_categories", []),
             )
             intake_session.pending_question = getattr(visit_mongo.intake_session, "pending_question", None)
 

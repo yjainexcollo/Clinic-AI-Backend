@@ -37,7 +37,7 @@ class IntakeSessionMongo(BaseModel):
     completed_at: Optional[datetime] = None
     pending_question: Optional[str] = Field(None, description="Pending next question to ask")
     travel_questions_count: int = Field(default=0, description="Number of travel-related questions asked")
-
+    asked_categories: List[str] = Field(default_factory=list, description="Categories asked in strict sequence")
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
         exclude = {"revision_id"}

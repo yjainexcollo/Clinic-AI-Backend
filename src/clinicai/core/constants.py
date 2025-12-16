@@ -6,7 +6,7 @@ Shared constants for Clinic-AI application.
 ALLOWED_TOPICS = [
     "duration",
     "associated_symptoms",
-    "symptom_characterization",
+    
     "current_medications",
     "pain_assessment",
     "pain_characterization",
@@ -16,7 +16,7 @@ ALLOWED_TOPICS = [
     "screening",
     "allergies",
     "past_medical_history",
-    "hpi",
+    "lifestyle_functional_impact",
     "menstrual_cycle",
     "functional_impact",
     "daily_impact",
