@@ -967,9 +967,9 @@ class OpenAIQuestionService(QuestionService):
         self,
         disease: str,
         language: str = "en",
-        visit_id: str | None = None,
-        patient_id: str | None = None,
-        question_number: int | None = None,
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> str:
         lang = self._normalize_language(language)
         return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?" if lang == "sp" else \
@@ -990,9 +990,9 @@ class OpenAIQuestionService(QuestionService):
         patient_gender: Optional[str] = None,
         patient_age: Optional[int] = None,
         language: str = "en",
-        visit_id: str | None = None,
-        patient_id: str | None = None,
-        question_number: int | None = None,
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> str:
         chief = (disease or "").strip() or "general consultation"
         medical_context = await self._context_analyzer.analyze_condition(
@@ -1295,6 +1295,8 @@ class OpenAIQuestionService(QuestionService):
         # Load doctor preferences with fail-open defaults
         prefs = await self._get_doctor_preferences(doctor_id)
         pv_config = (prefs or {}).get("pre_visit_ai_config") or {}
+
+        # AI style preferences (always optional, safe defaults)
         style_pref = (pv_config.get("style") or "standard").strip().lower()
         focus_areas = pv_config.get("focus_areas") or []
         include_red_flags = pv_config.get("include_red_flags")
@@ -1308,7 +1310,47 @@ class OpenAIQuestionService(QuestionService):
             f"- Include red flags: {'yes' if include_red_flags else 'no'}\n"
         )
 
+        # Section configuration from doctor preferences (pre_visit_config)
+        raw_sections = (prefs or {}).get("pre_visit_config") or []
+        # Default: all sections enabled when no config present
+        default_section_state = {
+            "chief_complaint": True,
+            "hpi": True,
+            "history": True,
+            "review_of_systems": True,
+            "current_medication": True,
+        }
+        enabled_sections = default_section_state.copy()
+        try:
+            for sec in raw_sections:
+                key = sec.get("section_key") if isinstance(sec, dict) else getattr(sec, "section_key", None)
+                if key in enabled_sections:
+                    enabled_sections[key] = bool(sec.get("enabled", True) if isinstance(sec, dict) else getattr(sec, "enabled", True))
+        except Exception as e:
+            # Fail-open: if malformed, keep defaults and log at debug level
+            logger.debug(f"[DoctorPrefs] Failed to parse pre_visit_config for doctor_id={doctor_id}: {e}")
+
+        enable_cc = enabled_sections.get("chief_complaint", True)
+        enable_hpi = enabled_sections.get("hpi", True)
+        enable_history = enabled_sections.get("history", True)
+        enable_ros = enabled_sections.get("review_of_systems", True)
+        enable_meds = enabled_sections.get("current_medication", True)
+
         if lang == "sp":
+            # Build dynamic Spanish headings based on enabled sections
+            headings_lines_es: list[str] = []
+            if enable_cc:
+                headings_lines_es.append("Motivo de Consulta:")
+            if enable_hpi:
+                headings_lines_es.append("HPI:")
+            if enable_history:
+                headings_lines_es.append("Historia:")
+            if enable_ros:
+                headings_lines_es.append("Revisión de Sistemas:")
+            if enable_meds:
+                headings_lines_es.append("Medicación Actual:")
+            headings_text_es = "\n".join(headings_lines_es) + ("\n\n" if headings_lines_es else "\n\n")
+
             prompt = (
                 "Rol y Tarea\n"
                 "Eres un Asistente de Admisión Clínica.\n"
@@ -1326,38 +1368,19 @@ class OpenAIQuestionService(QuestionService):
                 "- Incluye una sección SOLO si contiene contenido real de las respuestas del paciente.\n"
                 "- No uses marcadores de posición como \"N/A\", \"No proporcionado\", \"no reportado\", o \"niega\".\n"
                 "- No incluyas secciones para temas que no fueron preguntados o discutidos.\n"
+                "- No incluyas secciones que NO estén presentes en la lista de encabezados proporcionada.\n"
                 "- Usa frases orientadas al paciente: \"El paciente reporta...\", \"Niega...\", \"En medicamentos:...\".\n"
                 "- No incluyas observaciones clínicas, diagnósticos, planes, signos vitales o hallazgos del examen "
                 "(la pre-consulta es solo lo reportado por el paciente).\n"
                 "- Normaliza pronunciaciones médicas obvias a términos correctos sin agregar nueva información.\n\n"
                 "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos reales de las respuestas del paciente)\n"
-                "Motivo de Consulta:\n"
-                "HPI:\n"
-                "Historia:\n"
-                "Revisión de Sistemas:\n"
-                "Medicación Actual:\n\n"
-                "Pautas de Contenido por Sección\n"
+                f"{headings_text_es}"
+                "Pautas de Contenido por Sección (aplican solo a los encabezados listados arriba)\n"
                 "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible.\n"
-                "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa:\n"
-                "  Inicio, Localización, Duración, Caracterización/calidad, Factores agravantes, Factores aliviadores, "
-                "Radiación,\n"
-                "  Patrón temporal, Severidad (1-10), Síntomas asociados, Negativos relevantes.\n"
-                "  Manténlo natural y coherente (ej., \"El paciente reporta...\"). Si algunos elementos OLDCARTS son "
-                "desconocidos, simplemente omítelos.\n"
-                "- Historia: Una línea combinando cualquier elemento reportado por el paciente usando punto y coma en este "
-                "orden si está presente:\n"
-                "  Médica: ...; Quirúrgica: ...; Familiar: ...; Estilo de vida: ...\n"
-                "  (Incluye SOLO las partes que fueron realmente preguntadas y respondidas por el paciente. Si un tema no fue "
-                "discutido, no lo incluyas en absoluto).\n"
-                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos basados en sistemas mencionados "
-                "explícitamente por el paciente. Mantén como prosa, no como lista. Solo incluye si los sistemas fueron "
-                "realmente revisados.\n"
-                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente "
-                "(nombre/dosis/frecuencia si se proporciona). Incluye declaraciones de alergia solo si el paciente las "
-                "reportó explícitamente. Si el paciente subió imágenes de medicamentos (incluso si no mencionó "
-                "explícitamente los nombres), menciona esto: \"El paciente proporcionó imágenes de medicamentos: "
-                "[nombre(s) de archivo(s)]\". Incluye esta sección si los medicamentos fueron discutidos O si se subieron "
-                "imágenes de medicamentos.\n\n"
+                "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa.\n"
+                "- Historia: Una línea combinando elementos médicos, quirúrgicos, familiares y de estilo de vida (solo si 'Historia' está en los encabezados).\n"
+                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos por sistemas (solo si 'Revisión de Sistemas' está en los encabezados).\n"
+                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente o mención de imágenes de medicamentos (solo si 'Medicación Actual' está en los encabezados).\n\n"
                 "Ejemplo de Formato\n"
                 "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
                 "Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.\n"
@@ -1374,6 +1397,20 @@ class OpenAIQuestionService(QuestionService):
                 f"Respuestas de Admisión:\n{self._format_intake_answers(intake_answers)}"
             )
         else:
+            # Build dynamic English headings based on enabled sections
+            headings_lines = []
+            if enable_cc:
+                headings_lines.append("Chief Complaint:")
+            if enable_hpi:
+                headings_lines.append("HPI:")
+            if enable_history:
+                headings_lines.append("History:")
+            if enable_ros:
+                headings_lines.append("Review of Systems:")
+            if enable_meds:
+                headings_lines.append("Current Medication:")
+            headings_text = "\n".join(headings_lines) + ("\n\n" if headings_lines else "\n\n")
+
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
@@ -1389,36 +1426,21 @@ class OpenAIQuestionService(QuestionService):
                 "- Include a section ONLY if it contains actual content from the patient's responses.\n"
                 "- Do not use placeholders like \"N/A\", \"Not provided\", \"not reported\", or \"denies\".\n"
                 "- Do not include sections for topics that were not asked about or discussed.\n"
+                "- Do NOT include sections that are not present in the headings list below (for example, omit 'History' if it is not listed).\n"
                 "- Use patient-facing phrasing: \"Patient reports …\", \"Denies …\", \"On meds: …\".\n"
                 "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings "
                 "(previsit is patient-reported only).\n"
                 "- Normalize obvious medical mispronunciations to correct terms (e.g., \"diabities\" -> \"diabetes\") "
                 "without adding new information.\n\n"
                 "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
-                "Chief Complaint:\n"
-                "HPI:\n"
-                "History:\n"
-                "Review of Systems:\n"
-                "Current Medication:\n\n"
-                "Content Guidelines per Section\n"
+                f"{headings_text}"
+                "Content Guidelines per Section (apply only to the headings listed above)\n"
                 "- Chief Complaint: One line in the patient's own words if available.\n"
-                "- HPI: ONE readable paragraph weaving OLDCARTS into prose:\n"
-                "  Onset, Location, Duration, Characterization/quality, Aggravating factors, Relieving factors, Radiation,\n"
-                "  Temporal pattern, Severity (1–10), Associated symptoms, Relevant negatives.\n"
-                "  Keep it natural and coherent (e.g., \"The patient reports …\"). If some OLDCARTS elements are unknown, "
-                "simply omit them (do not write placeholders).\n"
-                "- History: One line combining any patient-reported items using semicolons in this order if present:\n"
-                "  Medical: …; Surgical: …; Family: …; Lifestyle: …\n"
-                "  (Include ONLY parts that were actually asked about and answered by the patient. If a topic was not "
-                "discussed, do not include it at all.)\n"
-                "- Review of Systems: One narrative line summarizing system-based positives/negatives explicitly mentioned by "
-                "the patient (e.g., General, Neuro, Eyes, Resp, GI). Keep as prose, not a list. Only include if systems were "
-                "actually reviewed.\n"
-                "- Current Medication: One narrative line with meds/supplements actually stated by the patient "
-                "(name/dose/frequency if provided). Include allergy statements only if the patient explicitly reported them. "
-                "If the patient uploaded medication images (even if they didn't explicitly name the medications), mention "
-                "this: \"Patient provided medication images: [filename(s)]\". Include this section if medications were "
-                "discussed OR if medication images were uploaded.\n\n"
+                "- HPI: ONE readable paragraph weaving OLDCARTS into prose (only if HPI is listed).\n"
+                "- History: One line combining medical/surgical/family/lifestyle history (only if History is listed).\n"
+                "- Review of Systems: One narrative line summarizing system-based positives/negatives (only if Review of Systems is listed).\n"
+                "- Current Medication: One narrative line with meds/supplements actually stated by the patient or mention of "
+                "medication images (only if Current Medication is listed).\n\n"
                 "Example Format\n"
                 "(Structure and tone only—content will differ; each section on a single line.)\n"
                 "Chief Complaint: Patient reports severe headache for 3 days.\n"

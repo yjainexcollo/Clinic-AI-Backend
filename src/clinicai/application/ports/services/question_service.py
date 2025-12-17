@@ -14,9 +14,9 @@ class QuestionService(ABC):
         self,
         disease: str,
         language: str = "en",
-        visit_id: str | None = None,
-        patient_id: str | None = None,
-        question_number: int | None = None,
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> str:
         """Generate the first question based on primary symptom (backward param name)."""
         pass
@@ -36,9 +36,9 @@ class QuestionService(ABC):
         patient_gender: Optional[str] = None,
         patient_age: Optional[int] = None,
         language: str = "en",
-        visit_id: str | None = None,
-        patient_id: str | None = None,
-        question_number: int | None = None,
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> str:
         """Generate the next question based on context."""
         pass

@@ -590,7 +590,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                             if first_poll_at is None:
                                 first_poll_at = poll_timestamp
                                 # P1-4: Persist first_poll_at immediately
-                                if status_update_callback:
+                            if status_update_callback:
                                     try:
                                         await status_update_callback({
                                             "first_poll_at": first_poll_at,
