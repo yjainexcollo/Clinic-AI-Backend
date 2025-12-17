@@ -122,13 +122,21 @@ class GeneratePostVisitSummaryUseCase:
 
         # Structured per-visit LLM interaction log (no system prompt)
         try:
+            # Remove name and mobile from patient_data before logging (for privacy)
+            patient_data_for_log = {
+                "patient_id": patient_data.get("patient_id"),
+                "age": patient_data.get("age"),
+                "symptom": patient_data.get("symptom"),
+                "visit_date": patient_data.get("visit_date"),
+                "visit_id": patient_data.get("visit_id"),
+            }
             await append_phase_call(
                 visit_id=visit.visit_id.value,
                 patient_id=patient.patient_id.value,
                 phase="post_visit_summary",
                 agent_name="postvisit_summary_generator",
                 user_prompt={
-                    "patient_data": patient_data,
+                    "patient_data": patient_data_for_log,
                     "soap_data": soap_data,
                     "language": patient.language,
                 },

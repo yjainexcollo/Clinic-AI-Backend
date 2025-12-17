@@ -301,11 +301,6 @@ class IntakeQuestionLog(BaseModel):
     agents: List[AgentLog] = Field(default_factory=list, description="List of agent interactions for this question")
 
 
-class IntakePromptLogSection(BaseModel):
-    """Section for intake prompt logging."""
-    intake_prompt_log: List[IntakeQuestionLog] = Field(default_factory=list, description="List of intake questions with their agent logs")
-
-
 class LLMCallLog(BaseModel):
     """Model for LLM call logs in other phases (previsit, soap, postvisit)."""
     agent_name: str = Field(..., description="Agent name or phase identifier")
@@ -315,23 +310,18 @@ class LLMCallLog(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow, description="When this call was made")
 
 
-class PhaseLogSection(BaseModel):
-    """Section for phase-specific LLM call logging."""
-    llm_calls: List[LLMCallLog] = Field(default_factory=list, description="List of LLM calls for this phase")
-
-
 class LLMInteractionVisit(Document):
     """MongoDB document for structured per-visit LLM interaction logging."""
     visit_id: str = Field(..., description="Visit ID", unique=True)
     patient_id: str = Field(..., description="Patient ID")
     
-    # Intake phase: stores all agent interactions per question
-    intake: IntakePromptLogSection = Field(default_factory=IntakePromptLogSection, description="Intake phase logs")
+    # Intake phase: stores all agent interactions per question (direct list, no wrapper)
+    intake: List[IntakeQuestionLog] = Field(default_factory=list, description="Intake phase logs - list of questions with agent logs")
     
-    # Other phases: stores LLM calls
-    pre_visit_summary: PhaseLogSection = Field(default_factory=PhaseLogSection, description="Pre-visit summary phase logs")
-    soap: PhaseLogSection = Field(default_factory=PhaseLogSection, description="SOAP generation phase logs")
-    post_visit_summary: PhaseLogSection = Field(default_factory=PhaseLogSection, description="Post-visit summary phase logs")
+    # Other phases: stores single LLM call (only generated once per visit)
+    pre_visit_summary: Optional[LLMCallLog] = Field(None, description="Pre-visit summary phase log")
+    soap: Optional[LLMCallLog] = Field(None, description="SOAP generation phase log")
+    post_visit_summary: Optional[LLMCallLog] = Field(None, description="Post-visit summary phase log")
     
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Document creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")

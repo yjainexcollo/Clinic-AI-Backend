@@ -459,6 +459,9 @@ class AnswerIntakeUseCase:
             travel_questions_count=visit.intake_session.travel_questions_count,
             patient_gender=patient.gender,
             patient_age=patient.age,
+            visit_id=visit.visit_id.value,
+            patient_id=patient.patient_id.value,
+            question_number=visit.intake_session.current_question_count + 1,
         )
         visit.set_pending_question(next_question)
 

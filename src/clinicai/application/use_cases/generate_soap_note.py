@@ -131,6 +131,12 @@ class GenerateSoapNoteUseCase:
 
             # Structured per-visit LLM interaction log (no system prompt)
             try:
+                # Remove name and mobile from patient_context before logging (for privacy)
+                patient_context_for_log = {
+                    "patient_id": patient_context.get("patient_id"),
+                    "age": patient_context.get("age"),
+                    "symptom": patient_context.get("symptom"),
+                }
                 await append_phase_call(
                     visit_id=visit.visit_id.value,
                     patient_id=patient.patient_id.value,
@@ -138,7 +144,7 @@ class GenerateSoapNoteUseCase:
                     agent_name="soap_note_generator",
                     user_prompt={
                         "transcript": transcript,
-                        "patient_context": patient_context,
+                        "patient_context": patient_context_for_log,
                         "intake_data": intake_data,
                         "pre_visit_summary": pre_visit_summary,
                         "vitals": vitals,

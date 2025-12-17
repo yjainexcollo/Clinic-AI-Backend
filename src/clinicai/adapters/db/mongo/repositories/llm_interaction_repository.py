@@ -62,7 +62,7 @@ async def append_intake_agent_log(
     doc = await _get_or_create(visit_id, patient_id)
 
     # find or create the question entry
-    q = next((q for q in doc.intake.intake_prompt_log if q.question_number == question_number), None)
+    q = next((q for q in doc.intake if q.question_number == question_number), None)
     if not q:
         q = IntakeQuestionLog(
             question_number=question_number,
@@ -70,7 +70,7 @@ async def append_intake_agent_log(
             question_text=question_text,
             asked_at=asked_at or datetime.utcnow(),
         )
-        doc.intake.intake_prompt_log.append(q)
+        doc.intake.append(q)
     else:
         # Update question_text if provided and current one is None/empty
         if question_text and (not q.question_text or q.question_text is None):
@@ -105,8 +105,10 @@ async def append_phase_call(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    Append an LLM call for phases other than intake.
+    Set an LLM call for phases other than intake (only one per visit per phase).
     phase: one of ["pre_visit_summary", "soap", "post_visit_summary"]
+    
+    Note: user_prompt will be converted to string if it's a dict.
     """
     # Check if LLM interaction logging is enabled
     settings = get_settings()
@@ -127,20 +129,27 @@ async def append_phase_call(
     
     doc = await _get_or_create(visit_id, patient_id)
 
+    # Convert user_prompt to string if it's a dict
+    if isinstance(user_prompt, dict):
+        import json
+        user_prompt_str = json.dumps(user_prompt, indent=2, ensure_ascii=False)
+    else:
+        user_prompt_str = str(user_prompt) if user_prompt is not None else ""
+
     call = LLMCallLog(
         agent_name=agent_name,
-        user_prompt=user_prompt,
+        user_prompt=user_prompt_str,
         response_text=response_text,
         metadata=metadata or {},
         created_at=datetime.utcnow(),
     )
 
     if phase == "pre_visit_summary":
-        doc.pre_visit_summary.llm_calls.append(call)
+        doc.pre_visit_summary = call
     elif phase == "soap":
-        doc.soap.llm_calls.append(call)
+        doc.soap = call
     elif phase == "post_visit_summary":
-        doc.post_visit_summary.llm_calls.append(call)
+        doc.post_visit_summary = call
     else:
         raise ValueError(f"Unsupported phase '{phase}' for LLM interaction logging.")
 

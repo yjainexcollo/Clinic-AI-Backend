@@ -10,6 +10,7 @@ from ...api.schemas import PreVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.question_service import QuestionService
+from ...adapters.db.mongo.repositories.llm_interaction_repository import append_phase_call
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,33 @@ class GeneratePreVisitSummaryUseCase:
             # Get the generated_at timestamp from the stored summary (not visit.updated_at)
             stored_summary = visit.get_pre_visit_summary()
             generated_at = stored_summary.get("generated_at") if stored_summary else datetime.utcnow().isoformat()
+
+            # Structured per-visit LLM interaction log (no system prompt)
+            try:
+                # Construct the user prompt data (excluding patient name and phone for privacy)
+                # Remove name and mobile from patient_data before logging
+                patient_data_for_log = {
+                    "patient_id": patient_data.get("patient_id"),
+                    "age": patient_data.get("age"),
+                    "symptom": patient_data.get("symptom"),
+                    "visit_id": patient_data.get("visit_id"),
+                }
+                user_prompt_dict = {
+                    "patient_data": patient_data_for_log,
+                    "intake_answers": intake_answers,
+                    "medication_images_info": medication_images_info,
+                }
+                await append_phase_call(
+                    visit_id=visit.visit_id.value,
+                    patient_id=patient.patient_id.value,
+                    phase="pre_visit_summary",
+                    agent_name="previsit_summary_generator",
+                    user_prompt=user_prompt_dict,  # Will be converted to string in append_phase_call
+                    response_text=summary_result["summary"],
+                    metadata={"prompt_version": "previsit_v1", "language": patient.language},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to append structured pre-visit log: {e}")
 
             logger.info(f"Successfully generated pre-visit summary for visit {request.visit_id}")
             return PreVisitSummaryResponse(

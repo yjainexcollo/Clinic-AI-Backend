@@ -17,7 +17,6 @@ MENSTRUAL_KEYWORDS,
 HIGH_RISK_COMPLAINT_KEYWORDS,
 SIMILARITY_STOPWORDS,
 )
-from clinicai.adapters.db.mongo.models.patient_m import LLMInteractionMongo
 from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
     append_intake_agent_log,
     append_phase_call,
@@ -258,7 +257,6 @@ class MedicalContextAnalyzer:
         visit_id: Optional[str] = None,
         patient_id: Optional[str] = None,
         question_number: Optional[int] = None,
-        language: str = "en",
     ) -> MedicalContext:
         lang = self._normalize_language(language)
         system_prompt = """You are AGENT-01 "MEDICAL CONTEXT ANALYZER" - Clinical Strategist.
@@ -331,18 +329,24 @@ Return the JSON plan now.
         )
         print(log_msg, flush=True)
         logger.info(log_msg)
-        try:
-            await LLMInteractionMongo(
-                agent_name="agent1_medical_context",
-                visit_id=None,
-                patient_id=None,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_text=response_text,
-                metadata={"chief_complaint": chief_complaint},
-            ).insert()
-        except Exception as e:
-            logger.warning("Agent1: failed to persist interaction: %s", e)
+        # Log to structured llm_interaction collection (only user_prompt, no system_prompt)
+        if visit_id and patient_id and question_number is not None:
+            try:
+                await append_intake_agent_log(
+                    visit_id=visit_id,
+                    patient_id=patient_id,
+                    question_number=question_number,
+                    question_text=None,  # Not known yet at Agent 1 stage
+                    agent_name="agent1_medical_context",
+                    user_prompt=user_prompt,  # Only user_prompt, NO system_prompt
+                    response_text=response_text,
+                    metadata={
+                        "chief_complaint": chief_complaint,
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Agent1: failed to persist interaction: %s", e)
         raw = _extract_first_json_object(response_text)
         if not raw:
             raise ValueError("Agent1 returned no valid JSON object")
@@ -429,6 +433,9 @@ class AnswerExtractor:
         previous_answers: List[str],
         medical_context: MedicalContext,
         language: str = "en",
+        visit_id: Optional[str] = None,
+        patient_id: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> ExtractedInformation:
         all_qa: List[Dict[str, str]] = []
         for i in range(len(asked_questions or [])):
@@ -530,26 +537,30 @@ Return the JSON now.
         topic_counts = raw.get("topic_counts")
         if not isinstance(topic_counts, dict):
             topic_counts = dict(Counter(topics_covered))
-        try:
-            await LLMInteractionMongo(
-                agent_name="agent2_extractor",
-                visit_id=None,
-                patient_id=None,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_text=response_text,
-                metadata={
-                    "topics_covered": topics_covered,
-                    "information_gaps": information_gaps,
-                    "redundant_categories": redundant_categories,
-                    "extracted_facts": extracted_facts,
-                    "already_mentioned_duration": already_duration,
-                    "already_mentioned_medications": already_meds,
-                    "topic_counts": topic_counts,
-                },
-            ).insert()
-        except Exception as e:
-            logger.warning("Agent2: failed to persist interaction: %s", e)
+        # Log to structured llm_interaction collection (only user_prompt, no system_prompt)
+        if visit_id and patient_id and question_number is not None:
+            try:
+                await append_intake_agent_log(
+                    visit_id=visit_id,
+                    patient_id=patient_id,
+                    question_number=question_number,
+                    question_text=None,  # Not known yet at Agent 2 stage
+                    agent_name="agent2_extractor",
+                    user_prompt=user_prompt,  # Only user_prompt, NO system_prompt
+                    response_text=response_text,
+                    metadata={
+                        "topics_covered": topics_covered,
+                        "information_gaps": information_gaps,
+                        "redundant_categories": redundant_categories,
+                        "extracted_facts": extracted_facts,
+                        "already_mentioned_duration": already_duration,
+                        "already_mentioned_medications": already_meds,
+                        "topic_counts": topic_counts,
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Agent2: failed to persist interaction: %s", e)
         return ExtractedInformation(
             topics_covered=topics_covered,
             information_gaps=information_gaps,
@@ -751,19 +762,25 @@ Generate ONE question now, strictly about {chosen_topic}.
         )
         print(log_msg, flush=True)
         logger.info(log_msg)
-        # Persist attempt #1
-        try:
-            await LLMInteractionMongo(
-                agent_name="agent3_question_generator",
-                visit_id=None,
-                patient_id=None,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_text=response_text,
-                metadata={"chosen_topic": chosen_topic, "attempt": 1},
-            ).insert()
-        except Exception as e:
-            logger.warning("Agent3: failed to persist interaction: %s", e)
+        # Log to structured llm_interaction collection (only user_prompt, no system_prompt)
+        if visit_id and patient_id and question_number is not None:
+            try:
+                await append_intake_agent_log(
+                    visit_id=visit_id,
+                    patient_id=patient_id,
+                    question_number=question_number,
+                    question_text=q1,  # Question text from attempt #1
+                    agent_name="agent3_question_generator",
+                    user_prompt=user_prompt,  # Only user_prompt, NO system_prompt
+                    response_text=response_text,
+                    metadata={
+                        "chosen_topic": chosen_topic,
+                        "attempt": 1,
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Agent3: failed to persist interaction (attempt 1): %s", e)
         # If question is empty or doesn't match topic => retry once
         if (not q1) or (not self._question_matches_topic(chosen_topic, q1)):
             correction = f"""
@@ -780,19 +797,25 @@ Return ONE question ONLY.
             )
             print(log_msg2, flush=True)
             logger.info(log_msg2)
-            # Persist attempt #2
-            try:
-                await LLMInteractionMongo(
-                    agent_name="agent3_question_generator",
-                    visit_id=None,
-                    patient_id=None,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt + "\n\n" + correction,
-                    response_text=response_text_2,
-                    metadata={"chosen_topic": chosen_topic, "attempt": 2},
-                ).insert()
-            except Exception as e:
-                logger.warning("Agent3: failed to persist interaction: %s", e)
+            # Log retry attempt #2 to structured llm_interaction collection
+            if visit_id and patient_id and question_number is not None:
+                try:
+                    await append_intake_agent_log(
+                        visit_id=visit_id,
+                        patient_id=patient_id,
+                        question_number=question_number,
+                        question_text=q2 if q2 and self._question_matches_topic(chosen_topic, q2) else None,
+                        agent_name="agent3_question_generator",
+                        user_prompt=user_prompt + "\n\n" + correction,  # Only user_prompt, NO system_prompt
+                        response_text=response_text_2,
+                        metadata={
+                            "chosen_topic": chosen_topic,
+                            "attempt": 2,
+                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning("Agent3: failed to persist interaction (attempt 2): %s", e)
             if q2 and self._question_matches_topic(chosen_topic, q2):
                 return q2
             # deterministic fallback
@@ -978,12 +1001,18 @@ class OpenAIQuestionService(QuestionService):
             patient_gender=patient_gender,
             recently_travelled=recently_travelled,
             language=language,
+            visit_id=visit_id,
+            patient_id=patient_id,
+            question_number=question_number,
         )
         extracted = await self._answer_extractor.extract_covered_information(
             asked_questions=asked_questions or [],
             previous_answers=previous_answers or [],
             medical_context=medical_context,
             language=language,
+            visit_id=visit_id,
+            patient_id=patient_id,
+            question_number=question_number,
         )
         # =============================================================================
         # ✅ COVERAGE/REDUNDANCY IS 100% CODE-TRUTH (asked_categories-driven)
@@ -1193,6 +1222,9 @@ class OpenAIQuestionService(QuestionService):
             previous_answers=previous_answers or [],
             language=language,
             deep_diagnostic_question_num=deep_diag_num,
+            visit_id=visit_id,
+            patient_id=patient_id,
+            question_number=question_number,
         )
         validation = await self._safety_validator.validate_question(
             question=q,
