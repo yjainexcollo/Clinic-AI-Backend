@@ -13,6 +13,7 @@ ALLOWED_TOPICS = [
     "location_radiation",
     "travel_history",
     "chronic_monitoring",
+    "lab_tests",
     "screening",
     "allergies",
     "past_medical_history",
