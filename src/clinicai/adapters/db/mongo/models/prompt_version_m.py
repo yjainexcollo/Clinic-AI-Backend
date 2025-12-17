@@ -1,21 +1,23 @@
 """
 MongoDB Beanie model for storing prompt version history.
+
+Structure: 4 separate documents, one per scenario (intake, previsit, soap, postvisit)
+Each document contains an array of all versions for that scenario.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from beanie import Document
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from clinicai.adapters.external.prompt_registry import PromptScenario
 
 
-class PromptVersionMongo(Document):
-    """MongoDB model for prompt version tracking."""
-
-    scenario: str = Field(..., description="Prompt scenario (e.g., 'soap_summary')")
-    version: str = Field(..., description="Version string (e.g., 'SOAP_V1_2025-12-02')")
+class PromptVersionEntry(BaseModel):
+    """Individual prompt version entry stored in the versions array."""
+    
+    version: str = Field(..., description="Version string (e.g., 'INTAKE_V_1.3', 'PREVISIT_V_1.0')")
     template_hash: str = Field(..., description="SHA256 hash of the prompt template")
     template_content: str = Field(..., description="Full prompt template content")
     
@@ -31,16 +33,22 @@ class PromptVersionMongo(Document):
     # Version number extraction (for sorting)
     version_number: int = Field(..., description="Numeric sorting value (major * 1000 + minor)")
 
+
+class PromptVersionMongo(Document):
+    """
+    MongoDB model for prompt version tracking.
+    
+    One document per scenario, each containing a versions array.
+    Documents are identified by the scenario field.
+    """
+    
+    scenario: str = Field(..., description="Prompt scenario (intake, previsit, soap, postvisit)")
+    versions: List[PromptVersionEntry] = Field(default_factory=list, description="Array of all versions for this scenario")
+    
     class Settings:
         name = "prompt_versions"
+        # Note: Unique index on scenario must be created manually in MongoDB or via migration
+        # Beanie doesn't support unique index syntax directly in indexes list
         indexes = [
-            "scenario",
-            "version",
-            "template_hash",
-            "is_current",
-            [("scenario", 1), ("is_current", 1)],  # Compound index for finding current version by scenario
-            [("scenario", 1), ("version_number", -1)],  # Compound index for version history queries
-            [("scenario", 1), ("major_version", 1), ("minor_version", 1)],  # Semantic version index
+            "scenario",  # Index for finding document by scenario
         ]
-
-

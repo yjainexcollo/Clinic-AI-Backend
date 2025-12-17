@@ -24,11 +24,12 @@ class PromptScenario(str, Enum):
 
 
 # Default/fallback versions (used before DB initialization)
+# Format: SCENARIO_V_X.Y (e.g., INTAKE_V_1.0)
 _DEFAULT_VERSIONS: dict[PromptScenario, str] = {
-    PromptScenario.INTAKE: "1.0",
-    PromptScenario.PREVISIT_SUMMARY: "1.0",
-    PromptScenario.SOAP: "1.0",
-    PromptScenario.POSTVISIT_SUMMARY: "1.0",
+    PromptScenario.INTAKE: "INTAKE_V_1.0",
+    PromptScenario.PREVISIT_SUMMARY: "PREVISIT_V_1.0",
+    PromptScenario.SOAP: "SOAP_V_1.0",
+    PromptScenario.POSTVISIT_SUMMARY: "POSTVISIT_V_1.0",
     # RED_FLAG is excluded from version tracking
 }
 
