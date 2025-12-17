@@ -295,7 +295,7 @@ ALLOWED TOPICS (must use exactly):
 duration, associated_symptoms, current_medications, past_medical_history,
 triggers, travel_history, lifestyle_functional_impact, family_history,
 allergies, pain_assessment, temporal, menstrual_cycle, past_evaluation,
-chronic_monitoring, screening
+chronic_monitoring,lab_tests, screening
 Rules:
 - topic_plan must be a subset of priority_topics
 - if travel checkbox is NO, set is_travel_related=false and avoid_topics includes travel_history
@@ -620,7 +620,9 @@ class QuestionGenerator:
         "menstrual_cycle": ["period", "menstrual", "cycle", "pregnant", "lmp", "bleeding"],
         "past_evaluation": ["tests", "scan", "x-ray", "lab", "doctor", "evaluation", "report"],
         "chronic_monitoring": ["monitor", "check", "readings", "hba1c", "fasting", "logs", "follow up"],
-        "screening": ["screening", "eye", "kidney", "feet", "foot", "retina", "complications"],
+        "lab_tests": ["lab", "blood test", "results", "hba1c", "cholesterol", "thyroid", "creatinine", "test results"],
+        "screening": ["screening", "eye", "kidney", "feet", "foot", "retina", "complications", "imaging", "stress test"],
+
     }
     _TOPIC_FALLBACK_Q: Dict[str, str] = {
         "duration": "How long have you had this problem?",
@@ -637,7 +639,9 @@ class QuestionGenerator:
         "menstrual_cycle": "When was your last menstrual period, and are your cycles regular?",
         "past_evaluation": "Have you had any tests or doctor visits for this? What were the results?",
         "chronic_monitoring": "Do you regularly monitor your condition (e.g., sugar readings)? If yes, what are typical values?",
-        "screening": "Have you had any screening for complications (eyes, kidneys, feet) recently?",
+        "lab_tests": "Have you had any recent lab tests for this condition (like blood tests), and what do you remember about the results?",
+        "screening": "Have you had any screening tests for complications (like eye, heart, or kidney exams) recently?",
+
     }
 
     def _question_matches_topic(self, chosen_topic: str, question: str) -> bool:
@@ -707,31 +711,32 @@ Topic-specific guidance:
 - triggers: Ask about what brings it on AND what makes it worse
 - lifestyle_functional_impact: Ask about daily activities, work, AND routine changes
 - temporal: Ask about frequency AND progression (better/worse/same)
-- chronic_monitoring: Ask about home monitoring frequency AND typical readings/values (e.g., "How often do you check your [condition-specific metric], and what are your typical readings?")
-- screening: If deep_diagnostic_question_num=2, ask about LAB TEST RESULTS (what tests, what results). If deep_diagnostic_question_num=3, ask about SCREENING EXAMS (what exams, when last done)
-IMPORTANT: For deep diagnostic questions (chronic_monitoring, screening), follow the SPECIAL INSTRUCTION provided in the user prompt below.
+- chronic_monitoring: Ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values (e.g., "How often do you or your doctors check your [condition-specific metric], and what are your typical readings?")
+ - lab_tests: Ask specifically about LAB TEST RESULTS (what lab tests, what results) for this condition.
+ - screening: Ask specifically about FORMAL SCREENING EXAMS/COMPLICATION CHECKS (what screening exams, when last done) — DO NOT mix lab tests into screening.
+IMPORTANT: For deep diagnostic questions (chronic_monitoring, lab_tests, screening), follow the SPECIAL INSTRUCTION provided in the user prompt below.
 Generate the question now.
 """
         deep_diag_note = ""
         if deep_diagnostic_question_num is not None:
             if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME MONITORING:\n" \
-                    "Ask about how the patient monitors this chronic condition at home.\n" \
-                    "Examples: blood sugar readings, blood pressure checks, peak flow measurements, weight logs, device readings.\n" \
-                    "Format: Ask about frequency of monitoring AND typical values/readings.\n" \
-                    "Example: 'How often do you check your blood sugar at home, and what have your recent readings usually been like?'"
-            elif deep_diagnostic_question_num == 2 and chosen_topic == "screening":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS:\n" \
+                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n" \
+                                 "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n" \
+                                 "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n" \
+                                 "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n" \
+                                 "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
+            elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
+                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS ONLY:\n" \
                     "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n" \
-                    "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific tests.\n" \
-                    "Format: Ask what recent lab tests they've had AND what they remember about the results.\n" \
-                    "Example: 'Have you had any recent lab tests like HbA1c or fasting glucose? What were the results?'"
+                    "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n" \
+                    "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n" \
+                    "Example: 'Have you had any recent lab tests for this condition, and what do you remember about the results?'"
             elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS:\n" \
-                    "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS done because of this chronic condition.\n" \
-                    "Focus on: diabetic eye/foot exams, cardiac tests, kidney imaging, lung function tests, or other screening exams.\n" \
+                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n" \
+                                 "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n" \
+                                 "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n" \
                     "Format: Ask if they've had screening exams AND when they were last done.\n" \
-                    "Example: 'Have you had screening for diabetes complications (eyes, kidneys, feet) in the past year?'"
+                    "Example: 'Have you had any screening tests for complications related to this condition (like eye, heart, or kidney exams), and when were they last done?'"
         user_prompt = f"""
 CHOSEN TOPIC (MUST FOLLOW): {chosen_topic}{deep_diag_note}
 Patient:
@@ -904,7 +909,7 @@ Allowed topics:
 duration, associated_symptoms, current_medications, past_medical_history,
 triggers, travel_history, lifestyle_functional_impact, family_history,
 allergies, pain_assessment, temporal, menstrual_cycle, past_evaluation,
-chronic_monitoring, screening
+chronic_monitoring, lab_tests, screening
 Rules:
 - next_topic must be a SINGLE topic
 - stop_intake true only if no valid topics remain
@@ -1146,7 +1151,7 @@ class OpenAIQuestionService(QuestionService):
                     next_topic = "chronic_monitoring"
                 elif deep_question_num == 2:
                     # Step 11: Lab test results (use screening topic but will be phrased as labs)
-                    next_topic = "screening"
+                    next_topic = "lab_tests"
                 elif deep_question_num == 3:
                     # Step 12: Screening/complications
                     next_topic = "screening"
