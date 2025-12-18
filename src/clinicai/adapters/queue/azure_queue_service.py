@@ -157,6 +157,20 @@ class AzureQueueService:
         except Exception as e:
             logger.error(f"❌ Failed to move message to poison queue: {e}", exc_info=True)
             return False
+
+    async def move_to_poison_message(
+        self,
+        message_id: str,
+        pop_receipt: str,
+        content: str,
+        reason: str,
+    ) -> bool:
+        """
+        Public wrapper to move a message to the poison queue and delete it from the main queue.
+
+        This is used by workers that have already updated the database to mark the job as failed.
+        """
+        return await self._move_to_poison_queue(message_id, pop_receipt, content, reason)
     
     async def ensure_queue_exists(self) -> bool:
         """Ensure the queue exists (non-blocking)."""
@@ -209,26 +223,31 @@ class AzureQueueService:
             message["request_id"] = request_id
         
         try:
-            # For new jobs: visibility_timeout=0 (immediate visibility)
-            # For retry jobs: visibility_timeout=delay_seconds (exponential backoff)
+            # For new jobs: visibility_timeout=0 (immediate visibility).
+            # For retry jobs: visibility_timeout=delay_seconds (initial invisibility for backoff).
             visibility_timeout = delay_seconds if delay_seconds > 0 else 0
-            
+
             # Enqueue message (non-blocking)
             response = await run_blocking(
                 self.queue_client.send_message,
                 json.dumps(message),
-                visibility_timeout=visibility_timeout
+                visibility_timeout=visibility_timeout,
             )
-            
+
             logger.info(
-                f"✅ Transcription job enqueued: visit={visit_id}, "
+                "✅ Transcription job enqueued: "
+                f"queue={self.settings.queue_name}, visit={visit_id}, "
                 f"audio_file={audio_file_id}, message_id={response.id}, "
                 f"retry_count={retry_count}, delay={delay_seconds}s"
             )
-            
+
             return response.id
         except Exception as e:
-            logger.error(f"❌ Failed to enqueue transcription job: {e}")
+            logger.error(
+                "❌ Failed to enqueue transcription job: "
+                f"queue={self.settings.queue_name}, visit={visit_id}, audio_file={audio_file_id}, "
+                f"retry_count={retry_count}, delay={delay_seconds}s, error={e}"
+            )
             raise
     
     async def dequeue_transcription_job(self, max_messages: int = 1) -> Optional[Dict[str, Any]]:
@@ -263,46 +282,66 @@ class AzureQueueService:
             for message in messages:
                 message_id = message.id
                 pop_receipt = message.pop_receipt
-                
+
                 try:
                     message_data = json.loads(message.content)
                     visit_id = message_data.get("visit_id", "unknown")
                     audio_file_id = message_data.get("audio_file_id", "unknown")
                     retry_count = message_data.get("retry_count", 0)
-                    
+
                     # Check if this is a poison message (too many retries)
                     if retry_count >= self.settings.max_dequeue_count:
-                        reason = f"POISON_MESSAGE: retry_count={retry_count} >= max_dequeue_count={self.settings.max_dequeue_count}"
+                        reason = (
+                            f"POISON_MESSAGE: retry_count={retry_count} >= "
+                            f"max_dequeue_count={self.settings.max_dequeue_count}"
+                        )
                         logger.warning(
                             f"⚠️  Poison message detected: message_id={message_id}, "
                             f"visit={visit_id}, retry_count={retry_count}"
                         )
-                        await self._move_to_poison_queue(message_id, pop_receipt, message.content, reason)
+                        job_dict = {
+                            "data": message_data,
+                            "message_id": message_id,
+                            "pop_receipt": pop_receipt,
+                            "poison": True,
+                            "poison_reason": reason,
+                            "retry_count": retry_count,
+                            "raw_content": message.content,
+                        }
+                        # Return immediately for single-message dequeue
+                        if max_messages == 1:
+                            return job_dict
+                        valid_messages.push(job_dict)
                         continue
-                    
+
                     # Log message details with insertion time if available
-                    insertion_time = getattr(message, 'insertion_time', None)
-                    insertion_str = f", insertion_time={insertion_time.isoformat()}" if insertion_time else ""
-                    
+                    insertion_time = getattr(message, "insertion_time", None)
+                    insertion_str = (
+                        f", insertion_time={insertion_time.isoformat()}" if insertion_time else ""
+                    )
+
                     logger.info(
                         f"📥 Dequeued transcription job: visit={visit_id}, "
                         f"audio_file={audio_file_id}, message_id={message_id}, "
                         f"retry={retry_count}{insertion_str}"
                     )
-                    
+
                     job_dict = {
                         "data": message_data,
                         "message_id": message_id,
-                        "pop_receipt": pop_receipt
+                        "pop_receipt": pop_receipt,
+                        "poison": False,
+                        "retry_count": retry_count,
+                        "raw_content": message.content,
                     }
-                    
+
                     # If max_messages == 1, return first valid message (backward compatible)
                     if max_messages == 1:
                         return job_dict
-                    
+
                     # Otherwise, collect for batch return
                     valid_messages.append(job_dict)
-                    
+
                 except json.JSONDecodeError as e:
                     # Invalid JSON - log warning with truncated content and handle as poison in dev
                     content_preview = message.content[:200] if len(message.content) > 200 else message.content

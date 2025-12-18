@@ -439,6 +439,22 @@ class Settings(BaseSettings):
         env="TRANSCRIPTION_SIMPLE_MAX_CHARS",
         description="Max transcript chars for simple LLM path before chunking",
     )
+    # Stuck transcription sweeper (optional safety net)
+    transcription_stuck_sweeper_enabled: bool = Field(
+        default=False,
+        env="TRANSCRIPTION_STUCK_SWEEPER_ENABLED",
+        description="Enable periodic sweeper to re-enqueue stuck queued transcription jobs",
+    )
+    transcription_stuck_sweeper_interval_seconds: int = Field(
+        default=300,
+        env="TRANSCRIPTION_STUCK_SWEEPER_INTERVAL_SECONDS",
+        description="Interval in seconds between sweeper runs (default: 5 minutes)",
+    )
+    transcription_stuck_threshold_seconds: int = Field(
+        default=600,
+        env="TRANSCRIPTION_STUCK_THRESHOLD_SECONDS",
+        description="Threshold in seconds to consider a queued job stuck (default: 10 minutes)",
+    )
 
     # Sub-settings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)

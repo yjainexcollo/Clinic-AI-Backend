@@ -346,6 +346,12 @@ class MongoVisitRepository(VisitRepository):
                 original_content_type=getattr(visit.transcription_session, "original_content_type", None),
                 normalized_format=getattr(visit.transcription_session, "normalized_format", None),
                 file_content_type=getattr(visit.transcription_session, "file_content_type", None),
+                enqueue_state=getattr(visit.transcription_session, "enqueue_state", None),
+                enqueue_attempts=getattr(visit.transcription_session, "enqueue_attempts", None),
+                enqueue_last_error=getattr(visit.transcription_session, "enqueue_last_error", None),
+                enqueue_requested_at=getattr(visit.transcription_session, "enqueue_requested_at", None),
+                enqueue_failed_at=getattr(visit.transcription_session, "enqueue_failed_at", None),
+                queue_message_id=getattr(visit.transcription_session, "queue_message_id", None),
             )
 
         # Convert SOAP note
@@ -458,6 +464,12 @@ class MongoVisitRepository(VisitRepository):
                 original_content_type=getattr(visit_mongo.transcription_session, "original_content_type", None),
                 normalized_format=getattr(visit_mongo.transcription_session, "normalized_format", None),
                 file_content_type=getattr(visit_mongo.transcription_session, "file_content_type", None),
+                enqueue_state=getattr(visit_mongo.transcription_session, "enqueue_state", None),
+                enqueue_attempts=getattr(visit_mongo.transcription_session, "enqueue_attempts", None),
+                enqueue_last_error=getattr(visit_mongo.transcription_session, "enqueue_last_error", None),
+                enqueue_requested_at=getattr(visit_mongo.transcription_session, "enqueue_requested_at", None),
+                enqueue_failed_at=getattr(visit_mongo.transcription_session, "enqueue_failed_at", None),
+                queue_message_id=getattr(visit_mongo.transcription_session, "queue_message_id", None),
             )
 
         # Convert SOAP note

@@ -70,6 +70,25 @@ class TranscriptionSessionMongo(BaseModel):
     original_content_type: Optional[str] = Field(None, description="Original content type before normalization")
     normalized_format: Optional[str] = Field(None, description="Format after normalization (e.g., wav_16khz_mono_pcm)")
     file_content_type: Optional[str] = Field(None, description="Final content type used for transcription")
+    # Enqueue tracking (two-phase enqueue state machine)
+    enqueue_state: Optional[str] = Field(
+        None, description='Enqueue state: "pending" | "queued" | "failed"'
+    )
+    enqueue_attempts: Optional[int] = Field(
+        None, description="Number of enqueue attempts made for this job"
+    )
+    enqueue_last_error: Optional[str] = Field(
+        None, description="Last enqueue error string, if any"
+    )
+    enqueue_requested_at: Optional[datetime] = Field(
+        None, description="When the latest enqueue attempt was requested"
+    )
+    enqueue_failed_at: Optional[datetime] = Field(
+        None, description="When the last enqueue attempt definitively failed"
+    )
+    queue_message_id: Optional[str] = Field(
+        None, description="Azure Queue message ID for this job (if enqueued)"
+    )
 
 
 class SoapNoteMongo(BaseModel):

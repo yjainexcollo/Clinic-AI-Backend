@@ -1317,14 +1317,25 @@ class OpenAIQuestionService(QuestionService):
 
         # Section configuration from doctor preferences (pre_visit_config)
         raw_sections = (prefs or {}).get("pre_visit_config") or []
-        # Default: all sections enabled when no config present
-        default_section_state = {
-            "chief_complaint": True,
-            "hpi": True,
-            "history": True,
-            "review_of_systems": True,
-            "current_medication": True,
-        }
+        # Default behavior:
+        # - If NO config present at all -> all sections enabled (fail-open, legacy behavior).
+        # - If ANY config present       -> sections are opt-in and must be explicitly enabled.
+        if raw_sections:
+            default_section_state = {
+                "chief_complaint": False,
+                "hpi": False,
+                "history": False,
+                "review_of_systems": False,
+                "current_medication": False,
+            }
+        else:
+            default_section_state = {
+                "chief_complaint": True,
+                "hpi": True,
+                "history": True,
+                "review_of_systems": True,
+                "current_medication": True,
+            }
         enabled_sections = default_section_state.copy()
         try:
             for sec in raw_sections:
@@ -1356,6 +1367,52 @@ class OpenAIQuestionService(QuestionService):
                 headings_lines_es.append("Medicación Actual:")
             headings_text_es = "\n".join(headings_lines_es) + ("\n\n" if headings_lines_es else "\n\n")
 
+            # Dynamic example block based on enabled sections
+            example_lines_es: list[str] = []
+            if enable_cc:
+                example_lines_es.append("Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.")
+            if enable_hpi:
+                example_lines_es.append(
+                    "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana "
+                    "y empeoran durante el día, llegando hasta 8/10 en los últimos 3 días."
+                )
+            if enable_history:
+                example_lines_es.append(
+                    "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador."
+                )
+            if enable_meds:
+                example_lines_es.append(
+                    "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad."
+                )
+            example_block_es = "\n".join(example_lines_es) + ("\n\n" if example_lines_es else "\n\n")
+
+            # Dynamic guidelines text based on enabled sections
+            guidelines_es_lines: list[str] = []
+            if enable_cc:
+                guidelines_es_lines.append(
+                    "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible."
+                )
+            if enable_hpi:
+                guidelines_es_lines.append(
+                    "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa."
+                )
+            if enable_history:
+                guidelines_es_lines.append(
+                    "- Historia: Una línea combinando elementos médicos, quirúrgicos, familiares y de estilo de vida "
+                    "(solo si 'Historia' está en los encabezados)."
+                )
+            if enable_ros:
+                guidelines_es_lines.append(
+                    "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos por sistemas "
+                    "(solo si 'Revisión de Sistemas' está en los encabezados)."
+                )
+            if enable_meds:
+                guidelines_es_lines.append(
+                    "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el "
+                    "paciente o mención de imágenes de medicamentos (solo si 'Medicación Actual' está en los encabezados)."
+                )
+            guidelines_text_es = "\n".join(guidelines_es_lines) + ("\n\n" if guidelines_es_lines else "\n\n")
+
             prompt = (
                 "Rol y Tarea\n"
                 "Eres un Asistente de Admisión Clínica.\n"
@@ -1381,23 +1438,10 @@ class OpenAIQuestionService(QuestionService):
                 "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos reales de las respuestas del paciente)\n"
                 f"{headings_text_es}"
                 "Pautas de Contenido por Sección (aplican solo a los encabezados listados arriba)\n"
-                "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible.\n"
-                "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa.\n"
-                "- Historia: Una línea combinando elementos médicos, quirúrgicos, familiares y de estilo de vida (solo si 'Historia' está en los encabezados).\n"
-                "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos por sistemas (solo si 'Revisión de Sistemas' está en los encabezados).\n"
-                "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente o mención de imágenes de medicamentos (solo si 'Medicación Actual' está en los encabezados).\n\n"
+                f"{guidelines_text_es}"
                 "Ejemplo de Formato\n"
                 "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
-                "Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.\n"
-                "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana y empeoran "
-                "durante el día, llegando hasta 8/10 en los últimos 3 días. El dolor es sobre ambas sienes y se siente "
-                "diferente de migrañas previas; la fatiga es prominente y se niega náusea. Los episodios se agravan por "
-                "estrés y más tarde en el día, con alivio mínimo de analgésicos de venta libre y algo de alivio usando "
-                "compresas frías.\n"
-                "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador, "
-                "alcohol ocasional, trabajo de alto estrés.\n"
-                "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad; alergias incluidas "
-                "solo si el paciente las declaró explícitamente.\n\n"
+                f"{example_block_es}"
                 f"{f'Imágenes de Medicamentos: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Respuestas de Admisión:\n{self._format_intake_answers(intake_answers)}"
             )
@@ -1415,6 +1459,52 @@ class OpenAIQuestionService(QuestionService):
             if enable_meds:
                 headings_lines.append("Current Medication:")
             headings_text = "\n".join(headings_lines) + ("\n\n" if headings_lines else "\n\n")
+
+            # Dynamic example block based on enabled sections
+            example_lines: list[str] = []
+            if enable_cc:
+                example_lines.append("Chief Complaint: Patient reports severe headache for 3 days.")
+            if enable_hpi:
+                example_lines.append(
+                    "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through "
+                    "the day, reaching up to 8/10 over the last 3 days."
+                )
+            if enable_history:
+                example_lines.append(
+                    "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker."
+                )
+            if enable_meds:
+                example_lines.append(
+                    "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if "
+                    "the patient explicitly stated them."
+                )
+            example_block = "\n".join(example_lines) + ("\n\n" if example_lines else "\n\n")
+
+            # Dynamic guidelines text based on enabled sections
+            guidelines_lines: list[str] = []
+            if enable_cc:
+                guidelines_lines.append(
+                    "- Chief Complaint: One line in the patient's own words if available."
+                )
+            if enable_hpi:
+                guidelines_lines.append(
+                    "- HPI: ONE readable paragraph weaving OLDCARTS into prose (only if HPI is listed)."
+                )
+            if enable_history:
+                guidelines_lines.append(
+                    "- History: One line combining medical/surgical/family/lifestyle history (only if History is listed)."
+                )
+            if enable_ros:
+                guidelines_lines.append(
+                    "- Review of Systems: One narrative line summarizing system-based positives/negatives "
+                    "(only if Review of Systems is listed)."
+                )
+            if enable_meds:
+                guidelines_lines.append(
+                    "- Current Medication: One narrative line with meds/supplements actually stated by the patient or "
+                    "mention of medication images (only if Current Medication is listed)."
+                )
+            guidelines_text = "\n".join(guidelines_lines) + ("\n\n" if guidelines_lines else "\n\n")
 
             prompt = (
                 "Role & Task\n"
@@ -1440,25 +1530,10 @@ class OpenAIQuestionService(QuestionService):
                 "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
                 f"{headings_text}"
                 "Content Guidelines per Section (apply only to the headings listed above)\n"
-                "- Chief Complaint: One line in the patient's own words if available.\n"
-                "- HPI: ONE readable paragraph weaving OLDCARTS into prose (only if HPI is listed).\n"
-                "- History: One line combining medical/surgical/family/lifestyle history (only if History is listed).\n"
-                "- Review of Systems: One narrative line summarizing system-based positives/negatives (only if Review of Systems is listed).\n"
-                "- Current Medication: One narrative line with meds/supplements actually stated by the patient or mention of "
-                "medication images (only if Current Medication is listed).\n\n"
+                f"{guidelines_text}"
                 "Example Format\n"
                 "(Structure and tone only—content will differ; each section on a single line.)\n"
-                "Chief Complaint: Patient reports severe headache for 3 days.\n"
-                "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through the "
-                "day, reaching up to 8/10 over the last 3 days. Pain is over both temples and feels different from prior "
-                "migraines; fatigue is prominent and nausea is denied. Episodes are aggravated by stress and later in the "
-                "day, with minimal relief from over-the-counter analgesics and some relief using cold compresses. No "
-                "radiation is reported, evenings are typically worse, and there have been no recent changes in medications "
-                "or lifestyle.\n"
-                "History: Medical: hypertension; Surgical: cholecystectomy five years ago; Lifestyle: non-smoker, occasional "
-                "alcohol, high-stress job.\n"
-                "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if the "
-                "patient explicitly stated them.\n\n"
+                f"{example_block}"
                 f"{f'Medication Images: {medication_images_info}' if medication_images_info else ''}\n\n"
                 f"Intake Responses:\n{self._format_intake_answers(intake_answers)}"
             )
@@ -1490,6 +1565,17 @@ class OpenAIQuestionService(QuestionService):
             )
             response_text = (resp.choices[0].message.content or "").strip()
             cleaned = self._clean_summary_markdown(response_text)
+
+            # Post-process to hard-enforce disabled sections (History, Current Medication, etc.)
+            cleaned = self._strip_disabled_sections(
+                cleaned,
+                lang=lang,
+                enable_cc=enable_cc,
+                enable_hpi=enable_hpi,
+                enable_history=enable_history,
+                enable_ros=enable_ros,
+                enable_meds=enable_meds,
+            )
 
             return {
                 "summary": cleaned,
@@ -2028,3 +2114,55 @@ Responses to analyze:
 
         flush_section()
         return "\n".join(cleaned)
+
+    def _strip_disabled_sections(
+        self,
+        summary: str,
+        lang: str,
+        enable_cc: bool,
+        enable_hpi: bool,
+        enable_history: bool,
+        enable_ros: bool,
+        enable_meds: bool,
+    ) -> str:
+        """
+        Final safety net: remove any section headings that are disabled in doctor preferences.
+        This protects against the LLM occasionally emitting a disallowed section.
+        """
+        if not summary:
+            return summary
+
+        is_spanish = self._normalize_language(lang) == "sp"
+        lines = summary.splitlines()
+        out_lines: List[str] = []
+
+        for line in lines:
+            stripped = line.lstrip()
+            # English headings
+            if not is_spanish:
+                if not enable_cc and stripped.startswith("Chief Complaint:"):
+                    continue
+                if not enable_hpi and stripped.startswith("HPI:"):
+                    continue
+                if not enable_history and stripped.startswith("History:"):
+                    continue
+                if not enable_ros and stripped.startswith("Review of Systems:"):
+                    continue
+                if not enable_meds and stripped.startswith("Current Medication:"):
+                    continue
+            else:
+                # Spanish headings
+                if not enable_cc and stripped.startswith("Motivo de Consulta:"):
+                    continue
+                if not enable_hpi and stripped.startswith("HPI:"):
+                    continue
+                if not enable_history and stripped.startswith("Historia:"):
+                    continue
+                if not enable_ros and stripped.startswith("Revisión de Sistemas:"):
+                    continue
+                if not enable_meds and stripped.startswith("Medicación Actual:"):
+                    continue
+
+            out_lines.append(line)
+
+        return "\n".join(out_lines)

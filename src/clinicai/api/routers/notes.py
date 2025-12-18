@@ -377,10 +377,12 @@ async def transcribe_audio(
             )
             print(f"✅ Audio file saved to database: {audio_file_record.audio_id} (repo_call={repo_call_duration:.3f}s, total={blob_upload_duration:.3f}s)")
 
-            # Queue transcription job (sets status to 'queued', not 'processing')
-            # The worker will atomically claim it and set status to 'processing'
-            enqueued_at = datetime.utcnow()
-            visit.queue_transcription(None, enqueued_at=enqueued_at)  # No file path needed
+            # ---------------------------
+            # Phase 1: mark enqueue pending
+            # ---------------------------
+            requested_at = datetime.utcnow()
+            visit.mark_transcription_enqueue_pending(audio_file_path=None, requested_at=requested_at)
+
             # Store normalization metadata and duration
             if visit.transcription_session:
                 visit.transcription_session.normalized_audio = normalized_audio
@@ -389,44 +391,98 @@ async def transcribe_audio(
                 visit.transcription_session.file_content_type = final_content_type
                 if audio_duration_seconds is not None:
                     visit.transcription_session.audio_duration_seconds = audio_duration_seconds
+
             await visit_repo.save(visit)
             logger.info(
-                f"Started transcription session for visit {visit_id}, enqueued_at={enqueued_at.isoformat()}, "
+                f"[Transcribe] Enqueue pending for visit {visit_id}, "
+                f"requested_at={requested_at.isoformat()}, "
                 f"normalized_audio={normalized_audio}, file_content_type={final_content_type}, "
                 f"audio_duration_seconds={audio_duration_seconds}"
             )
-            
-            # Enqueue transcription job to Azure Queue
+
+            # Validate audio reference BEFORE enqueue
+            if not audio_file_record or not getattr(audio_file_record, "audio_id", None):
+                error_msg = "missing_audio_reference"
+                visit.mark_transcription_enqueue_failed(error_msg)
+                await visit_repo.save(visit)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "QUEUE_ERROR",
+                        "message": "Failed to queue transcription: missing audio reference",
+                        "details": {"reason": error_msg},
+                    },
+                )
+
+            # ---------------------------
+            # Phase 2: enqueue with retry/backoff
+            # ---------------------------
             if not QUEUE_SERVICE_AVAILABLE:
+                visit.mark_transcription_enqueue_failed("QUEUE_SERVICE_UNAVAILABLE")
+                await visit_repo.save(visit)
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={
                         "error": "QUEUE_SERVICE_UNAVAILABLE",
                         "message": "Azure Queue Storage service is not available. Please install azure-storage-queue package.",
-                        "details": {}
-                    }
+                        "details": {},
+                    },
                 )
-            
+
             queue_service = get_azure_queue_service()
             # Note: Queue existence is ensured at startup, not per request
-            
-            # Get request_id for log correlation (if available)
+
             request_id = getattr(request.state, "request_id", None)
-            
-            message_id = await queue_service.enqueue_transcription_job(
-                patient_id=internal_patient_id,
-                visit_id=visit_id,
-                audio_file_id=audio_file_record.audio_id,
-                language=language,
-                retry_count=0,
-                delay_seconds=0,
-                request_id=request_id
-            )
-            
+
+            backoff_schedule = [0.5, 2.0, 5.0]
+            last_error: Optional[Exception] = None
+            message_id: Optional[str] = None
+
+            for attempt, delay in enumerate(backoff_schedule, start=1):
+                try:
+                    message_id = await queue_service.enqueue_transcription_job(
+                        patient_id=internal_patient_id,
+                        visit_id=visit_id,
+                        audio_file_id=audio_file_record.audio_id,
+                        language=language,
+                        retry_count=attempt - 1,
+                        delay_seconds=0,
+                        request_id=request_id,
+                    )
+                    break
+                except Exception as e:  # noqa: PERF203
+                    last_error = e
+                    logger.error(
+                        f"[Transcribe] enqueue_transcription_job attempt {attempt} failed "
+                        f"for visit={visit_id}, audio_file_id={audio_file_record.audio_id}: {e}",
+                        exc_info=True,
+                    )
+                    if attempt < len(backoff_schedule):
+                        await asyncio.sleep(delay)
+
+            if not message_id:
+                # All attempts failed
+                err_str = str(last_error) if last_error else "unknown_error"
+                visit.mark_transcription_enqueue_failed(err_str)
+                await visit_repo.save(visit)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "QUEUE_ERROR",
+                        "message": f"Failed to queue transcription: {err_str}",
+                        "details": {},
+                    },
+                )
+
+            # Mark enqueued only AFTER queue send success
+            enqueued_at = datetime.utcnow()
+            visit.mark_transcription_enqueued(message_id=message_id, enqueued_at=enqueued_at)
+            await visit_repo.save(visit)
+
             total_duration = time.time() - upload_start_time
             logger.info(
-                f"Transcription job enqueued: message_id={message_id}, "
-                f"total_request_duration={total_duration:.2f}s, file_size={file_size} bytes"
+                f"[Transcribe] Transcription job enqueued: message_id={message_id}, "
+                f"visit={visit_id}, total_request_duration={total_duration:.2f}s, file_size={file_size} bytes"
             )
             print(f"✅ Transcription job enqueued: message_id={message_id}")
             

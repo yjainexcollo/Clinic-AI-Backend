@@ -131,7 +131,7 @@ class TranscriptionWorker:
                 except Exception:
                     pass  # Best effort cleanup
                 return
-            
+
             # Check if already completed - skip and delete message
             if visit.transcription_session and visit.transcription_session.transcription_status == "completed":
                 logger.info(f"Transcription already completed for visit {visit_id}, skipping duplicate job {message_id}")
@@ -509,11 +509,11 @@ class TranscriptionWorker:
                 
                 # P0-1: Only delete message if DB save succeeded
                 if db_save_success:
-                try:
-                    await self.queue_service.delete_message(message_id, latest_pop_receipt)
+                    try:
+                        await self.queue_service.delete_message(message_id, latest_pop_receipt)
                         logger.info(f"✅ ACK_AFTER_DB_SAVE_OK (permanent error): visit={visit_id}, message_id={message_id}")
-                except Exception as delete_error:
-                    logger.error(f"Failed to delete message after permanent error: {delete_error}", exc_info=True)
+                    except Exception as delete_error:
+                        logger.error(f"Failed to delete message after permanent error: {delete_error}", exc_info=True)
                 else:
                     logger.error(
                         f"❌ ACK_SKIPPED_DB_SAVE_FAILED (permanent error): visit={visit_id}, message_id={message_id}. "
@@ -649,6 +649,124 @@ class TranscriptionWorker:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp file: {cleanup_error}")
     
+    async def _handle_poison_job(self, job: dict) -> None:
+        """
+        Handle a poison message (max dequeue count exceeded) in a DB-safe way.
+
+        - Marks the corresponding visit's transcription as failed.
+        - Only moves the message to the poison queue after DB save succeeds.
+        - If DB save fails, the message remains in the main queue for manual / later retry.
+        """
+        message_id: str = job.get("message_id")
+        pop_receipt: str = job.get("pop_receipt")
+        job_data: dict = job.get("data") or {}
+        retry_count: int = int(job.get("retry_count", 0))
+        poison_reason: str = job.get("poison_reason", "POISON_MESSAGE")
+        raw_content: str = job.get("raw_content", "")
+
+        patient_id = job_data.get("patient_id")
+        visit_id = job_data.get("visit_id")
+
+        if not patient_id or not visit_id:
+            logger.error(
+                "⚠️  POISON_MESSAGE_WITHOUT_IDS: message_id=%s, reason=%s, retry_count=%s",
+                message_id,
+                poison_reason,
+                retry_count,
+            )
+            # We cannot update DB, but we can still move to poison queue to avoid infinite retries
+            try:
+                await self.queue_service.move_to_poison_message(
+                    message_id=message_id,
+                    pop_receipt=pop_receipt,
+                    content=raw_content,
+                    reason=f"{poison_reason} (missing patient_id/visit_id)",
+                )
+                logger.warning(
+                    "POISON_MARKED_NO_DB_UPDATE_MOVED_TO_POISON: message_id=%s, reason=%s",
+                    message_id,
+                    poison_reason,
+                )
+            except Exception as e:  # noqa: PERF203
+                logger.error(
+                    "POISON_MOVE_TO_POISON_FAILED_NO_IDS: message_id=%s, error=%s",
+                    message_id,
+                    e,
+                    exc_info=True,
+                )
+            return
+
+        error_info = (
+            f"{poison_reason}; retry_count={retry_count}; "
+            f"max_dequeue={self.settings.azure_queue.max_dequeue_count}; message_id={message_id}"
+        )
+
+        db_save_success = False
+        try:
+            visit = await self.visit_repo.find_by_patient_and_visit_id(
+                patient_id, VisitId(visit_id)
+            )
+            if not visit:
+                logger.warning(
+                    "POISON_VISIT_NOT_FOUND: patient_id=%s visit_id=%s message_id=%s",
+                    patient_id,
+                    visit_id,
+                    message_id,
+                )
+            else:
+                visit.fail_transcription(error_message=error_info)
+                await self.visit_repo.save(visit)
+                db_save_success = True
+                logger.info(
+                    "POISON_MARKED_FAILED_DB_OK: patient_id=%s visit_id=%s message_id=%s retry_count=%s",
+                    patient_id,
+                    visit_id,
+                    message_id,
+                    retry_count,
+                )
+        except Exception as e:  # noqa: PERF203
+            logger.error(
+                "POISON_DB_SAVE_FAILED: patient_id=%s visit_id=%s message_id=%s error=%s",
+                patient_id,
+                visit_id,
+                message_id,
+                e,
+                exc_info=True,
+            )
+
+        if db_save_success:
+            try:
+                await self.queue_service.move_to_poison_message(
+                    message_id=message_id,
+                    pop_receipt=pop_receipt,
+                    content=raw_content,
+                    reason=error_info,
+                )
+                logger.info(
+                    "POISON_MARKED_FAILED_AND_MOVED_TO_POISON: patient_id=%s visit_id=%s message_id=%s",
+                    patient_id,
+                    visit_id,
+                    message_id,
+                )
+            except Exception as e:  # noqa: PERF203
+                logger.error(
+                    "POISON_MOVE_TO_POISON_FAILED_AFTER_DB_OK: patient_id=%s visit_id=%s message_id=%s error=%s",
+                    patient_id,
+                    visit_id,
+                    message_id,
+                    e,
+                    exc_info=True,
+                )
+        else:
+            # Do not delete/move the message; leave it for later inspection or retry.
+            logger.error(
+                "POISON_DB_SAVE_FAILED_ACK_SKIPPED: patient_id=%s visit_id=%s message_id=%s retry_count=%s",
+                patient_id,
+                visit_id,
+                message_id,
+                retry_count,
+            )
+
     async def run(self):
         """Main worker loop with bounded concurrency and batch dequeue."""
         # Worker startup guard: check if already running
@@ -692,13 +810,17 @@ class TranscriptionWorker:
             if task:
                 active_tasks.add(task)
                 task.add_done_callback(active_tasks.discard)
-            
+
             async with semaphore:
-                await self.process_job(
-                    job["data"],
-                    job["message_id"],
-                    job["pop_receipt"],
-                )
+                # Poison messages are handled separately to ensure DB is updated before moving to poison queue
+                if job.get("poison"):
+                    await self._handle_poison_job(job)
+                else:
+                    await self.process_job(
+                        job["data"],
+                        job["message_id"],
+                        job["pop_receipt"],
+                    )
         
         # Graceful shutdown handler
         shutdown_event = asyncio.Event()
@@ -723,21 +845,21 @@ class TranscriptionWorker:
                 # Poll queue for messages (batch dequeue if slots available)
                 if batch_size > 0:
                     jobs = await self.queue_service.dequeue_transcription_job(max_messages=batch_size)
-                poll_count += 1
-                
+                    poll_count += 1
+                    
                     if jobs:
                         # Handle single job (backward compatible) or batch
                         job_list = jobs if isinstance(jobs, list) else [jobs]
                         
                         for job in job_list:
-                if job:
-                    # Process job in background with concurrency limit
+                            if job:
+                                # Process job in background with concurrency limit
                                 task = asyncio.create_task(handle_job(job))
                                 active_tasks.add(task)
                                 task.add_done_callback(active_tasks.discard)
-                else:
-                    # No messages, wait before next poll
-                    await asyncio.sleep(self.poll_interval)
+                    else:
+                        # No messages, wait before next poll
+                        await asyncio.sleep(self.poll_interval)
                 else:
                     # No free slots, wait a bit before checking again
                     await asyncio.sleep(1)

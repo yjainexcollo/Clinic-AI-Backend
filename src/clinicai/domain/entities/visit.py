@@ -173,6 +173,13 @@ class TranscriptionSession:
     original_content_type: Optional[str] = None  # Original content type before normalization
     normalized_format: Optional[str] = None  # Format after normalization (e.g., wav_16khz_mono_pcm)
     file_content_type: Optional[str] = None  # Final content type used for transcription
+    # Enqueue tracking (two-phase enqueue state machine)
+    enqueue_state: Optional[str] = None  # "pending" | "queued" | "failed"
+    enqueue_attempts: Optional[int] = None
+    enqueue_last_error: Optional[str] = None
+    enqueue_requested_at: Optional[datetime] = None
+    enqueue_failed_at: Optional[datetime] = None
+    queue_message_id: Optional[str] = None
 
 
 @dataclass
@@ -475,6 +482,94 @@ class Visit:
             self.status = "transcription"
         else:
             self.status = "transcription"
+        self.updated_at = datetime.utcnow()
+
+    # ------------------------------------------------------------------
+    # Two-phase enqueue helpers (new, preferred API)
+    # ------------------------------------------------------------------
+
+    def _ensure_transcription_session(self) -> None:
+        """Ensure transcription_session exists (backward-safe)."""
+        if not self.transcription_session:
+            self.transcription_session = TranscriptionSession()
+
+    def mark_transcription_enqueue_pending(
+        self,
+        audio_file_path: Optional[str] = None,
+        requested_at: Optional[datetime] = None,
+    ) -> None:
+        """
+        Phase 1: mark that enqueue has been requested, before calling the queue.
+
+        - Does NOT set transcription_status="queued".
+        - Increments enqueue_attempts.
+        - Resets worker/dequeued/transcription_id/started_at for safety.
+        """
+        now = requested_at or datetime.utcnow()
+        self._ensure_transcription_session()
+        ts = self.transcription_session
+
+        if audio_file_path is not None:
+            ts.audio_file_path = audio_file_path
+
+        # Initialize attempts if None
+        ts.enqueue_attempts = (ts.enqueue_attempts or 0) + 1
+        ts.enqueue_state = "pending"
+        ts.enqueue_requested_at = now
+        ts.enqueue_last_error = None
+        ts.enqueue_failed_at = None
+
+        # Reset claim/processing-specific fields (idempotent safety)
+        ts.dequeued_at = None
+        ts.worker_id = None
+        ts.transcription_id = None
+        ts.error_message = None
+        ts.started_at = None
+        # Do NOT touch transcription_status here; it will be set to "queued" only on success
+
+        self.updated_at = datetime.utcnow()
+
+    def mark_transcription_enqueued(
+        self,
+        message_id: str,
+        enqueued_at: Optional[datetime] = None,
+    ) -> None:
+        """
+        Phase 2 success: queue message was enqueued successfully.
+
+        - Sets enqueue_state="queued"
+        - Sets queue_message_id
+        - Sets transcription_status="queued"
+        - Updates enqueued_at timestamp
+        """
+        now = enqueued_at or datetime.utcnow()
+        self._ensure_transcription_session()
+        ts = self.transcription_session
+
+        ts.enqueue_state = "queued"
+        ts.queue_message_id = message_id
+        ts.enqueued_at = now
+        ts.transcription_status = "queued"
+        ts.error_message = None
+
+        self.updated_at = datetime.utcnow()
+
+    def mark_transcription_enqueue_failed(self, error: str) -> None:
+        """
+        Phase 2 failure: enqueue failed after retries.
+
+        - Sets enqueue_state="failed"
+        - Records enqueue_failed_at + enqueue_last_error
+        - Does NOT set transcription_status="queued"
+        """
+        self._ensure_transcription_session()
+        ts = self.transcription_session
+
+        ts.enqueue_state = "failed"
+        ts.enqueue_failed_at = datetime.utcnow()
+        ts.enqueue_last_error = error
+
+        # Preserve previous transcription_status; explicitly avoid setting it to "queued"
         self.updated_at = datetime.utcnow()
 
     def start_transcription(self, audio_file_path: str, enqueued_at: Optional[datetime] = None) -> None:
