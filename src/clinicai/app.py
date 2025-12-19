@@ -761,6 +761,8 @@ async def root():
             # Step-03 endpoints
             "transcribe_audio": "POST /notes/transcribe",
             "generate_soap": "POST /notes/soap/generate",
+            # Transcript/dialogue endpoints
+            # Note: actual implementation uses /dialogue route
             "get_transcript": "GET /notes/{patient_id}/visits/{visit_id}/dialogue",
             "get_soap": "GET /notes/{patient_id}/visits/{visit_id}/soap",
             # Vitals endpoints

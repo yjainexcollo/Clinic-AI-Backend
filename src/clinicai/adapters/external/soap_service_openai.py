@@ -123,6 +123,7 @@ class OpenAISoapService(SoapService):
         vitals: Optional[Dict[str, Any]] = None,
         language: str = "en",
         doctor_id: Optional[str] = None,
+        template: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Generate SOAP note using OpenAI GPT-4."""
         # Normalize language code
@@ -211,6 +212,27 @@ class OpenAISoapService(SoapService):
                     pass
         
         context = "\n\n".join(context_parts) if context_parts else "No additional context available"
+
+        # Optional: template instructions (per-visit, not global)
+        template_instructions = ""
+        if template:
+            try:
+                soap_content = (template.get("soap_content") or {}) if isinstance(template, dict) else {}
+                template_instructions_lines: List[str] = [
+                    "The doctor has provided a custom SOAP template for this visit.",
+                    "Follow the structure, tone, and ordering indicated by this template.",
+                    "Replace any placeholders like [patient_name], [blood_pressure], etc. with actual values from the transcript and context.",
+                    "If any section is missing in the template, use the default structure for that section.",
+                    "",
+                    f"Subjective Template: {soap_content.get('subjective', '')}",
+                    f"Objective Template: {soap_content.get('objective', '')}",
+                    f"Assessment Template: {soap_content.get('assessment', '')}",
+                    f"Plan Template: {soap_content.get('plan', '')}",
+                ]
+                template_instructions = "\n".join(template_instructions_lines)
+            except Exception:
+                # Fail-open: ignore bad template structure, fall back to defaults
+                template_instructions = ""
         
         # Build preference snippet
         pref_snippet = (
@@ -224,6 +246,8 @@ class OpenAISoapService(SoapService):
         if lang == "sp":
             prompt = f"""
 Eres un escribano clínico que genera notas SOAP a partir de consultas médico-paciente.
+
+{template_instructions if template_instructions else ""}
 
 CONTEXTO:
 {context}
@@ -281,6 +305,8 @@ Genera la nota SOAP ahora:
         else:
             prompt = f"""
 You are a clinical scribe generating SOAP notes from doctor-patient consultations. 
+
+{template_instructions if template_instructions else ""}
 
 CONTEXT:
 {context}

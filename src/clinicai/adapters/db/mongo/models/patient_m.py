@@ -156,6 +156,8 @@ class VisitMongo(Document):
     # Step 3: Audio Transcription & SOAP Generation
     transcription_session: Optional[TranscriptionSessionMongo] = None
     soap_note: Optional[SoapNoteMongo] = None
+    # Optional per-visit SOAP template (simple dict, validated at API layer)
+    soap_template: Optional[dict] = None
     vitals: Optional[dict] = None
     
     # Step 4: Post-Visit Summary (Patient Sharing)

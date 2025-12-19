@@ -35,12 +35,61 @@ class PhysicalExam(BaseModel):
     gait: Optional[str] = Field(None, description="Gait assessment")
 
 
+class SoapTemplateSchema(BaseModel):
+    """Optional per-visit SOAP template schema used to guide generation.
+
+    This is not a global template library – it is sent (and optionally stored)
+    per visit/soap generation. Frontend can mirror the fields from the doctor
+    template UI (e.g., screenshot form).
+    """
+
+    template_name: Optional[str] = Field(
+        None, description="Human-friendly template name (e.g., 'General Template')"
+    )
+    category: Optional[str] = Field(
+        None, description="Template category (e.g., 'General / Primary Care')"
+    )
+    speciality: Optional[str] = Field(
+        None, description="Clinical speciality for this template (e.g., 'Primary Care')"
+    )
+    description: Optional[str] = Field(
+        None, description="Optional description or usage notes for this template"
+    )
+
+    # Core SOAP text templates – can include placeholders like [patient_name], [blood_pressure], etc.
+    soap_content: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-section SOAP templates. Keys typically include "
+            "'subjective', 'objective', 'assessment', 'plan'."
+        ),
+    )
+
+    tags: Optional[List[str]] = Field(
+        None, description="Free-form tags/classifications (e.g., ['Test', 'Follow-up'])"
+    )
+    appointment_types: Optional[List[str]] = Field(
+        None, description="Applicable appointment types for this template"
+    )
+
+    uploaded_at: Optional[datetime] = Field(
+        None, description="When this template was created on the client (optional)"
+    )
+
+
 class SOAPNoteRequest(BaseModel):
     """Request schema for SOAP note generation."""
     
     patient_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Patient ID (can be longer when encoded)")
     visit_id: str = Field(..., min_length=10, max_length=200, description="Opaque/encrypted Visit ID (can be longer when encoded)")
     transcript: Optional[str] = Field(None, description="Optional transcript text. If not provided, will use stored transcript from visit.")
+    template: Optional[SoapTemplateSchema] = Field(
+        None,
+        description=(
+            "Optional per-visit SOAP template. If provided, the generator will "
+            "follow this structure; if omitted, default behavior is used."
+        ),
+    )
 
 
 class SOAPNoteResponse(BaseModel):
