@@ -11,16 +11,17 @@ from clinicai.application.ports.services.question_service import QuestionService
 from clinicai.core.config import get_settings
 from clinicai.core.ai_factory import get_ai_client
 from clinicai.core.constants import (
-ALLOWED_TOPICS,
-TRAVEL_KEYWORDS,
-MENSTRUAL_KEYWORDS,
-HIGH_RISK_COMPLAINT_KEYWORDS,
-SIMILARITY_STOPWORDS,
+    ALLOWED_TOPICS,
+    TRAVEL_KEYWORDS,
+    MENSTRUAL_KEYWORDS,
+    HIGH_RISK_COMPLAINT_KEYWORDS,
+    SIMILARITY_STOPWORDS,
 )
 from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
     append_intake_agent_log,
     append_phase_call,
 )
+from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 logger = logging.getLogger("clinicai")
@@ -1197,7 +1198,7 @@ class OpenAIQuestionService(QuestionService):
         if asked_categories is not None:
             asked_categories.append(next_topic)
         # =============================================================================
-        # Determine deep diagnostic question number if applicable
+        # Determine deep diagvnostic question number if applicable
         deep_diag_num = None
         if step_number >= 10 and is_chronic:
             # Check if we have positive consent
@@ -1506,6 +1507,16 @@ class OpenAIQuestionService(QuestionService):
                 )
             guidelines_text = "\n".join(guidelines_lines) + ("\n\n" if guidelines_lines else "\n\n")
 
+            # Extra hard rule driven by doctor preferences:
+            # if the Current Medication section is disabled, the LLM must not generate it at all.
+            disabled_section_rules: list[str] = []
+            if not enable_meds:
+                disabled_section_rules.append(
+                    "- Do NOT include any 'Current Medication' section or mention medications anywhere in the summary "
+                    "when doctor preferences have this section disabled.\n"
+                )
+            disabled_section_rules_text = "".join(disabled_section_rules)
+
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
@@ -1526,7 +1537,8 @@ class OpenAIQuestionService(QuestionService):
                 "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings "
                 "(previsit is patient-reported only).\n"
                 "- Normalize obvious medical mispronunciations to correct terms (e.g., \"diabities\" -> \"diabetes\") "
-                "without adding new information.\n\n"
+                 "without adding new information.\n"
+                 f"{disabled_section_rules_text}\n"
                 "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
                 f"{headings_text}"
                 "Content Guidelines per Section (apply only to the headings listed above)\n"
