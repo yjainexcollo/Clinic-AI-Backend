@@ -223,6 +223,8 @@ class Visit:
     # Step 3: Audio Transcription & SOAP Generation
     transcription_session: Optional[TranscriptionSession] = None
     soap_note: Optional[SoapNote] = None
+    # Optional per-visit SOAP template used to guide generation (not a global default).
+    soap_template: Optional[Dict[str, Any]] = None
     # Objective Vitals (optional)
     vitals: Optional[Dict[str, Any]] = None
     # Step 4: Post-Visit Summary for patient sharing (stored JSON)
@@ -754,6 +756,23 @@ class Visit:
     def get_vitals(self) -> Optional[Dict[str, Any]]:
         """Get stored objective vitals, if any."""
         return self.vitals
+
+    # -------------------------------------------------------------------------
+    # SOAP Template helpers (per-visit, optional)
+    # -------------------------------------------------------------------------
+
+    def store_soap_template(self, template: Optional[Dict[str, Any]]) -> None:
+        """Store a SOAP template for this visit (for auditing or reuse within visit).
+
+        This does not make the template a global default; it is scoped to this visit.
+        Passing None will clear the template.
+        """
+        self.soap_template = template or None
+        self.updated_at = datetime.utcnow()
+
+    def get_soap_template(self) -> Optional[Dict[str, Any]]:
+        """Return the stored SOAP template for this visit, if any."""
+        return self.soap_template
 
     def get_transcript(self) -> Optional[str]:
         """Get the transcript if available."""

@@ -242,6 +242,9 @@ class SoapGenerationRequest:
     patient_id: str
     visit_id: str
     transcript: Optional[str] = None  # If not provided, will use stored transcript
+    # Optional per-visit SOAP template guiding this generation only.
+    # When None, generator falls back to default behavior.
+    template: Optional[Dict[str, Any]] = None
 
 
 @dataclass
