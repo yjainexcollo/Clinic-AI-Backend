@@ -14,9 +14,6 @@ from ..schemas.doctor_preferences import (
 from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/doctor")
-
-
-DEFAULT_DOCTOR_ID = "D123"
 DEFAULT_GLOBAL_CATEGORIES = [
     "duration", "triggers", "pain", "temporal", "travel",
     "allergies", "medications", "hpi", "family", "lifestyle",
@@ -120,10 +117,17 @@ def _build_response(doc: DoctorPreferencesMongo, settings) -> DoctorPreferencesR
 )
 async def get_doctor_preferences(
     request: Request,
-    doctor_id: str = DEFAULT_DOCTOR_ID,
 ):
     """Return latest preferences for the given doctor; independent of intake flow."""
     try:
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         doc = await _get_or_default(doctor_id)
         if not doc:
             return ok(request, data=_defaults_for(doctor_id), message="Doctor preferences loaded")
@@ -152,7 +156,14 @@ async def get_doctor_preferences(
 async def set_doctor_preferences(request: Request, payload: UpsertDoctorPreferencesRequest):
     """Merge and persist doctor preferences; independent of intake flow."""
     try:
-        doctor_id = payload.doctor_id or DEFAULT_DOCTOR_ID
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         existing = await _get_or_default(doctor_id)
         settings = get_settings()
 

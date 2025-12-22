@@ -16,6 +16,7 @@ from .core.config import get_settings
 from .domain.errors import DomainError
 from .core.hipaa_audit import get_audit_logger
 from .middleware.auth_middleware import AuthenticationMiddleware
+from .middleware.doctor_middleware import DoctorMiddleware
 from .middleware.hipaa_middleware import HIPAAAuditMiddleware
 from .middleware.performance_middleware import PerformanceMiddleware
 from clinicai.middleware.request_id_middleware import RequestIDMiddleware
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
                 AudioFileMongo,
                 LLMInteractionVisit,
             )
+            from .adapters.db.mongo.models.doctor_m import DoctorMongo
             from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
             from .adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
 
@@ -96,7 +98,17 @@ async def lifespan(app: FastAPI):
             db = client[db_name]
             await init_beanie(
                 database=db,
-                document_models=[PatientMongo, VisitMongo, MedicationImageMongo, DoctorPreferencesMongo, AudioFileMongo, BlobFileReference, PromptVersionMongo, LLMInteractionVisit],
+                document_models=[
+                    PatientMongo,
+                    VisitMongo,
+                    MedicationImageMongo,
+                    DoctorPreferencesMongo,
+                    AudioFileMongo,
+                    BlobFileReference,
+                    PromptVersionMongo,
+                    LLMInteractionVisit,
+                    DoctorMongo,
+                ],
             )
             msg = "✅ Database connection established"
             print(msg, flush=True)
@@ -496,7 +508,24 @@ def create_app() -> FastAPI:
             }
         }
         
-        # Apply security to all endpoints (except public ones which are already excluded by middleware)
+        # Add X-Doctor-ID as a reusable parameter component
+        if "parameters" not in openapi_schema["components"]:
+            openapi_schema["components"]["parameters"] = {}
+        
+        openapi_schema["components"]["parameters"]["X-Doctor-ID"] = {
+            "name": "X-Doctor-ID",
+            "in": "header",
+            "required": True,
+            "schema": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "example": "D123",
+                "description": "Doctor ID for multi-doctor isolation"
+            },
+            "description": "Doctor ID for multi-doctor data isolation. Must be alphanumeric with hyphens/underscores allowed. Examples: 'D123', 'DR_1', 'CLINIC_NORTH_DOC1'. This ID will be auto-created in the database if it doesn't exist."
+        }
+        
+        # Apply security to all endpoints AND add X-Doctor-ID parameter (except public ones)
         # Note: Public endpoints are already handled by middleware, but we mark protected paths as requiring auth
         # The middleware will still allow public paths through
         if "paths" in openapi_schema:
@@ -508,14 +537,36 @@ def create_app() -> FastAPI:
                 if path.startswith("/docs/") or path.startswith("/redoc/"):
                     continue
                 
-                # Add security requirement to all methods in this path
+                # Add security requirement AND X-Doctor-ID parameter to all methods
                 for method_name, method_info in methods.items():
-                    if isinstance(method_info, dict) and "security" not in method_info:
-                        # Allow either ApiKeyAuth or BearerAuth
-                        method_info["security"] = [
-                            {"ApiKeyAuth": []},
-                            {"BearerAuth": []}
-                        ]
+                    if isinstance(method_info, dict):
+                        # Add security requirement
+                        if "security" not in method_info:
+                            method_info["security"] = [
+                                {"ApiKeyAuth": []},
+                                {"BearerAuth": []}
+                            ]
+                        
+                        # Add X-Doctor-ID parameter to each endpoint
+                        if "parameters" not in method_info:
+                            method_info["parameters"] = []
+                        
+                        # Check if X-Doctor-ID parameter already exists in this endpoint
+                        has_doctor_param = False
+                        for param in method_info["parameters"]:
+                            if isinstance(param, dict):
+                                if param.get("name") == "X-Doctor-ID" or param.get("$ref") == "#/components/parameters/X-Doctor-ID":
+                                    has_doctor_param = True
+                                    break
+                            elif isinstance(param, str) and param == "#/components/parameters/X-Doctor-ID":
+                                has_doctor_param = True
+                                break
+                        
+                        # Add the parameter reference if it doesn't exist
+                        if not has_doctor_param:
+                            method_info["parameters"].append({
+                                "$ref": "#/components/parameters/X-Doctor-ID"
+                            })
         
         app.openapi_schema = openapi_schema
         return app.openapi_schema
@@ -563,6 +614,8 @@ def create_app() -> FastAPI:
     # Add authentication middleware FIRST (before HIPAA audit)
     # This ensures all PHI endpoints require authentication
     app.add_middleware(AuthenticationMiddleware)
+    # Add doctor middleware to bind doctor_id to request.state
+    app.add_middleware(DoctorMiddleware)
     
     # Add HIPAA audit middleware (runs after authentication)
     # This logs all PHI access with authenticated user IDs

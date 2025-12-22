@@ -28,7 +28,7 @@ class RegisterPatientUseCase:
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(self, request: RegisterPatientRequest) -> RegisterPatientResponse:
+    async def execute(self, request: RegisterPatientRequest, doctor_id: str) -> RegisterPatientResponse:
         """Execute the register patient use case."""
         # Enforce consent gating
         if not getattr(request, "consent", False):
@@ -38,16 +38,17 @@ class RegisterPatientUseCase:
 
         # Check if patient already exists (exact match)
         existing_patient = await self._patient_repository.find_by_name_and_mobile(
-            f"{request.first_name} {request.last_name}", request.mobile
+            f"{request.first_name} {request.last_name}", request.mobile, doctor_id
         )
         if existing_patient:
             # Start a new visit for the existing patient instead of raising duplicate
             visit_id = VisitId.generate()
             visit = Visit(
-                visit_id=visit_id, 
-                patient_id=existing_patient.patient_id.value, 
+                visit_id=visit_id,
+                patient_id=existing_patient.patient_id.value,
+                doctor_id=doctor_id,
                 symptom="",
-                recently_travelled=request.recently_travelled,  # Store travel history on visit (travel is visit-specific)
+                recently_travelled=request.recently_travelled,  # Store travel history on visit (visit-specific)
             )
             settings = get_settings()
             visit.intake_session.max_questions = settings.intake.max_questions
@@ -74,13 +75,14 @@ class RegisterPatientUseCase:
         patient_id = PatientId.generate(request.first_name, request.mobile)
 
         # Check for family members (mobile-only match) for analytics
-        family_members = await self._patient_repository.find_by_mobile(request.mobile)  # noqa: F841
+        family_members = await self._patient_repository.find_by_mobile(request.mobile, doctor_id)  # noqa: F841
         # Note: We don't prevent registration here, just log for analytics
         # The frontend should handle family member detection via resolve endpoint
 
         # Create patient entity
         patient = Patient(
             patient_id=patient_id,
+            doctor_id=doctor_id,
             name=f"{request.first_name} {request.last_name}",
             mobile=request.mobile,
             age=request.age,
@@ -94,8 +96,9 @@ class RegisterPatientUseCase:
 
         # Create visit entity with recently_travelled (travel is visit-specific, not lifetime patient attribute)
         visit = Visit(
-            visit_id=visit_id, 
-            patient_id=patient_id.value, 
+            visit_id=visit_id,
+            patient_id=patient_id.value,
+            doctor_id=doctor_id,
             symptom="",
             recently_travelled=request.recently_travelled,
         )

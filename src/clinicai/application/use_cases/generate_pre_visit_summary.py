@@ -28,7 +28,7 @@ class GeneratePreVisitSummaryUseCase:
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(self, request: PreVisitSummaryRequest) -> PreVisitSummaryResponse:
+    async def execute(self, request: PreVisitSummaryRequest, doctor_id: str) -> PreVisitSummaryResponse:
         """Execute the pre-visit summary generation use case."""
         try:
             # Store original request patient_id for image querying
@@ -44,7 +44,7 @@ class GeneratePreVisitSummaryUseCase:
                 )
                 raise PatientNotFoundError(request.patient_id) from e
             
-            patient = await self._patient_repository.find_by_id(patient_id)
+            patient = await self._patient_repository.find_by_id(patient_id, doctor_id)
             if not patient:
                 logger.warning(f"Patient not found: {request.patient_id[:50]}")
                 raise PatientNotFoundError(request.patient_id)
@@ -57,7 +57,7 @@ class GeneratePreVisitSummaryUseCase:
                 raise VisitNotFoundError(request.visit_id) from e
                 
             visit = await self._visit_repository.find_by_patient_and_visit_id(
-                request.patient_id, visit_id
+                request.patient_id, visit_id, doctor_id
             )
             if not visit:
                 logger.warning(f"Visit not found: visit_id={request.visit_id}, patient_id={request.patient_id[:50]}")
@@ -144,7 +144,7 @@ class GeneratePreVisitSummaryUseCase:
                     intake_answers,
                     language=patient.language,
                     medication_images_info=medication_images_info,
-                    doctor_id="D123",  # Temporary hardcoded doctor_id for preferences
+                    doctor_id=doctor_id,
                 )
             except Exception as ai_error:
                 logger.error(

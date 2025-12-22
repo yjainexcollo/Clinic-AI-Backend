@@ -41,10 +41,10 @@ class MongoPatientRepository(PatientRepository):
         # Return the domain entity
         return await self._mongo_to_domain(patient_mongo)
 
-    async def find_by_id(self, patient_id: PatientId) -> Optional[Patient]:
+    async def find_by_id(self, patient_id: PatientId, doctor_id: str) -> Optional[Patient]:
         """Find a patient by ID."""
         patient_mongo = await PatientMongo.find_one(
-            {"patient_id": patient_id.value}
+            {"patient_id": patient_id.value, "doctor_id": doctor_id}
         )
 
         if not patient_mongo:
@@ -53,11 +53,11 @@ class MongoPatientRepository(PatientRepository):
         return await self._mongo_to_domain(patient_mongo)
 
     async def find_by_name_and_mobile(
-        self, name: str, mobile: str
+        self, name: str, mobile: str, doctor_id: str
     ) -> Optional[Patient]:
         """Find a patient by name and mobile number using optimized indexes."""
         patient_mongo = await PatientMongo.find_one(
-            {"name": name, "mobile": mobile}
+            {"name": name, "mobile": mobile, "doctor_id": doctor_id}
         )
 
         if not patient_mongo:
@@ -65,17 +65,17 @@ class MongoPatientRepository(PatientRepository):
         
         return await self._mongo_to_domain(patient_mongo)
 
-    async def exists_by_id(self, patient_id: PatientId) -> bool:
+    async def exists_by_id(self, patient_id: PatientId, doctor_id: str) -> bool:
         """Check if a patient exists by ID."""
         count = await PatientMongo.find(
-            {"patient_id": patient_id.value}
+            {"patient_id": patient_id.value, "doctor_id": doctor_id}
         ).count()
 
         return count > 0
 
-    async def find_all(self, limit: int = 100, offset: int = 0) -> List[Patient]:
+    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Patient]:
         """Find all patients with pagination."""
-        patients_mongo = await PatientMongo.find().skip(offset).limit(limit).to_list()
+        patients_mongo = await PatientMongo.find({"doctor_id": doctor_id}).skip(offset).limit(limit).to_list()
 
         result = []
         for patient_mongo in patients_mongo:
@@ -83,10 +83,10 @@ class MongoPatientRepository(PatientRepository):
         
         return result
 
-    async def find_by_mobile(self, mobile: str) -> List[Patient]:
+    async def find_by_mobile(self, mobile: str, doctor_id: str) -> List[Patient]:
         """Find all patients with the same mobile number (family members)."""
         patients_mongo = await PatientMongo.find(
-            {"mobile": mobile}
+            {"mobile": mobile, "doctor_id": doctor_id}
         ).to_list()
 
         result = []
@@ -95,10 +95,10 @@ class MongoPatientRepository(PatientRepository):
         
         return result
 
-    async def delete(self, patient_id: PatientId) -> bool:
+    async def delete(self, patient_id: PatientId, doctor_id: str) -> bool:
         """Delete a patient by ID."""
         result = await PatientMongo.find_one(
-            {"patient_id": patient_id.value}
+            {"patient_id": patient_id.value, "doctor_id": doctor_id}
         ).delete()
 
         return result is not None
@@ -119,7 +119,7 @@ class MongoPatientRepository(PatientRepository):
         """Convert domain entity to MongoDB model."""
         # Check if patient already exists
         existing_patient = await PatientMongo.find_one(
-            {"patient_id": patient.patient_id.value}
+            {"patient_id": patient.patient_id.value, "doctor_id": patient.doctor_id}
         )
 
         if existing_patient:
@@ -142,6 +142,7 @@ class MongoPatientRepository(PatientRepository):
                 gender=patient.gender,
                 # recently_travelled removed - now stored on Visit
                 language=patient.language,
+                doctor_id=patient.doctor_id,
                 created_at=patient.created_at,
                 updated_at=patient.updated_at,
             )
@@ -150,6 +151,7 @@ class MongoPatientRepository(PatientRepository):
         """Convert MongoDB model to domain entity."""
         return Patient(
             patient_id=PatientId(patient_mongo.patient_id),
+            doctor_id=getattr(patient_mongo, "doctor_id", ""),
             name=patient_mongo.name,
             mobile=patient_mongo.mobile,
             age=patient_mongo.age,

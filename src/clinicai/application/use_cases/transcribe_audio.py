@@ -135,20 +135,20 @@ class TranscribeAudioUseCase:
             re.compile(r'\b([A-Z][a-z]{3,})\s+(?:prescribed|ordered|recommended|suggested)', re.IGNORECASE),
         ]
 
-    async def execute(self, request: AudioTranscriptionRequest) -> AudioTranscriptionResponse:
+    async def execute(self, request: AudioTranscriptionRequest, doctor_id: str) -> AudioTranscriptionResponse:
         """Execute the audio transcription use case."""
         LOGGER.info(f"TranscribeAudioUseCase.execute called for patient {request.patient_id}, visit {request.visit_id}")
         
         # Find patient
         patient_id = PatientId(request.patient_id)
-        patient = await self._patient_repository.find_by_id(patient_id)
+        patient = await self._patient_repository.find_by_id(patient_id, doctor_id)
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit
         visit_id = VisitId(request.visit_id)
         visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id
+            request.patient_id, visit_id, doctor_id
         )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
@@ -241,7 +241,8 @@ class TranscribeAudioUseCase:
                         await self._visit_repository.update_transcription_session_fields(
                             request.patient_id,
                             visit_id,
-                            fields_to_update
+                            doctor_id,
+                            fields_to_update,
                         )
                         LOGGER.debug(f"Persisted transcription session fields: {list(fields_to_update.keys())} for visit {request.visit_id}")
                 except Exception as e:
