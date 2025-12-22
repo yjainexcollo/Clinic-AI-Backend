@@ -62,10 +62,11 @@ class MongoVisitRepository(VisitRepository):
         # Return the domain entity
         return await self._mongo_to_domain(visit_mongo)
 
-    async def find_by_id(self, visit_id: VisitId) -> Optional[Visit]:
+    async def find_by_id(self, visit_id: VisitId, doctor_id: str) -> Optional[Visit]:
         """Find a visit by ID."""
         visit_mongo = await VisitMongo.find_one(
-            VisitMongo.visit_id == visit_id.value
+            VisitMongo.visit_id == visit_id.value,
+            VisitMongo.doctor_id == doctor_id,
         )
 
         if not visit_mongo:
@@ -73,10 +74,11 @@ class MongoVisitRepository(VisitRepository):
 
         return await self._mongo_to_domain(visit_mongo)
 
-    async def find_by_patient_id(self, patient_id: str) -> List[Visit]:
+    async def find_by_patient_id(self, patient_id: str, doctor_id: str) -> List[Visit]:
         """Find all visits for a specific patient."""
         visits_mongo = await VisitMongo.find(
-            VisitMongo.patient_id == patient_id
+            VisitMongo.patient_id == patient_id,
+            VisitMongo.doctor_id == doctor_id,
         ).sort([("created_at", -1)]).to_list()
 
         return [
@@ -84,11 +86,12 @@ class MongoVisitRepository(VisitRepository):
             for visit_mongo in visits_mongo
         ]
 
-    async def find_by_patient_and_visit_id(self, patient_id: str, visit_id: VisitId) -> Optional[Visit]:
+    async def find_by_patient_and_visit_id(self, patient_id: str, visit_id: VisitId, doctor_id: str) -> Optional[Visit]:
         """Find a specific visit for a patient."""
         visit_mongo = await VisitMongo.find_one(
             VisitMongo.patient_id == patient_id,
-            VisitMongo.visit_id == visit_id.value
+            VisitMongo.visit_id == visit_id.value,
+            VisitMongo.doctor_id == doctor_id,
         )
 
         if not visit_mongo:
@@ -96,10 +99,11 @@ class MongoVisitRepository(VisitRepository):
 
         return await self._mongo_to_domain(visit_mongo)
 
-    async def find_latest_by_patient_id(self, patient_id: str) -> Optional[Visit]:
+    async def find_latest_by_patient_id(self, patient_id: str, doctor_id: str) -> Optional[Visit]:
         """Find the latest visit for a specific patient."""
         visit_mongo = await VisitMongo.find(
-            VisitMongo.patient_id == patient_id
+            VisitMongo.patient_id == patient_id,
+            VisitMongo.doctor_id == doctor_id,
         ).sort([("created_at", -1)]).first()
 
         if not visit_mongo:
@@ -107,35 +111,40 @@ class MongoVisitRepository(VisitRepository):
 
         return await self._mongo_to_domain(visit_mongo)
 
-    async def exists_by_id(self, visit_id: VisitId) -> bool:
+    async def exists_by_id(self, visit_id: VisitId, doctor_id: str) -> bool:
         """Check if a visit exists by ID."""
         count = await VisitMongo.find(
-            VisitMongo.visit_id == visit_id.value
+            VisitMongo.visit_id == visit_id.value,
+            VisitMongo.doctor_id == doctor_id,
         ).count()
 
         return count > 0
 
-    async def delete(self, visit_id: VisitId) -> bool:
+    async def delete(self, visit_id: VisitId, doctor_id: str) -> bool:
         """Delete a visit by ID."""
         result = await VisitMongo.find_one(
-            VisitMongo.visit_id == visit_id.value
+            VisitMongo.visit_id == visit_id.value,
+            VisitMongo.doctor_id == doctor_id,
         ).delete()
 
         return result is not None
 
-    async def find_all(self, limit: int = 100, offset: int = 0) -> List[Visit]:
+    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find all visits with pagination."""
-        visits_mongo = await VisitMongo.find().skip(offset).limit(limit).sort([("created_at", -1)]).to_list()
+        visits_mongo = await VisitMongo.find(
+            VisitMongo.doctor_id == doctor_id
+        ).skip(offset).limit(limit).sort([("created_at", -1)]).to_list()
 
         return [
             await self._mongo_to_domain(visit_mongo)
             for visit_mongo in visits_mongo
         ]
 
-    async def find_by_status(self, status: str, limit: int = 100, offset: int = 0) -> List[Visit]:
+    async def find_by_status(self, status: str, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find visits by status with pagination."""
         visits_mongo = await VisitMongo.find(
-            VisitMongo.status == status
+            VisitMongo.status == status,
+            VisitMongo.doctor_id == doctor_id,
         ).skip(offset).limit(limit).sort([("created_at", -1)]).to_list()
 
         return [
@@ -143,16 +152,18 @@ class MongoVisitRepository(VisitRepository):
             for visit_mongo in visits_mongo
         ]
 
-    async def count_by_patient_id(self, patient_id: str) -> int:
+    async def count_by_patient_id(self, patient_id: str, doctor_id: str) -> int:
         """Count total visits for a patient."""
         return await VisitMongo.find(
-            VisitMongo.patient_id == patient_id
+            VisitMongo.patient_id == patient_id,
+            VisitMongo.doctor_id == doctor_id,
         ).count()
 
-    async def find_by_workflow_type(self, workflow_type: VisitWorkflowType, limit: int = 100, offset: int = 0) -> List[Visit]:
+    async def find_by_workflow_type(self, workflow_type: VisitWorkflowType, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find visits by workflow type with pagination."""
         visits_mongo = await VisitMongo.find(
-            VisitMongo.workflow_type == workflow_type.value
+            VisitMongo.workflow_type == workflow_type.value,
+            VisitMongo.doctor_id == doctor_id,
         ).skip(offset).limit(limit).sort([("created_at", -1)]).to_list()
 
         return [
@@ -160,16 +171,17 @@ class MongoVisitRepository(VisitRepository):
             for visit_mongo in visits_mongo
         ]
 
-    async def find_walk_in_visits(self, limit: int = 100, offset: int = 0) -> List[Visit]:
+    async def find_walk_in_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find walk-in visits with pagination."""
-        return await self.find_by_workflow_type(VisitWorkflowType.WALK_IN, limit, offset)
+        return await self.find_by_workflow_type(VisitWorkflowType.WALK_IN, doctor_id, limit, offset)
 
-    async def find_scheduled_visits(self, limit: int = 100, offset: int = 0) -> List[Visit]:
+    async def find_scheduled_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find scheduled visits with pagination."""
-        return await self.find_by_workflow_type(VisitWorkflowType.SCHEDULED, limit, offset)
+        return await self.find_by_workflow_type(VisitWorkflowType.SCHEDULED, doctor_id, limit, offset)
 
     async def find_patients_with_visits(
         self,
+        doctor_id: str,
         workflow_type: Optional[VisitWorkflowType] = None,
         limit: int = 100,
         offset: int = 0,
@@ -188,14 +200,14 @@ class MongoVisitRepository(VisitRepository):
         visits_collection = db["visits"]
         
         # Build match stage for workflow_type filter
-        match_stage = {}
+        match_stage = {"doctor_id": doctor_id}
         if workflow_type:
             match_stage["workflow_type"] = workflow_type.value
         
         # Aggregation pipeline
         pipeline = [
             # Match visits by workflow_type if specified
-            {"$match": match_stage} if match_stage else {"$match": {}},
+            {"$match": match_stage},
             
             # Sort visits by created_at to get latest first
             {"$sort": {"created_at": -1}},
@@ -371,12 +383,14 @@ class MongoVisitRepository(VisitRepository):
 
         # Check if visit already exists
         existing_visit = await VisitMongo.find_one(
-            VisitMongo.visit_id == visit.visit_id.value
+            VisitMongo.visit_id == visit.visit_id.value,
+            VisitMongo.doctor_id == visit.doctor_id,
         )
 
         if existing_visit:
             # Update existing visit
             existing_visit.patient_id = visit.patient_id
+            existing_visit.doctor_id = visit.doctor_id
             existing_visit.status = visit.status
             existing_visit.updated_at = datetime.utcnow()
             existing_visit.recently_travelled = getattr(visit, "recently_travelled", False)
@@ -393,6 +407,7 @@ class MongoVisitRepository(VisitRepository):
             return VisitMongo(
                 visit_id=visit.visit_id.value,
                 patient_id=visit.patient_id,
+                doctor_id=visit.doctor_id,
                 symptom=visit.symptom,
                 workflow_type=visit.workflow_type.value,
                 status=visit.status,
@@ -519,6 +534,7 @@ class MongoVisitRepository(VisitRepository):
         visit = Visit(
             visit_id=VisitId(visit_mongo.visit_id),
             patient_id=visit_mongo.patient_id,
+            doctor_id=getattr(visit_mongo, "doctor_id", ""),
             symptom=visit_symptom,
             workflow_type=VisitWorkflowType(visit_mongo.workflow_type),
             status=visit_mongo.status,
@@ -543,7 +559,8 @@ class MongoVisitRepository(VisitRepository):
         patient_id: str,
         visit_id: VisitId,
         worker_id: str,
-        stale_seconds: int
+        stale_seconds: int,
+        doctor_id: str,
     ) -> bool:
         """
         Atomically claim a transcription job by marking it as processing.
@@ -582,6 +599,7 @@ class MongoVisitRepository(VisitRepository):
         claim_conditions = {
             "patient_id": patient_id,
             "visit_id": visit_id.value,
+            "doctor_id": doctor_id,
             "$or": [
                 # Status is queued
                 {"transcription_session.transcription_status": "queued"},
@@ -624,6 +642,7 @@ class MongoVisitRepository(VisitRepository):
         self,
         patient_id: str,
         visit_id: VisitId,
+        doctor_id: str,
         fields: Dict[str, Any]
     ) -> bool:
         """
@@ -663,7 +682,8 @@ class MongoVisitRepository(VisitRepository):
         result = await collection.update_one(
             {
                 "patient_id": patient_id,
-                "visit_id": visit_id.value
+                "visit_id": visit_id.value,
+                "doctor_id": doctor_id,
             },
             update_operation
         )

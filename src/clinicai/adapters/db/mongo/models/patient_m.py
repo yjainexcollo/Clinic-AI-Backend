@@ -136,6 +136,7 @@ class VisitMongo(Document):
     """MongoDB model for visit."""
     visit_id: str = Field(..., description="Visit ID", unique=True)
     patient_id: str = Field(..., description="Patient ID reference")
+    doctor_id: str = Field(..., description="Doctor ID owner")
     symptom: str = Field(default="", description="Primary symptom / chief complaint for this visit")
     workflow_type: str = Field(default=VisitWorkflowType.SCHEDULED, description="Workflow type: scheduled or walk_in")
     status: str = Field(
@@ -171,13 +172,16 @@ class VisitMongo(Document):
         name = "visits"
         indexes = [
             "visit_id",
-            "patient_id", 
+            "patient_id",
+            "doctor_id",
             "status",
             "workflow_type",
             "created_at",
-            [("patient_id", 1), ("created_at", -1)],  # Compound index for patient visits ordered by date
-            [("status", 1), ("created_at", -1)],  # Compound index for visits by status
-            [("workflow_type", 1), ("status", 1)]  # Compound index for workflow type and status
+            [("patient_id", 1), ("created_at", -1)],  # Visits per patient ordered by date
+            [("status", 1), ("created_at", -1)],  # Visits by status
+            [("workflow_type", 1), ("status", 1)],  # Workflow type and status
+            [("doctor_id", 1), ("patient_id", 1)],  # Per-doctor patient visits
+            [("doctor_id", 1), ("status", 1)],  # Per-doctor status filtering
         ]
 
 
@@ -186,6 +190,7 @@ class PatientMongo(Document):
     """MongoDB model for Patient entity."""
 
     patient_id: str = Field(..., description="Patient ID", unique=True)
+    doctor_id: str = Field(..., description="Doctor ID owner")
     name: str = Field(..., description="Patient name")
     mobile: str = Field(..., description="Mobile number")
     age: int = Field(..., description="Patient age")
@@ -203,10 +208,13 @@ class PatientMongo(Document):
     class Settings:
         name = "patients"
         indexes = [
-            "patient_id",                           # Keep for direct ID lookups
-            [("mobile", 1), ("name", 1)],          # Compound index: mobile first, then name (optimized for find_by_name_and_mobile)
-            "created_at",                           # Keep for date-based queries
-            [("mobile", 1), ("created_at", -1)]    # Optional: for mobile + date queries (family members by date)
+            "patient_id",  # Direct ID lookups
+            "doctor_id",
+            [("mobile", 1), ("name", 1)],  # Legacy compound index
+            "created_at",  # Date-based queries
+            [("mobile", 1), ("created_at", -1)],  # Mobile + date queries
+            [("doctor_id", 1), ("patient_id", 1)],  # Per-doctor patient lookups
+            [("doctor_id", 1), ("mobile", 1), ("name", 1)],  # Per-doctor name/mobile search
         ]
 
 

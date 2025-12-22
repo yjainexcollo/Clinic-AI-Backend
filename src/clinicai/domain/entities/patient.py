@@ -19,6 +19,7 @@ class Patient:
     """Patient domain entity."""
 
     patient_id: PatientId
+    doctor_id: str
     name: str
     mobile: str
     age: int

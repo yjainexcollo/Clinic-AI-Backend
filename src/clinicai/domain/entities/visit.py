@@ -203,6 +203,7 @@ class Visit:
 
     visit_id: VisitId
     patient_id: str  # Reference to patient
+    doctor_id: str   # Owning doctor
     symptom: str
     workflow_type: VisitWorkflowType = VisitWorkflowType.SCHEDULED
     status: str = (

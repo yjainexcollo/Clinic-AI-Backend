@@ -30,19 +30,19 @@ class GeneratePostVisitSummaryUseCase:
         self._visit_repository = visit_repository
         self._soap_service = soap_service
 
-    async def execute(self, request: PostVisitSummaryRequest) -> PostVisitSummaryResponse:
+    async def execute(self, request: PostVisitSummaryRequest, doctor_id: str) -> PostVisitSummaryResponse:
         """Generate a comprehensive post-visit summary for patient sharing."""
         
         # Find patient
         patient_id = PatientId(request.patient_id)
-        patient = await self._patient_repository.find_by_id(patient_id)
+        patient = await self._patient_repository.find_by_id(patient_id, doctor_id)
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit
         visit_id = VisitId(request.visit_id)
         visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id
+            request.patient_id, visit_id, doctor_id
         )
         if not visit:
             raise VisitNotFoundError(request.visit_id)

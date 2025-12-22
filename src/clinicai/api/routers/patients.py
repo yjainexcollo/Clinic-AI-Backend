@@ -104,6 +104,16 @@ async def register_patient(
     5. Returns patient_id, visit_id, and first question
     """
     try:
+        # Extract doctor_id from middleware
+        doctor_id = getattr(http_request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                http_request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Convert Pydantic model to DTO
         dto_request = RegisterPatientRequest(
             first_name=request.first_name,
@@ -119,7 +129,7 @@ async def register_patient(
 
         # Execute use case
         use_case = RegisterPatientUseCase(patient_repo, visit_repo, question_service)
-        result = await use_case.execute(dto_request)
+        result = await use_case.execute(dto_request, doctor_id=doctor_id)
 
         # Set IDs in request state for HIPAA audit middleware
         http_request.state.audit_patient_id = encode_patient_id(result.patient_id)
@@ -223,6 +233,15 @@ async def list_patients(
     - sort_order: Sort direction - "asc" or "desc" (default: "desc")
     """
     try:
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Parse workflow_type if provided
         workflow_type_enum = None
         if workflow_type:
@@ -245,8 +264,9 @@ async def list_patients(
         if sort_order not in ["asc", "desc"]:
             sort_order = "desc"
         
-        # Get patients with visits
+        # Get patients with visits for this doctor
         patients_data = await visit_repo.find_patients_with_visits(
+            doctor_id=doctor_id,
             workflow_type=workflow_type_enum,
             limit=limit,
             offset=offset,
@@ -424,8 +444,18 @@ async def answer_intake_question(
             )
 
         # Execute use case
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "MISSING_DOCTOR_ID",
+                    "message": "X-Doctor-ID header is required",
+                    "details": {},
+                },
+            )
         use_case = AnswerIntakeUseCase(patient_repo, visit_repo, question_service)
-        result = await use_case.execute(dto_request)
+        result = await use_case.execute(dto_request, doctor_id=doctor_id)
 
         return AnswerIntakeResponse(
             next_question=result.next_question,
@@ -520,6 +550,14 @@ async def edit_intake_answer(
         http_request.state.audit_patient_id = request.patient_id
         http_request.state.audit_visit_id = request.visit_id
         
+        doctor_id = getattr(http_request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                http_request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         use_case = AnswerIntakeUseCase(patient_repo, visit_repo, question_service)
         dto_request = EditAnswerRequest(
             patient_id=decode_patient_id(request.patient_id),
@@ -527,7 +565,7 @@ async def edit_intake_answer(
             question_number=request.question_number,
             new_answer=request.new_answer,
         )
-        result = await use_case.edit(dto_request)
+        result = await use_case.edit(dto_request, doctor_id=doctor_id)
         return EditAnswerResponseSchema(
             success=result.success,
             message=result.message,
@@ -1053,6 +1091,16 @@ async def generate_pre_visit_summary(
         http_request.state.audit_patient_id = request.patient_id
         http_request.state.audit_visit_id = request.visit_id
         
+        # Extract doctor_id
+        doctor_id = getattr(http_request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                http_request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Convert Pydantic model to DTO - handle patient_id decoding gracefully
         try:
             decoded_patient_id = decode_patient_id(request.patient_id)
@@ -1071,7 +1119,7 @@ async def generate_pre_visit_summary(
 
         # Execute use case
         use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
-        result = await use_case.execute(dto_request)
+        result = await use_case.execute(dto_request, doctor_id=doctor_id)
 
         return PreVisitSummaryResponse(
             patient_id=encode_patient_id(result.patient_id),
@@ -1381,6 +1429,16 @@ async def generate_post_visit_summary(
     4. Returns structured summary for WhatsApp sharing
     """
     try:
+        # Get doctor_id from request state
+        doctor_id = getattr(http_request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                http_request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        
         # Set IDs in request state for HIPAA audit middleware
         http_request.state.audit_patient_id = request.patient_id
         http_request.state.audit_visit_id = request.visit_id
@@ -1400,7 +1458,7 @@ async def generate_post_visit_summary(
                 }
             )
         
-        logger.info(f"Generating post-visit summary for internal_patient_id: {internal_patient_id}, visit_id: {request.visit_id}")
+        logger.info(f"Generating post-visit summary for internal_patient_id: {internal_patient_id}, visit_id: {request.visit_id}, doctor_id: {doctor_id}")
         
         # Create request with decoded patient_id
         decoded_request = PostVisitSummaryRequest(
@@ -1411,8 +1469,8 @@ async def generate_post_visit_summary(
         # Create use case instance (patient_repo, visit_repo, soap_service)
         use_case = GeneratePostVisitSummaryUseCase(patient_repo, visit_repo, soap_service)
         
-        # Execute use case
-        result = await use_case.execute(decoded_request)
+        # Execute use case - pass doctor_id as second argument
+        result = await use_case.execute(decoded_request, doctor_id)
         
         return ok(http_request, data=result)
         
@@ -1442,6 +1500,16 @@ async def get_post_visit_summary(
 ):
     """Retrieve stored post-visit summary from visit (if available)."""
     try:
+        # Get doctor_id from request state
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        
         from ...domain.value_objects.patient_id import PatientId
         
         try:
@@ -1449,14 +1517,14 @@ async def get_post_visit_summary(
         except Exception as e:
             internal_patient_id = patient_id
             
-        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise PatientNotFoundError(patient_id)
         
         from ...domain.value_objects.visit_id import VisitId
         visit_id_obj = VisitId(visit_id)
         visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
+            internal_patient_id, visit_id_obj, doctor_id
         )
         if not visit:
             raise VisitNotFoundError(visit_id)
@@ -1514,6 +1582,18 @@ async def store_vitals(
 ):
     """Store vitals data for a visit."""
     try:
+        # Get doctor_id from request state
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "MISSING_DOCTOR_ID",
+                    "message": "X-Doctor-ID header is required",
+                    "details": {},
+                },
+            )
+        
         from ...domain.value_objects.patient_id import PatientId
         from ...domain.value_objects.visit_id import VisitId
         
@@ -1523,18 +1603,17 @@ async def store_vitals(
         except Exception:
             internal_patient_id = patient_id
         
-        # Get patient and visit
-        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        # Get patient and visit - with doctor_id for data isolation
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise HTTPException(
                 status_code=404,
                 detail={"error": "PATIENT_NOT_FOUND", "message": f"Patient {patient_id} not found", "details": {}}
             )
         
-        from ...domain.value_objects.visit_id import VisitId
         visit_id_obj = VisitId(visit_id)
         visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
+            internal_patient_id, visit_id_obj, doctor_id
         )
         if not visit:
             raise HTTPException(
@@ -1598,6 +1677,18 @@ async def get_vitals(
 ):
     """Get vitals data for a visit."""
     try:
+        # Get doctor_id from request state
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "MISSING_DOCTOR_ID",
+                    "message": "X-Doctor-ID header is required",
+                    "details": {},
+                },
+            )
+        
         from ...domain.value_objects.patient_id import PatientId
         
         # Decode patient ID if needed
@@ -1606,8 +1697,8 @@ async def get_vitals(
         except Exception:
             internal_patient_id = patient_id
         
-        # Get patient and visit
-        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        # Get patient and visit - with doctor_id for data isolation
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise HTTPException(
                 status_code=404,
@@ -1617,7 +1708,7 @@ async def get_vitals(
         from ...domain.value_objects.visit_id import VisitId
         visit_id_obj = VisitId(visit_id)
         visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
+            internal_patient_id, visit_id_obj, doctor_id
         )
         if not visit:
             raise HTTPException(
@@ -1667,6 +1758,16 @@ async def list_patient_visits(
     - Flags indicating what data is available (transcript, SOAP, vitals, etc.)
     """
     try:
+        # Get doctor_id from request state
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        
         from ...domain.value_objects.patient_id import PatientId
         import urllib.parse
         
@@ -1708,8 +1809,8 @@ async def list_patient_visits(
                 status_message=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
         
-        # Verify patient exists
-        patient = await patient_repo.find_by_id(patient_id_obj)
+        # Verify patient exists - with doctor_id for data isolation
+        patient = await patient_repo.find_by_id(patient_id_obj, doctor_id)
         if not patient:
             return fail(
                 request,
@@ -1718,8 +1819,8 @@ async def list_patient_visits(
                 status_message=status.HTTP_404_NOT_FOUND
             )
         
-        # Get all visits for this patient
-        visits = await visit_repo.find_by_patient_id(internal_patient_id)
+        # Get all visits for this patient - with doctor_id for data isolation
+        visits = await visit_repo.find_by_patient_id(internal_patient_id, doctor_id)
         
         # Convert to schema
         visit_items = []

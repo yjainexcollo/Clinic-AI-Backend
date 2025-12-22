@@ -35,17 +35,17 @@ class AnswerIntakeUseCase:
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(self, request: AnswerIntakeRequest) -> AnswerIntakeResponse:
+    async def execute(self, request: AnswerIntakeRequest, doctor_id: str) -> AnswerIntakeResponse:
         """Execute the answer intake use case."""
         # Find patient
         patient_id = PatientId(request.patient_id)
-        patient = await self._patient_repository.find_by_id(patient_id)
+        patient = await self._patient_repository.find_by_id(patient_id, doctor_id)
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -55,7 +55,7 @@ class AnswerIntakeUseCase:
         prior_summary: Optional[str] = None
         prior_qas: Optional[List[str]] = None
         try:
-            latest = await self._visit_repository.find_latest_by_patient_id(request.patient_id)
+            latest = await self._visit_repository.find_latest_by_patient_id(request.patient_id, doctor_id)
             if latest and latest.visit_id.value != visit.visit_id.value:
                 if latest.pre_visit_summary and latest.pre_visit_summary.get("summary"):
                     prior_summary = latest.pre_visit_summary.get("summary")
@@ -415,17 +415,17 @@ class AnswerIntakeUseCase:
             allows_image_upload=allows_image_upload,
         )
 
-    async def edit(self, request: EditAnswerRequest) -> EditAnswerResponse:
+    async def edit(self, request: EditAnswerRequest, doctor_id: str) -> EditAnswerResponse:
         """Edit an existing answer by question number (1-based)."""
         # Find patient
         patient_id = PatientId(request.patient_id)
-        patient = await self._patient_repository.find_by_id(patient_id)
+        patient = await self._patient_repository.find_by_id(patient_id, doctor_id)
         if not patient:
             raise PatientNotFoundError(request.patient_id)
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
