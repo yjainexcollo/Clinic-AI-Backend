@@ -35,6 +35,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     PUBLIC_PATH_PREFIXES = {
         "/docs",
         "/redoc",
+        # Frontend is unauthenticated: allow all patient/workflow/notes/doctor calls
+        "/patients",
+        "/workflow",
+        "/notes",
+        "/doctor",
     }
     
     def is_public_endpoint(self, path: str) -> bool:

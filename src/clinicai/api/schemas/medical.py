@@ -71,6 +71,12 @@ class SoapTemplateSchema(BaseModel):
     appointment_types: Optional[List[str]] = Field(
         None, description="Applicable appointment types for this template"
     )
+    is_favorite: Optional[bool] = Field(
+        None, description="Whether this template is marked as favorite"
+    )
+    status: Optional[str] = Field(
+        None, description="Template status (e.g., 'active', 'inactive', 'draft')"
+    )
 
     uploaded_at: Optional[datetime] = Field(
         None, description="When this template was created on the client (optional)"
