@@ -455,6 +455,7 @@ async def transcribe_audio(
                         patient_id=internal_patient_id,
                         visit_id=visit_id,
                         audio_file_id=audio_file_record.audio_id,
+                        doctor_id=doctor_id,
                         language=language,
                         retry_count=attempt - 1,
                         delay_seconds=0,

@@ -108,6 +108,9 @@ class TranscriptionWorker:
         patient_id = job_data["patient_id"]
         visit_id = job_data["visit_id"]
         audio_file_id = job_data["audio_file_id"]
+        # doctor_id is required for all repository operations after multi-doctor changes.
+        # For backward compatibility with old messages, fall back to 'D123' if missing.
+        doctor_id = job_data.get("doctor_id") or "D123"
         language = job_data.get("language", "en")
         retry_count = job_data.get("retry_count", 0)
         request_id = job_data.get("request_id")
@@ -122,7 +125,7 @@ class TranscriptionWorker:
         # IDEMPOTENCY GUARD: Check visit status BEFORE attempting claim
         try:
             visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id)
+                patient_id, VisitId(visit_id), doctor_id
             )
             if not visit:
                 logger.warning(f"Visit {visit_id} not found, deleting message {message_id}")
@@ -155,7 +158,8 @@ class TranscriptionWorker:
                 patient_id=patient_id,
                 visit_id=VisitId(visit_id),
                 worker_id=worker_id,
-                stale_seconds=stale_seconds
+                stale_seconds=stale_seconds,
+                doctor_id=doctor_id,
             )
             
             if not claimed:
@@ -551,10 +555,11 @@ class TranscriptionWorker:
                         job_data["patient_id"],
                         job_data["visit_id"],
                         job_data["audio_file_id"],
+                        job_data.get("doctor_id") or "D123",
                         job_data["language"],
                         retry_count=new_retry_count,
                         delay_seconds=delay_seconds,
-                        request_id=request_id
+                        request_id=request_id,
                     )
                     logger.info(f"Re-queued job for retry {new_retry_count}/{self.settings.azure_queue.max_retry_attempts} with {delay_seconds}s delay")
                 except Exception as requeue_error:

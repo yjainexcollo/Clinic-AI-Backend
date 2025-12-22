@@ -77,6 +77,7 @@ async def _sweep_once(threshold_seconds: int) -> None:
                     patient_id=patient_id,
                     visit_id=visit_id,
                     audio_file_id=audio.audio_id,
+                    doctor_id=getattr(visit, "doctor_id", "D123"),
                     language="en",  # language is not stored per visit audio today; default to en
                     retry_count=attempt - 1,
                     delay_seconds=0,
