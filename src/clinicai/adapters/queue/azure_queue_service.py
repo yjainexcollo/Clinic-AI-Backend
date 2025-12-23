@@ -195,6 +195,7 @@ class AzureQueueService:
         retry_count: int = 0,
         delay_seconds: int = 0,
         request_id: Optional[str] = None,
+        doctor_id: Optional[str] = None
     ) -> str:
         """
         Enqueue a transcription job (non-blocking).
@@ -207,6 +208,7 @@ class AzureQueueService:
             retry_count: Number of retry attempts (for tracking)
             delay_seconds: Delay before message becomes visible (for retry backoff)
             request_id: Optional request ID for log correlation
+            doctor_id: Doctor ID for multi-doctor isolation (required for multi-doctor support)
             
         Returns:
             Message ID
@@ -223,6 +225,8 @@ class AzureQueueService:
         }
         if request_id:
             message["request_id"] = request_id
+        if doctor_id:
+            message["doctor_id"] = doctor_id
         
         try:
             # For new jobs: visibility_timeout=0 (immediate visibility).

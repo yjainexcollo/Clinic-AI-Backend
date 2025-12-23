@@ -193,7 +193,7 @@ class TranscriptionWorker:
             
             # Reload visit to get the updated state from the claim
             visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id)
+                patient_id, VisitId(visit_id), doctor_id
             )
             if not visit:
                 logger.error(f"Visit {visit_id} not found after claim, this should not happen")
@@ -309,7 +309,7 @@ class TranscriptionWorker:
                         transcription_id_from_db = "N/A"
                         try:
                             current_visit = await self.visit_repo.find_by_patient_and_visit_id(
-                                patient_id, VisitId(visit_id)
+                                patient_id, VisitId(visit_id), doctor_id
                             )
                             if current_visit and current_visit.transcription_session:
                                 transcription_id_from_db = current_visit.transcription_session.transcription_id or "N/A"
@@ -327,7 +327,7 @@ class TranscriptionWorker:
                 # Add timeout for transcription (30 minutes max)
                 try:
                     result = await asyncio.wait_for(
-                        use_case.execute(request),
+                        use_case.execute(request, doctor_id=doctor_id),
                         timeout=1800.0  # 30 minutes
                     )
                 except asyncio.TimeoutError:
@@ -385,7 +385,7 @@ class TranscriptionWorker:
                     try:
                         # Verify visit was saved by reloading and checking transcript exists
                         saved_visit = await self.visit_repo.find_by_patient_and_visit_id(
-                            patient_id, VisitId(visit_id)
+                            patient_id, VisitId(visit_id), doctor_id
                         )
                         if saved_visit and saved_visit.transcription_session and saved_visit.transcription_session.transcript:
                             db_save_success = True
@@ -395,7 +395,7 @@ class TranscriptionWorker:
                             logger.warning(f"⚠️  Transcript not found in DB after use case, attempting save (attempt {db_save_attempts + 1}/{max_db_save_attempts})")
                             # Reload visit and save again
                             visit = await self.visit_repo.find_by_patient_and_visit_id(
-                                patient_id, VisitId(visit_id)
+                                patient_id, VisitId(visit_id), doctor_id
                             )
                             if visit and visit.transcription_session:
                                 await self.visit_repo.save(visit)
@@ -501,7 +501,7 @@ class TranscriptionWorker:
                 db_save_success = False
                 try:
                     visit = await self.visit_repo.find_by_patient_and_visit_id(
-                        patient_id, VisitId(visit_id)
+                        patient_id, VisitId(visit_id), doctor_id
                     )
                     if visit:
                         error_info = f"{error_code}: {clean_error_message}"
@@ -555,11 +555,11 @@ class TranscriptionWorker:
                         job_data["patient_id"],
                         job_data["visit_id"],
                         job_data["audio_file_id"],
-                        job_data.get("doctor_id") or "D123",
-                        job_data["language"],
+                        job_data.get("language", "en"),
                         retry_count=new_retry_count,
                         delay_seconds=delay_seconds,
                         request_id=request_id,
+                        doctor_id=doctor_id,
                     )
                     logger.info(f"Re-queued job for retry {new_retry_count}/{self.settings.azure_queue.max_retry_attempts} with {delay_seconds}s delay")
                 except Exception as requeue_error:
@@ -602,7 +602,7 @@ class TranscriptionWorker:
                 db_save_success = False
                 try:
                     visit = await self.visit_repo.find_by_patient_and_visit_id(
-                        patient_id, VisitId(visit_id)
+                        patient_id, VisitId(visit_id), doctor_id
                     )
                     if visit:
                         # Store structured error info (no PHI)
@@ -706,10 +706,13 @@ class TranscriptionWorker:
             f"max_dequeue={self.settings.azure_queue.max_dequeue_count}; message_id={message_id}"
         )
 
+        # Extract doctor_id from job_data for poison job handler
+        doctor_id = job_data.get("doctor_id") or "D123"
+        
         db_save_success = False
         try:
             visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id)
+                patient_id, VisitId(visit_id), doctor_id
             )
             if not visit:
                 logger.warning(
