@@ -459,6 +459,7 @@ async def transcribe_audio(
                         retry_count=attempt - 1,
                         delay_seconds=0,
                         request_id=request_id,
+                        doctor_id=doctor_id,
                     )
                     break
                 except Exception as e:  # noqa: PERF203
