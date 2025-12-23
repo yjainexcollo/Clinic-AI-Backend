@@ -190,12 +190,11 @@ class AzureQueueService:
         patient_id: str,
         visit_id: str,
         audio_file_id: str,
-        doctor_id: str,
         language: str = "en",
         retry_count: int = 0,
         delay_seconds: int = 0,
         request_id: Optional[str] = None,
-        doctor_id: Optional[str] = None
+        doctor_id: Optional[str] = None,
     ) -> str:
         """
         Enqueue a transcription job (non-blocking).
