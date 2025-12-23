@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import logging
 import json
@@ -258,7 +259,6 @@ class MedicalContextAnalyzer:
         visit_id: Optional[str] = None,
         patient_id: Optional[str] = None,
         question_number: Optional[int] = None,
-        language: str = "en",
     ) -> MedicalContext:
         lang = self._normalize_language(language)
         system_prompt = """You are AGENT-01 "MEDICAL CONTEXT ANALYZER" - Clinical Strategist.
