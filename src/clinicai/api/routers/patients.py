@@ -1206,10 +1206,20 @@ async def get_pre_visit_summary(
     try:
         from ...domain.value_objects.patient_id import PatientId
         
+        # Get doctor_id for tenant isolation
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        
         # Find patient (decode opaque id from client)
         internal_patient_id = decode_patient_id(patient_id)
         patient_id_obj = PatientId(internal_patient_id)
-        patient = await patient_repo.find_by_id(patient_id_obj)
+        patient = await patient_repo.find_by_id(patient_id_obj, doctor_id)
         if not patient:
             raise PatientNotFoundError(patient_id)
 
@@ -1217,7 +1227,7 @@ async def get_pre_visit_summary(
         from ...domain.value_objects.visit_id import VisitId
         visit_id_obj = VisitId(visit_id)
         visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
+            internal_patient_id, visit_id_obj, doctor_id
         )
         if not visit:
             raise VisitNotFoundError(visit_id)
@@ -1961,8 +1971,18 @@ async def get_visit_detail(
                 status_message=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
         
+        # Get doctor_id from request state
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Verify patient exists
-        patient = await patient_repo.find_by_id(patient_id_obj)
+        patient = await patient_repo.find_by_id(patient_id_obj, doctor_id)
         if not patient:
             return fail(
                 request,
@@ -1973,7 +1993,7 @@ async def get_visit_detail(
         
         # Get visit
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             return fail(
                 request,

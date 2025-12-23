@@ -1112,7 +1112,18 @@ async def get_soap_note(request: Request, patient_id: str, visit_id: str, patien
 
         # Find patient
         patient_id_obj = PatientId(internal_patient_id)
-        patient = await patient_repo.find_by_id(patient_id_obj)
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "MISSING_DOCTOR_ID",
+                    "message": "X-Doctor-ID header is required",
+                    "details": {},
+                },
+            )
+
+        patient = await patient_repo.find_by_id(patient_id_obj, doctor_id)
         if not patient:
             raise PatientNotFoundError(internal_patient_id)
 
@@ -1120,7 +1131,7 @@ async def get_soap_note(request: Request, patient_id: str, visit_id: str, patien
         from ...domain.value_objects.visit_id import VisitId
         visit_id_obj = VisitId(visit_id)
         visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
+            internal_patient_id, visit_id_obj, doctor_id
         )
         if not visit:
             raise VisitNotFoundError(visit_id)
