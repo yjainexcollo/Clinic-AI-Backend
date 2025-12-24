@@ -260,7 +260,13 @@ class SoapGenerationResponse:
 
 @dataclass
 class SoapNoteDTO:
-    """DTO for SOAP note data."""
+    """DTO for SOAP note data.
+
+    soap_order reflects the doctor's preferred ordering of sections
+    (e.g., ["subjective", "objective", "assessment", "plan"]).
+    Frontend can use this to render sections in the desired order
+    without relying on JSON key order.
+    """
     
     subjective: str
     objective: Dict[str, Any]
@@ -271,6 +277,7 @@ class SoapNoteDTO:
     generated_at: str
     model_info: Optional[Dict[str, Any]]
     confidence_score: Optional[float]
+    soap_order: Optional[List[str]] = None
 
 
 @dataclass

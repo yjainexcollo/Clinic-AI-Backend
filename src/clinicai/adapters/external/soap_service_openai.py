@@ -137,6 +137,14 @@ class OpenAISoapService(SoapService):
         language_override = soap_ai_cfg.get("language")
         if language_override:
             lang = self._normalize_language(language_override)
+
+        # Determine SOAP section order from doctor preferences
+        default_soap_order = ["subjective", "objective", "assessment", "plan"]
+        raw_order = (prefs or {}).get("soap_order") or default_soap_order
+        # Keep only known sections and ensure we still have all of them
+        soap_order: List[str] = [s for s in raw_order if s in default_soap_order]
+        if len(soap_order) != len(default_soap_order):
+            soap_order = default_soap_order
         
         # Build context from available data
         context_parts = []
@@ -240,7 +248,71 @@ class OpenAISoapService(SoapService):
             f"- Detail level: {detail_level}\n"
             f"- Formatting: {formatting_pref}\n"
             f"- Language override: {language_override or 'none'}\n"
+            f"- SOAP section order: {', '.join(soap_order)}\n"
         )
+
+        # Build JSON schema snippets honoring SOAP order
+        subjective_sp = '    "subjective": "Síntomas reportados por el paciente, preocupaciones e historial discutido"'
+        objective_sp = """    "objective": {
+        "vital_signs": {
+            "blood_pressure": "120/80 mmHg",
+            "heart_rate": "74 bpm",
+            "temperature": "36.4C",
+            "SpO2": "92% en aire ambiente",
+            "weight": "80 kg"
+        },
+        "physical_exam": {
+            "general_appearance": "El paciente parece cansado pero cooperativo",
+            "HEENT": "No discutido",
+            "cardiac": "No discutido",
+            "respiratory": "No discutido",
+            "abdominal": "No discutido",
+            "neuro": "No discutido",
+            "extremities": "No discutido",
+            "gait": "No discutido"
+        }
+    }"""
+        assessment_sp = '    "assessment": "Impresiones clínicas y razonamiento discutido por el médico"'
+        plan_sp = '    "plan": "Plan de tratamiento, instrucciones de seguimiento y próximos pasos discutidos"'
+
+        subjective_en = '    "subjective": "Patient\'s reported symptoms, concerns, and history as discussed"'
+        objective_en = """    "objective": {
+        "vital_signs": {
+            "blood_pressure": "120/80 mmHg",
+            "heart_rate": "74 bpm",
+            "temperature": "36.4C",
+            "SpO2": "92% on room air",
+            "weight": "80 kg"
+        },
+        "physical_exam": {
+            "general_appearance": "Patient appears tired but is cooperative",
+            "HEENT": "Not discussed",
+            "cardiac": "Not discussed",
+            "respiratory": "Not discussed",
+            "abdominal": "Not discussed",
+            "neuro": "Not discussed",
+            "extremities": "Not discussed",
+            "gait": "Not discussed"
+        }
+    }"""
+        assessment_en = '    "assessment": "Clinical impressions and reasoning discussed by the physician"'
+        plan_en = '    "plan": "Treatment plan, follow-up instructions, and next steps discussed"'
+
+        sp_section_map = {
+            "subjective": subjective_sp,
+            "objective": objective_sp,
+            "assessment": assessment_sp,
+            "plan": plan_sp,
+        }
+        en_section_map = {
+            "subjective": subjective_en,
+            "objective": objective_en,
+            "assessment": assessment_en,
+            "plan": plan_en,
+        }
+
+        ordered_sp_sections = ",\n".join(sp_section_map[s] for s in soap_order)
+        ordered_en_sections = ",\n".join(en_section_map[s] for s in soap_order)
 
         # Create language-aware prompt
         if lang == "sp":
@@ -268,28 +340,7 @@ INSTRUCCIONES:
 
 FORMATO REQUERIDO (JSON):
 {{
-    "subjective": "Síntomas reportados por el paciente, preocupaciones e historial discutido",
-    "objective": {{
-        "vital_signs": {{
-            "blood_pressure": "120/80 mmHg",
-            "heart_rate": "74 bpm",
-            "temperature": "36.4C",
-            "SpO2": "92% en aire ambiente",
-            "weight": "80 kg"
-        }},
-        "physical_exam": {{
-            "general_appearance": "El paciente parece cansado pero cooperativo",
-            "HEENT": "No discutido",
-            "cardiac": "No discutido",
-            "respiratory": "No discutido",
-            "abdominal": "No discutido",
-            "neuro": "No discutido",
-            "extremities": "No discutido",
-            "gait": "No discutido"
-        }}
-    }},
-    "assessment": "Impresiones clínicas y razonamiento discutido por el médico",
-    "plan": "Plan de tratamiento, instrucciones de seguimiento y próximos pasos discutidos",
+{ordered_sp_sections},
     "highlights": ["Punto clínico clave 1", "Punto clínico clave 2", "Punto clínico clave 3"],
     "red_flags": ["Cualquier síntoma o hallazgo preocupante mencionado"],
     "model_info": {{
@@ -332,28 +383,7 @@ INSTRUCTIONS:
 
 REQUIRED FORMAT (JSON):
 {{
-    "subjective": "Patient's reported symptoms, concerns, and history as discussed",
-    "objective": {{
-        "vital_signs": {{
-            "blood_pressure": "120/80 mmHg",
-            "heart_rate": "74 bpm",
-            "temperature": "36.4C",
-            "SpO2": "92% on room air",
-            "weight": "80 kg"
-        }},
-        "physical_exam": {{
-            "general_appearance": "Patient appears tired but is cooperative",
-            "HEENT": "Not discussed",
-            "cardiac": "Not discussed",
-            "respiratory": "Not discussed",
-            "abdominal": "Not discussed",
-            "neuro": "Not discussed",
-            "extremities": "Not discussed",
-            "gait": "Not discussed"
-        }}
-    }},
-    "assessment": "Clinical impressions and reasoning discussed by the physician",
-    "plan": "Treatment plan, follow-up instructions, and next steps discussed",
+{ordered_en_sections},
     "highlights": ["Key clinical points 1", "Key clinical points 2", "Key clinical points 3"],
     "red_flags": ["Any concerning symptoms or findings mentioned"],
     "model_info": {{
