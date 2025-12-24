@@ -4,9 +4,24 @@ from pydantic import BaseModel, Field
 
 
 class PreVisitSectionConfig(BaseModel):
+    """
+    Configuration for one pre-visit section.
+
+    Recognized section_key values in backend:
+    - chief_complaint
+    - hpi
+    - history
+    - review_of_systems
+    - current_medication
+
+    selected_fields is optional; if omitted or empty, the backend will
+    still honor the enabled flag for the section. Field-level filtering
+    is reserved for future use.
+    """
+
     section_key: str
     enabled: bool = Field(default=True)
-    selected_fields: List[str] = Field(default_factory=list)
+    selected_fields: Optional[List[str]] = Field(default_factory=list)
 
 
 class PreVisitAIConfig(BaseModel):

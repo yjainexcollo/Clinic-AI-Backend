@@ -34,14 +34,17 @@ async def _sweep_once(threshold_seconds: int) -> None:
     async for visit in cursor:
         visit_id = visit.visit_id
         patient_id = visit.patient_id
+        # Extract doctor_id from visit (required for multi-doctor support)
+        doctor_id = getattr(visit, "doctor_id", None) or "D123"  # Fallback for backward compatibility
         ts = visit.transcription_session
         if not ts:
             continue
 
         logger.info(
-            "[StuckSweeper] Found stuck queued visit=%s patient=%s enqueued_at=%s queue_message_id=%s",
+            "[StuckSweeper] Found stuck queued visit=%s patient=%s doctor_id=%s enqueued_at=%s queue_message_id=%s",
             visit_id,
             patient_id,
+            doctor_id,
             getattr(ts, "enqueued_at", None),
             getattr(ts, "queue_message_id", None),
         )
@@ -77,10 +80,12 @@ async def _sweep_once(threshold_seconds: int) -> None:
                     patient_id=patient_id,
                     visit_id=visit_id,
                     audio_file_id=audio.audio_id,
+                    doctor_id=getattr(visit, "doctor_id", "D123"),
                     language="en",  # language is not stored per visit audio today; default to en
                     retry_count=attempt - 1,
                     delay_seconds=0,
                     request_id=request_id,
+                    doctor_id=doctor_id,
                 )
                 break
             except Exception as e:  # noqa: PERF203

@@ -63,10 +63,12 @@ def extract_user_id_from_request(request: Request) -> str:
                 pass
     
     # No authentication found - this should not happen if authentication middleware is working
-    # Log as "unauthenticated" for audit purposes, but this indicates a configuration issue
-    logger.error(
-        f"❌ No user ID found for request to {request.url.path}. "
-        "Authentication middleware should have set request.state.user_id or rejected the request."
+    # Log as warning (not error) since this might be expected in some edge cases
+    # The HIPAA middleware will skip audit logging if user_id is "unauthenticated"
+    logger.warning(
+        f"⚠️  No user ID found for request to {request.url.path}. "
+        "Authentication middleware should have set request.state.user_id or rejected the request. "
+        "Skipping HIPAA audit logging for this request."
     )
     return "unauthenticated"
 
@@ -136,37 +138,57 @@ class HIPAAAuditMiddleware(BaseHTTPMiddleware):
         process_time = time.time() - start_time
         
         # Log to HIPAA audit if PHI was accessed
-        if phi_accessed:
+        # Skip logging if authentication failed (401) or auth error (500) - auth middleware already logged it
+        if phi_accessed and response.status_code not in [401, 500]:
             audit_logger = get_audit_logger()
             
             try:
                 # Extract user ID from request
-                user_id = extract_user_id_from_request(request)
+                # Check if user_id exists in request state (set by auth middleware)
+                # If not, try fallback methods but log warning
+                user_id = None
+                if hasattr(request.state, "user_id") and request.state.user_id:
+                    user_id = request.state.user_id
+                else:
+                    # Fallback: try to extract from headers (for edge cases)
+                    user_id = extract_user_id_from_request(request)
+                    
+                    # If still "unauthenticated", skip HIPAA logging (auth middleware should have rejected)
+                    if user_id == "unauthenticated":
+                        logger.warning(
+                            f"⚠️  Skipping HIPAA audit log for {request.url.path}: "
+                            "Request reached HIPAA middleware without authentication. "
+                            "This should have been rejected by authentication middleware."
+                        )
+                        # Skip audit logging but continue to add headers below
+                        user_id = None
                 
-                await audit_logger.log_phi_access(
-                    user_id=user_id,
-                    action=request.method,
-                    resource_type=phi_info["resource_type"],
-                    resource_id=resource_id,
-                    patient_id=patient_id,
-                    ip_address=self._get_client_ip(request),
-                    user_agent=request.headers.get("user-agent", "unknown"),
-                    phi_fields=phi_info["phi_fields"],
-                    phi_accessed=True,
-                    success=response.status_code < 400,
-                    details={
-                        "endpoint": request.url.path,
-                        "method": request.method,
-                        "status_code": response.status_code,
-                        "process_time_ms": round(process_time * 1000, 2),
-                        "query_params": dict(request.query_params) if request.query_params else {},
-                        "response_size": response.headers.get("content-length", "0"),
-                        "visit_id": visit_id,
-                        "resource_creation": request.method == "POST" and request.url.path == "/patients/"
-                    },
-                    request_id=request_id,
-                    session_id=getattr(request.state, "session_id", None)
-                )
+                # Only log if we have a valid user_id
+                if user_id and user_id != "unauthenticated":
+                    await audit_logger.log_phi_access(
+                        user_id=user_id,
+                        action=request.method,
+                        resource_type=phi_info["resource_type"],
+                        resource_id=resource_id,
+                        patient_id=patient_id,
+                        ip_address=self._get_client_ip(request),
+                        user_agent=request.headers.get("user-agent", "unknown"),
+                        phi_fields=phi_info["phi_fields"],
+                        phi_accessed=True,
+                        success=response.status_code < 400,
+                        details={
+                            "endpoint": request.url.path,
+                            "method": request.method,
+                            "status_code": response.status_code,
+                            "process_time_ms": round(process_time * 1000, 2),
+                            "query_params": dict(request.query_params) if request.query_params else {},
+                            "response_size": response.headers.get("content-length", "0"),
+                            "visit_id": visit_id,
+                            "resource_creation": request.method == "POST" and request.url.path == "/patients/"
+                        },
+                        request_id=request_id,
+                        session_id=getattr(request.state, "session_id", None)
+                    )
             except Exception as e:
                 logger.error(f"Failed to log HIPAA audit: {e}")
         
