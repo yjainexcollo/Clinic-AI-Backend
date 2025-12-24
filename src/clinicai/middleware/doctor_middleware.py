@@ -1,6 +1,7 @@
 """Doctor middleware to extract and validate X-Doctor-ID per request."""
 
 import logging
+import os
 import re
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -52,15 +53,27 @@ class DoctorMiddleware(BaseHTTPMiddleware):
 
         doctor_id = request.headers.get("X-Doctor-ID") or request.headers.get("x-doctor-id")
 
+        # In strict mode we require the header. In non-strict mode we fall back to a default doctor ID.
+        require_header = os.getenv("REQUIRE_DOCTOR_ID", "false").lower() == "true"
+
         if not doctor_id:
-            logger.warning("❌ Missing X-Doctor-ID header for %s %s", request.method, request.url.path)
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "MISSING_DOCTOR_ID",
-                    "message": "X-Doctor-ID header is required",
-                    "details": {"path": request.url.path, "method": request.method},
-                },
+            if require_header:
+                logger.warning("❌ Missing X-Doctor-ID header for %s %s", request.method, request.url.path)
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "MISSING_DOCTOR_ID",
+                        "message": "X-Doctor-ID header is required",
+                        "details": {"path": request.url.path, "method": request.method},
+                    },
+                )
+            # Fallback: use default doctor ID for development / non-strict environments
+            doctor_id = os.getenv("DEFAULT_DOCTOR_ID", "D123")
+            logger.warning(
+                "⚠️ Missing X-Doctor-ID header for %s %s, falling back to DEFAULT_DOCTOR_ID=%s",
+                request.method,
+                request.url.path,
+                doctor_id,
             )
 
         if not self._validate_doctor_id(doctor_id):
