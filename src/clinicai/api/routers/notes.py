@@ -1088,7 +1088,8 @@ async def get_transcription_dialogue(request: Request, patient_id: str, visit_id
 
 @router.get(
     "/{patient_id}/visits/{visit_id}/soap",
-    response_model=ApiResponse[SoapNoteDTO],
+    # Use Dict[str, Any] so we can control key insertion order at runtime
+    response_model=ApiResponse[Dict[str, Any]],
     status_code=status.HTTP_200_OK,
     tags=["SOAP Note Generation"],
     responses={
@@ -1150,18 +1151,51 @@ async def get_soap_note(request: Request, patient_id: str, visit_id: str, patien
 
         # Return SOAP note data
         soap = visit.soap_note
-        soap_data = SoapNoteDTO(
-            subjective=soap.subjective or "",
-            objective=soap.objective or {},
-            assessment=soap.assessment or "",
-            plan=soap.plan or "",
-            highlights=soap.highlights or [],
-            red_flags=soap.red_flags or [],
-            generated_at=soap.generated_at.isoformat() if soap.generated_at else "",
-            model_info=soap.model_info or {},
-            confidence_score=soap.confidence_score
+
+        # Load doctor preferences to determine soap_order
+        try:
+            from ...adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
+            prefs = await DoctorPreferencesMongo.find_one(
+                DoctorPreferencesMongo.doctor_id == doctor_id
+            )
+            default_order = ["subjective", "objective", "assessment", "plan"]
+            raw_order = getattr(prefs, "soap_order", None) if prefs else None
+            if raw_order and isinstance(raw_order, list) and raw_order:
+                soap_order = [s for s in raw_order if s in default_order]
+                if len(soap_order) != len(default_order):
+                    soap_order = default_order
+            else:
+                soap_order = default_order
+        except Exception:
+            # Fail-open: if preferences cannot be loaded, use default order
+            soap_order = ["subjective", "objective", "assessment", "plan"]
+
+        # Build payload in the desired key order.
+        # JSON key order will follow insertion order of this dict.
+        section_map: Dict[str, Any] = {
+            "subjective": soap.subjective or "",
+            "objective": soap.objective or {},
+            "assessment": soap.assessment or "",
+            "plan": soap.plan or "",
+        }
+
+        payload: Dict[str, Any] = {}
+        for key in soap_order:
+            # Only insert known sections to avoid unexpected keys
+            if key in section_map:
+                payload[key] = section_map[key]
+
+        # Append non-ordered metadata fields
+        payload["highlights"] = soap.highlights or []
+        payload["red_flags"] = soap.red_flags or []
+        payload["generated_at"] = (
+            soap.generated_at.isoformat() if soap.generated_at else ""
         )
-        return ok(request, data=soap_data, message="Success")
+        payload["model_info"] = soap.model_info or {}
+        payload["confidence_score"] = soap.confidence_score
+        payload["soap_order"] = soap_order
+
+        return ok(request, data=payload, message="Success")
 
     except HTTPException:
         # Re-raise HTTPException directly (like 404 for SOAP note not found)
