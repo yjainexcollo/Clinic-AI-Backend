@@ -1163,17 +1163,17 @@ class OpenAIQuestionService(QuestionService):
                     has_negative_consent = True
                 else:
                     has_negative_consent = True  # Ambiguous = negative
-        # Set max_count based on chronicity and consent
-        if not is_chronic:
-            # Non-chronic: max 10 questions (step 10 is closing)
+        # Set max_count based on chronicity/heredity and consent
+        if not is_chronic and not is_hereditary:
+            # Non-chronic, non-hereditary: max 10 questions (step 10 is closing)
             max_count = min(max_count, 10)
         else:
-            # Chronic conditions
+            # Chronic and/or hereditary conditions
             if has_positive_consent:
-                # Chronic + positive consent: max 13 questions (step 13 is closing)
+                # Chronic/hereditary + positive consent: max 13 questions (step 13 is closing)
                 max_count = min(max_count, 13)
             else:
-                # Chronic + negative consent OR no consent yet: max 10 questions (step 10 is closing)
+                # Chronic/hereditary + negative consent OR no consent yet: max 10 questions (step 10 is closing)
                 max_count = min(max_count, 10)
         # =============================================================================
         step_number = current_count + 1  # 1-based (step 1 = chief complaint, handled separately)
@@ -1221,13 +1221,13 @@ class OpenAIQuestionService(QuestionService):
                 next_topic = "menstrual_cycle"
             else:
                 next_topic = "past_evaluation"
-        # Step 10-13: Deep diagnostic flow (chronic only, if consent positive)
-        elif step_number >= 10 and is_chronic:
+        # Step 10-13: Deep diagnostic flow (chronic/hereditary, if consent positive)
+        elif step_number >= 10 and (is_chronic or is_hereditary):
             # Consent status already checked above
             # If negative consent OR no consent yet, return closing question at step 10
             if has_negative_consent or not has_positive_consent:
                 if step_number == 10:
-                    logger.info("Chronic condition with negative/no consent - returning closing question at step 10")
+                    logger.info("Chronic/hereditary condition with negative/no consent - returning closing question at step 10")
                     return self._closing(language)
                 else:
                     # Should not reach here, but safety check
@@ -1245,18 +1245,18 @@ class OpenAIQuestionService(QuestionService):
                     # Step 12: Screening/complications
                     next_topic = "screening"
                 elif deep_question_num == 4:
-                    # Step 13: Closing question (mandatory for chronic + positive consent)
-                    logger.info("Step 13 reached (chronic + positive consent) - returning mandatory closing question")
+                    # Step 13: Closing question (mandatory for chronic/hereditary + positive consent)
+                    logger.info("Step 13 reached (chronic/hereditary + positive consent) - returning mandatory closing question")
                     return self._closing(language)
                 else:
                     # Beyond step 13, return closing
                     return self._closing(language)
-        # Step 10: Non-chronic OR chronic with negative consent gets closing question
+        # Step 10: Non-chronic/non-hereditary OR chronic/hereditary with negative consent gets closing question
         elif step_number == 10:
-            if not is_chronic:
-                logger.info("Step 10 reached (non-chronic) - returning closing question")
-            elif is_chronic and (has_negative_consent or not has_positive_consent):
-                logger.info("Step 10 reached (chronic + negative/no consent) - returning closing question")
+            if not is_chronic and not is_hereditary:
+                logger.info("Step 10 reached (non-chronic, non-hereditary) - returning closing question")
+            elif (is_chronic or is_hereditary) and (has_negative_consent or not has_positive_consent):
+                logger.info("Step 10 reached (chronic/hereditary + negative/no consent) - returning closing question")
             return self._closing(language)
         # Safety check: beyond max_count (should not reach here normally due to step-based logic)
         elif current_count >= max_count:
