@@ -54,17 +54,20 @@ def _scenario_to_version_prefix(scenario: PromptScenario) -> str:
 
 def _get_git_commit_hash() -> Optional[str]:
     """
-    Get current git commit hash if available.
+    Get current git commit hash if available, but ONLY if on main/master branch.
+    
+    This prevents false version creations from local/feature branch commits.
+    Only tracks commits on main/master branch (deployed code).
     
     Tries multiple methods:
-    1. Environment variable GITHUB_SHA (set by GitHub Actions)
-    2. Environment variable GIT_COMMIT (set manually)
-    3. Git command: git rev-parse HEAD
+    1. Environment variable GITHUB_SHA (set by GitHub Actions) - always trusted
+    2. Environment variable GIT_COMMIT (set manually) - always trusted
+    3. Git command: git rev-parse HEAD (only if on main/master branch)
     
     Returns:
-        Git commit hash string or None if unavailable
+        Git commit hash string or None if unavailable or not on main/master
     """
-    # Try environment variables first (CI/CD deployments)
+    # Try environment variables first (CI/CD deployments) - always trusted
     github_sha = os.getenv("GITHUB_SHA")
     if github_sha:
         logger.debug(f"Using git commit from GITHUB_SHA: {github_sha[:8]}...")
@@ -76,6 +79,7 @@ def _get_git_commit_hash() -> Optional[str]:
         return git_commit
     
     # Try git command (local development or deployments with git available)
+    # IMPORTANT: Only return commit hash if on main/master branch
     try:
         import pathlib
         
@@ -96,26 +100,59 @@ def _get_git_commit_hash() -> Optional[str]:
             project_root = current_file.parent.parent.parent.parent.parent
         
         if project_root and project_root.exists():
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+            # First, check current branch name
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 capture_output=True,
                 text=True,
                 cwd=str(project_root),
                 timeout=5,
                 check=False
             )
-            if result.returncode == 0:
-                commit_hash = result.stdout.strip()
-                if commit_hash:
-                    logger.debug(f"Using git commit from git command: {commit_hash[:8]}...")
-                    return commit_hash
+            
+            if branch_result.returncode == 0:
+                current_branch = branch_result.stdout.strip()
+                
+                # Only track commits on main/master branch
+                if current_branch not in ["main", "master", "production"]:
+                    logger.debug(
+                        f"Skipping version tracking: on branch '{current_branch}' "
+                        f"(only tracking main/master/production). "
+                        f"Version will be created when code is merged to main/master."
+                    )
+                    return None
+                
+                # On main/master branch, get commit hash
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_root),
+                    timeout=5,
+                    check=False
+                )
+                if result.returncode == 0:
+                    commit_hash = result.stdout.strip()
+                    if commit_hash:
+                        logger.debug(
+                            f"Using git commit from git command (branch: {current_branch}): "
+                            f"{commit_hash[:8]}..."
+                        )
+                        return commit_hash
+            else:
+                # Could not determine branch, skip tracking
+                logger.debug(f"Could not determine git branch: {branch_result.stderr}")
+                return None
+                
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
         logger.debug(f"Could not get git commit hash: {e}")
     
-    # No git commit available
+    # No git commit available or not on main/master branch
     logger.info(
-        "ℹ️  No git commit hash available. Version tracking will only create versions on deployment "
-        "(when git commit changes). Set GITHUB_SHA or GIT_COMMIT environment variable for deployment-based tracking."
+        "ℹ️  No git commit hash available or not on main/master branch. "
+        "Version tracking will only create versions on deployment "
+        "(when code is on main/master branch and git commit changes). "
+        "Set GITHUB_SHA or GIT_COMMIT environment variable for deployment-based tracking."
     )
     return None
 

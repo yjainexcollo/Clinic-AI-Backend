@@ -19,32 +19,68 @@ def normalize_template(template: str) -> str:
     
     This ensures that only structural changes to prompts create new versions,
     not changes to dynamic data.
+    
+    IMPORTANT: Only tracks hardcoded system prompts, not dynamic runtime values.
     """
     if not template:
         return ""
     
     normalized = template
     
-    # Replace common dynamic variables with placeholders (order matters!)
-    # First handle complex expressions
+    # STEP 1: Replace complex f-string expressions with nested conditionals
+    # Pattern: f"{f'...' if condition else ''}" -> {DYNAMIC_VAR}
+    normalized = re.sub(
+        r'f"\{f\'[^\']*?\'[^}]*?\}"',
+        '{DYNAMIC_VAR}',
+        normalized
+    )
+    
+    # STEP 2: Replace method calls and complex expressions
+    # Pattern: {self.method(...)} or {obj.method(...)} -> {DYNAMIC_VAR}
+    normalized = re.sub(
+        r'\{[^}]+\._[a-zA-Z_][a-zA-Z0-9_]*\([^)]*\)\}',  # {self._method(...)}
+        '{DYNAMIC_VAR}',
+        normalized
+    )
+    normalized = re.sub(
+        r'\{[^}]+\.format\([^)]*\)\}',  # {obj.format(...)}
+        '{DYNAMIC_VAR}',
+        normalized
+    )
+    
+    # STEP 3: Replace dict.get() calls
+    # Pattern: {dict.get('key', 'default')} -> {DYNAMIC_DICT}
     normalized = re.sub(
         r'\{[^}]+\.get\([^)]+\)\}',  # {dict.get('key', 'default')}
         '{DYNAMIC_DICT}',
         normalized
     )
+    
+    # STEP 4: Replace dict indexing
+    # Pattern: {dict['key']} or {dict["key"]} -> {DYNAMIC_DICT}
     normalized = re.sub(
         r'\{[^}]+\[[^\]]+\]\}',  # {dict['key']} or {dict["key"]}
         '{DYNAMIC_DICT}',
         normalized
     )
-    # Then handle simple variables (but not the placeholders we just created)
+    
+    # STEP 5: Replace simple f-string variables (but preserve our placeholders)
+    # Pattern: f"{variable}" -> {DYNAMIC_VAR} (but only if not already a placeholder)
+    normalized = re.sub(
+        r'f"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"',
+        lambda m: '{DYNAMIC_VAR}' if m.group(1) not in ['DYNAMIC_DICT', 'DYNAMIC_VAR', 'VERSION'] else m.group(0),
+        normalized
+    )
+    
+    # STEP 6: Replace simple variables (not in f-strings)
+    # Pattern: {variable} -> {DYNAMIC_VAR} (but preserve our placeholders)
     normalized = re.sub(
         r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}',  # {variable} - but not {DYNAMIC_DICT} etc.
         lambda m: '{DYNAMIC_VAR}' if m.group(1) not in ['DYNAMIC_DICT', 'DYNAMIC_VAR', 'VERSION'] else m.group(0),
         normalized
     )
     
-    # Remove version strings (they change with each version)
+    # STEP 7: Remove version strings (they change with each version)
     normalized = re.sub(
         r'Prompt version:\s*\{?[A-Z0-9_\-]+\}?',
         'Prompt version: {VERSION}',
@@ -52,7 +88,7 @@ def normalize_template(template: str) -> str:
         flags=re.IGNORECASE
     )
     
-    # Normalize whitespace (preserve intentional line breaks)
+    # STEP 8: Normalize whitespace (preserve intentional line breaks)
     normalized = re.sub(r'[ \t]+', ' ', normalized)  # Multiple spaces/tabs -> single space
     normalized = re.sub(r' *\n *', '\n', normalized)  # Clean up line breaks
     normalized = re.sub(r'\n{3,}', '\n\n', normalized)  # Max 2 consecutive newlines
@@ -62,7 +98,7 @@ def normalize_template(template: str) -> str:
 
 
 def extract_soap_prompt() -> str:
-    """Extract SOAP prompt template from soap_service_openai.py"""
+    """Extract SOAP prompt template from soap_service_openai.py (ENGLISH VERSION ONLY)."""
     import inspect
     from clinicai.adapters.external import soap_service_openai
     
@@ -72,16 +108,21 @@ def extract_soap_prompt() -> str:
     
     source = inspect.getsource(method)
     
+    # Find the else block (English version)
+    else_start = source.find('else:')
+    if else_start == -1:
+        raise ValueError("Could not find else block (English prompt) in SOAP method")
+    
     # Extract English prompt (else block) - handle f-strings
     # Pattern matches: else:\n            prompt = f"""..."""
     match = re.search(
         r'else:\s+prompt\s*=\s*f?"""(.*?)"""',
-        source,
+        source[else_start:],
         re.DOTALL
     )
     
     if not match:
-        # Try without 'else:' prefix
+        # Try without 'else:' prefix (fallback)
         match = re.search(
             r'prompt\s*=\s*f?"""You are a clinical scribe(.*?)"""',
             source,
@@ -92,11 +133,23 @@ def extract_soap_prompt() -> str:
         raise ValueError("Could not extract SOAP prompt template")
     
     template = match.group(1)
+    
+    # Validate it's English (not Spanish)
+    if 'Eres un escribano' in template or 'Genera una nota SOAP' in template:
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
+    
+    if 'You are a clinical scribe' not in template:
+        raise ValueError("Extracted prompt does not contain English marker! Check extraction logic.")
+    
+    # CRITICAL: Replace {ordered_en_sections} with {DYNAMIC_VAR} BEFORE normalization
+    # This variable contains the JSON schema which is dynamically built
+    template = template.replace('{ordered_en_sections}', '{DYNAMIC_VAR}')
+    
     return normalize_template(template)
 
 
 def extract_postvisit_prompt() -> str:
-    """Extract post-visit summary prompt template"""
+    """Extract post-visit summary prompt template (ENGLISH VERSION ONLY)."""
     import inspect
     from clinicai.adapters.external import soap_service_openai
     
@@ -106,15 +159,22 @@ def extract_postvisit_prompt() -> str:
     
     source = inspect.getsource(method)
     
+    # Find the else block (English version)
+    else_start = source.find('else:')
+    if else_start == -1:
+        raise ValueError("Could not find else block (English prompt) in post-visit method")
+    
+    # Extract English prompt from else block
     match = re.search(
         r'else:\s+prompt\s*=\s*f?"""(.*?)"""',
-        source,
+        source[else_start:],
         re.DOTALL
     )
     
     if not match:
+        # Fallback: try without 'else:' prefix
         match = re.search(
-            r'prompt\s*=\s*f?"""(.*?)"""',
+            r'prompt\s*=\s*f?"""You are generating a post-visit summary(.*?)"""',
             source,
             re.DOTALL
         )
@@ -123,6 +183,14 @@ def extract_postvisit_prompt() -> str:
         raise ValueError("Could not extract post-visit prompt template")
     
     template = match.group(1)
+    
+    # Validate it's English (not Spanish)
+    if 'Estás generando un resumen post-consulta' in template or 'Genera un resumen post-consulta' in template:
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
+    
+    if 'You are generating a post-visit summary' not in template:
+        raise ValueError("Extracted prompt does not contain English marker! Check extraction logic.")
+    
     return normalize_template(template)
 
 
@@ -321,13 +389,32 @@ def extract_previsit_prompt() -> str:
     # Extract the template (from "Role & Task" to just before the closing paren)
     template = source[role_marker_start:pos]
     
-    # Replace f-string dynamic variables with placeholders BEFORE normalizing
+    # CRITICAL: Replace ALL f-string dynamic variables with placeholders BEFORE normalizing
     # These are runtime values that shouldn't affect version tracking
-    # Pattern: f"{variable}" -> {DYNAMIC_VAR}
-    template = re.sub(r'f"\{prefs_snippet\}"', '{DYNAMIC_VAR}', template)
-    template = re.sub(r'f"\{medication_images_info\}"', '{DYNAMIC_VAR}', template)
-    template = re.sub(r'f"\{f\'[^\']*?medication_images_info[^\']*?\' if medication_images_info else \'\'}"', '{DYNAMIC_VAR}', template)
-    template = re.sub(r'f"\{self\._format_intake_answers\(intake_answers\)\}"', '{DYNAMIC_VAR}', template)
+    
+    # Replace f-string variables: f"{variable}" -> {DYNAMIC_VAR}
+    template = re.sub(r'f"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"', '{DYNAMIC_VAR}', template)
+    
+    # Replace complex f-string expressions with method calls
+    template = re.sub(r'f"\{self\.[^}]+\}"', '{DYNAMIC_VAR}', template)
+    
+    # Replace conditional f-string expressions: f"{f'...' if ... else ''}"
+    template = re.sub(r'f"\{f\'[^\']*?\'[^}]*?\}"', '{DYNAMIC_VAR}', template)
+    
+    # Replace specific known variables (explicit list for safety)
+    known_dynamic_vars = [
+        'prefs_snippet',
+        'section_definitions_text',
+        'exclusion_rules_text',
+        'headings_text',
+        'guidelines_text',
+        'example_block',
+        'medication_images_info',
+    ]
+    for var in known_dynamic_vars:
+        # Match f"{var}" or just {var} in the template
+        template = re.sub(rf'f?"\{{\s*{re.escape(var)}\s*\}}"', '{DYNAMIC_VAR}', template)
+        template = re.sub(rf'\{{\s*{re.escape(var)}\s*\}}', '{DYNAMIC_VAR}', template)
     
     # Remove quote concatenation (Python automatically concatenates adjacent string literals)
     # Pattern: "text1" "text2" -> "text1text2" (remove quotes between)
@@ -337,6 +424,13 @@ def extract_previsit_prompt() -> str:
     
     # Remove leading/trailing quotes and whitespace
     template = template.strip().strip('"')
+    
+    # Validate it's English (not Spanish)
+    if 'Rol y Tarea' in template or 'Motivo de Consulta:' in template:
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
+    
+    if 'Role & Task' not in template:
+        raise ValueError("Extracted prompt does not contain English marker 'Role & Task'! Check extraction logic.")
     
     return normalize_template(template)
 
