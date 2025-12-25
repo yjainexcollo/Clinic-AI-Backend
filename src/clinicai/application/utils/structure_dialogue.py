@@ -605,7 +605,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
             if isinstance(parsed, list):
                 return parsed
         except Exception:
-            # Heuristic fallback: alternate speakers
+                # Heuristic fallback: alternate speakers
             turns: List[Dict[str, str]] = []
             patient_label = "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
             next_role = "Doctor"

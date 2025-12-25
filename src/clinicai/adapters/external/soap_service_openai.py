@@ -92,13 +92,27 @@ class OpenAISoapService(SoapService):
         return translated_text
 
     def _normalize_language(self, language: str) -> str:
-        """Normalize language code to handle both 'sp' and 'es' for backward compatibility."""
+        """
+        Normalize language code for backend LLM prompts.
+        
+        Frontend uses: 'en' or 'sp'
+        Backend normalizes to: 'en' or 'es' (for LLM prompts)
+        
+        Mapping:
+        - 'sp', 'es', 'spanish', 'español', 'es-es', 'es-mx' → 'es'
+        - unknown/empty → 'en' (default)
+        """
         if not language:
             return "en"
         normalized = language.lower().strip()
-        if normalized in ['es', 'sp']:
-            return 'sp'
-        return normalized if normalized in ['en', 'sp'] else 'en'
+        if normalized in ['es', 'sp', 'spanish', 'español', 'es-es', 'es-mx']:
+            return 'es'
+        return normalized if normalized in ['en', 'es'] else 'en'
+    
+    def _get_output_language_name(self, language: str) -> str:
+        """Get human-readable language name for LLM prompts."""
+        lang = self._normalize_language(language)
+        return "Spanish" if lang == "es" else "English"
 
     async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Fetch doctor preferences with 1s timeout; fail-open on errors."""
@@ -161,7 +175,7 @@ class OpenAISoapService(SoapService):
                 vitals_data = pre_visit_summary['vitals']['data']
                 vitals_text = self._format_vitals_for_soap(vitals_data)
                 # Translate vitals to Spanish if needed
-                if lang == "sp":
+                if lang == "es":
                     vitals_text = self._translate_vitals_to_spanish(vitals_text)
                 context_parts.append(f"Vitals Data: {vitals_text}")
         
@@ -315,7 +329,8 @@ class OpenAISoapService(SoapService):
         ordered_en_sections = ",\n".join(en_section_map[s] for s in soap_order)
 
         # Create language-aware prompt
-        if lang == "sp":
+        output_language = self._get_output_language_name(language)
+        if lang == "es":
             prompt = f"""
 Eres un escribano clínico que genera notas SOAP a partir de consultas médico-paciente.
 
@@ -337,6 +352,11 @@ INSTRUCCIONES:
 6. Enfócate en lo que realmente se dijo durante la consulta
 7. Nivel de detalle preferido: {detail_level}
 8. Formato preferido: {formatting_pref}
+
+Reglas de Idioma:
+- Escribe todos los valores de texto en lenguaje natural en {output_language}.
+- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.
+- Mantén la terminología médica apropiada para {output_language}.
 
 FORMATO REQUERIDO (JSON):
 {{
@@ -380,6 +400,11 @@ INSTRUCTIONS:
 8. Incorporate the Objective Vitals provided in CONTEXT succinctly; do not replace transcript-derived exam with vitals—combine them.
 9. Preferred detail level: {detail_level}
 10. Preferred formatting: {formatting_pref}
+
+Language Rules:
+- Write all natural-language text values in {output_language}.
+- Do NOT translate JSON keys, enums, codes, field names, or IDs.
+- Keep medical terminology appropriate for {output_language}.
 
 REQUIRED FORMAT (JSON):
 {{
@@ -655,9 +680,9 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
         """Generate post-visit summary for patient sharing."""
         # Normalize language code
         lang = self._normalize_language(language)
-        
         # Create the prompt for post-visit summary
-        if lang == "sp":
+        output_language = self._get_output_language_name(language)
+        if lang == "es":
             prompt = f"""
 Estás generando un resumen post-consulta para un paciente para compartir por WhatsApp. Debe ser claro, completo y amigable para el paciente.
 
@@ -677,6 +702,11 @@ DATOS DE NOTA SOAP:
 
 INSTRUCCIONES:
 Genera un resumen post-consulta completo siguiendo esta estructura exacta en formato JSON:
+
+Reglas de Idioma:
+- Escribe todos los valores de texto en lenguaje natural en {output_language}.
+- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.
+- Mantén la terminología médica apropiada para {output_language}.
 
 {{
     "key_findings": [
@@ -749,6 +779,11 @@ SOAP NOTE DATA:
 
 INSTRUCTIONS:
 Generate a comprehensive post-visit summary following this exact structure in JSON format:
+
+Language Rules:
+- Write all natural-language text values in {output_language}.
+- Do NOT translate JSON keys, enums, codes, field names, or IDs.
+- Keep medical terminology appropriate for {output_language}.
 
 {{
     "key_findings": [

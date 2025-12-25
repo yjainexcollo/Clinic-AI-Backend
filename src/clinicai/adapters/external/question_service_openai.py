@@ -30,12 +30,28 @@ logger = logging.getLogger("clinicai")
 # SHARED UTILITIES
 # =============================================================================
 def _normalize_language(language: str) -> str:
+    """
+    Normalize language code for backend LLM prompts.
+    
+    Frontend uses: 'en' or 'sp'
+    Backend normalizes to: 'en' or 'es' (for LLM prompts)
+    
+    Mapping:
+    - 'sp', 'es', 'spanish', 'español', 'es-es', 'es-mx' → 'es'
+    - unknown/empty → 'en' (default)
+    """
     if not language:
         return "en"
     normalized = language.lower().strip()
-    if normalized in ["es", "sp"]:
-        return "sp"
-    return normalized if normalized in ["en", "sp"] else "en"
+    if normalized in ["sp", "es", "spanish", "español", "es-es", "es-mx"]:
+        return "es"
+    return normalized if normalized in ["en", "es"] else "en"
+
+
+def _get_output_language_name(language: str) -> str:
+    """Get human-readable language name for LLM prompts."""
+    lang = _normalize_language(language)
+    return "Spanish" if lang == "es" else "English"
 
 
 def _format_qa_pairs(qa_pairs: List[Dict[str, str]]) -> str:
@@ -603,7 +619,7 @@ class QuestionGenerator:
     # ----------------------------
     # ✅ Topic rulebook + validator
     # ----------------------------
-    _TOPIC_KEYWORDS: Dict[str, List[str]] = {
+    _TOPIC_KEYWORDS_EN: Dict[str, List[str]] = {
         "duration": ["how long", "when did", "since when", "start", "began", "duration"],
         "associated_symptoms": [
             "symptom", "fever", "fatigue", "nausea", "vomit", "cough", "breath",
@@ -624,9 +640,31 @@ class QuestionGenerator:
         "chronic_monitoring": ["monitor", "check", "readings", "hba1c", "fasting", "logs", "follow up"],
         "lab_tests": ["lab", "blood test", "results", "hba1c", "cholesterol", "thyroid", "creatinine", "test results"],
         "screening": ["screening", "eye", "kidney", "feet", "foot", "retina", "complications", "imaging", "stress test"],
-
     }
-    _TOPIC_FALLBACK_Q: Dict[str, str] = {
+
+    _TOPIC_KEYWORDS_ES: Dict[str, List[str]] = {
+        "duration": ["cuánto tiempo", "cuándo", "desde cuándo", "inicio", "comenzó", "duración", "diagnosticaron", "causado", "causa"],
+        "associated_symptoms": [
+            "síntoma", "fiebre", "fatiga", "náusea", "vómito", "tos", "respiración",
+            "mareo", "dolor de cabeza", "micción", "sed", "visión", "pérdida de peso",
+            "hormigueo", "entumecimiento", "hinchazón"
+        ],
+        "current_medications": ["medicamento", "medicina", "tableta", "pastilla", "insulina", "metformina", "dosis", "mg", "unidades", "tomando"],
+        "past_medical_history": ["historial", "diagnosticado", "pasado", "anterior", "cirugía", "hospital", "condición"],
+        "triggers": ["desencadena", "peor", "mejor", "después", "antes", "comida", "ejercicio", "estrés", "sueño"],
+        "travel_history": ["viaje", "viajado", "vuelo", "extranjero", "fuera de la ciudad"],
+        "lifestyle_functional_impact": ["vida diaria", "trabajo", "sueño", "apetito", "actividad", "ejercicio", "dieta", "rutina", "impacto", "función"],
+        "family_history": ["familia", "madre", "padre", "hermanos", "familiar", "pariente"],
+        "allergies": ["alergia", "alérgico", "erupción", "ronchas", "reacción"],
+        "pain_assessment": ["dolor", "severidad", "0 a 10", "escala", "dónde", "ubicación", "irradia"],
+        "temporal": ["patrón", "frecuencia", "con qué frecuencia", "momento", "episodios", "va y viene", "progreso"],
+        "menstrual_cycle": ["período", "menstrual", "ciclo", "embarazada", "última regla", "sangrado"],
+        "past_evaluation": ["pruebas", "escaneo", "rayos x", "laboratorio", "doctor", "evaluación", "informe"],
+        "chronic_monitoring": ["monitorear", "revisar", "lecturas", "hba1c", "ayunas", "registros", "seguimiento"],
+        "lab_tests": ["laboratorio", "análisis de sangre", "resultados", "hba1c", "colesterol", "tiroides", "creatinina", "resultados de pruebas"],
+        "screening": ["detección", "ojos", "riñones", "pies", "pie", "retina", "complicaciones", "imágenes", "prueba de esfuerzo"],
+    }
+    _TOPIC_FALLBACK_Q_EN: Dict[str, str] = {
         "duration": "How long have you had this problem?",
         "associated_symptoms": "What other symptoms have you noticed along with this?",
         "current_medications": "Are you currently taking any medicines or insulin? If yes, which ones and what doses?",
@@ -643,20 +681,43 @@ class QuestionGenerator:
         "chronic_monitoring": "Do you regularly monitor your condition (e.g., sugar readings)? If yes, what are typical values?",
         "lab_tests": "Have you had any recent lab tests for this condition (like blood tests), and what do you remember about the results?",
         "screening": "Have you had any screening tests for complications (like eye, heart, or kidney exams) recently?",
-
     }
 
-    def _question_matches_topic(self, chosen_topic: str, question: str) -> bool:
+    _TOPIC_FALLBACK_Q_ES: Dict[str, str] = {
+        "duration": "¿Cuánto tiempo ha tenido este problema?",
+        "associated_symptoms": "¿Qué otros síntomas ha notado junto con esto?",
+        "current_medications": "¿Está tomando actualmente algún medicamento o insulina? Si es así, ¿cuáles y qué dosis?",
+        "past_medical_history": "¿Tiene alguna condición médica pasada o cirugías que deba conocer?",
+        "triggers": "¿Ha notado algo que lo mejore o empeore (comida, estrés, actividad, hora del día)?",
+        "travel_history": "¿Ha viajado a algún lugar recientemente (en las últimas semanas)?",
+        "lifestyle_functional_impact": "¿Cómo está afectando esto su rutina diaria: sueño, trabajo, dieta o actividad?",
+        "family_history": "¿Alguien en su familia tiene condiciones de salud similares (como diabetes, presión arterial, tiroides)?",
+        "allergies": "¿Tiene alguna alergia a medicamentos, alimentos o cualquier otra cosa?",
+        "pain_assessment": "Si tiene dolor, ¿dónde está y qué tan severo es en una escala de 0 a 10?",
+        "temporal": "¿Con qué frecuencia ocurre esto y está mejorando, empeorando o se mantiene igual?",
+        "menstrual_cycle": "¿Cuándo fue su último período menstrual y sus ciclos son regulares?",
+        "past_evaluation": "¿Ha tenido alguna prueba o visita al médico por esto? ¿Cuáles fueron los resultados?",
+        "chronic_monitoring": "¿Monitorea regularmente su condición (por ejemplo, lecturas de azúcar)? Si es así, ¿cuáles son los valores típicos?",
+        "lab_tests": "¿Ha tenido alguna prueba de laboratorio reciente para esta condición (como análisis de sangre) y qué recuerda sobre los resultados?",
+        "screening": "¿Ha tenido alguna prueba de detección para complicaciones (como exámenes de ojos, corazón o riñones) recientemente?",
+    }
+
+    def _question_matches_topic(self, chosen_topic: str, question: str, language: str = "en") -> bool:
         q = (question or "").strip().lower()
         if not q:
             return False
-        kws = self._TOPIC_KEYWORDS.get(chosen_topic, [])
+        lang = self._normalize_language(language)
+        keyword_dict = self._TOPIC_KEYWORDS_ES if lang == "es" else self._TOPIC_KEYWORDS_EN
+        kws = keyword_dict.get(chosen_topic, [])
         if not kws:
             return True  # if no rulebook, don't block
         return any(kw in q for kw in kws)
 
-    def _get_fallback_question(self, chosen_topic: str) -> str:
-        return self._TOPIC_FALLBACK_Q.get(chosen_topic, "Could you tell me more about that?")
+    def _get_fallback_question(self, chosen_topic: str, language: str = "en") -> str:
+        lang = self._normalize_language(language)
+        fallback_dict = self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
+        default_q = "¿Podría contarme más sobre eso?" if lang == "es" else "Could you tell me more about that?"
+        return fallback_dict.get(chosen_topic, default_q)
 
     async def _llm_generate_once(self, system_prompt: str, user_prompt: str) -> str:
         resp = await call_llm_with_telemetry(
@@ -694,15 +755,20 @@ class QuestionGenerator:
                 if i < len(previous_answers):
                     all_qa.append({"question": asked_questions[i], "answer": previous_answers[i]})
             qa_history = self._format_qa_pairs(all_qa) if all_qa else ""
+        lang = _normalize_language(language)
+        output_language = _get_output_language_name(language)
         # ✅ Clear, focused prompt without refusal option
         system_prompt = f"""You are AGENT-03 "INTAKE QUESTION GENERATOR" for clinical intake interviews.
 Your task: Generate ONE clear, concise medical question about the topic: {chosen_topic}
+Language Requirements:
+- Write the question in {output_language}
+- Use natural, conversational language appropriate for a medical interview in {output_language}
+- Maintain medical terminology appropriate for {output_language}
 Requirements:
 - Output ONLY the question text (no quotes, no numbering, no explanations)
 - Question must end with "?"
 - Keep it under {max_words} words
 - Focus ONLY on {chosen_topic} - do not combine with other topics
-- Use natural, conversational language appropriate for a medical interview
 - Do not repeat questions from the conversation history
 - Make the question specific and easy for the patient to answer
 Topic-specific guidance:
@@ -713,32 +779,53 @@ Topic-specific guidance:
 - triggers: Ask about what brings it on AND what makes it worse
 - lifestyle_functional_impact: Ask about daily activities, work, AND routine changes
 - temporal: Ask about frequency AND progression (better/worse/same)
-- chronic_monitoring: Ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values (e.g., "How often do you or your doctors check your [condition-specific metric], and what are your typical readings?")
+- chronic_monitoring: Ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values
  - lab_tests: Ask specifically about LAB TEST RESULTS (what lab tests, what results) for this condition.
  - screening: Ask specifically about FORMAL SCREENING EXAMS/COMPLICATION CHECKS (what screening exams, when last done) — DO NOT mix lab tests into screening.
 IMPORTANT: For deep diagnostic questions (chronic_monitoring, lab_tests, screening), follow the SPECIAL INSTRUCTION provided in the user prompt below.
+CRITICAL: Write the question in {output_language}. Use natural, conversational {output_language} appropriate for a medical interview.
 Generate the question now.
 """
         deep_diag_note = ""
         if deep_diagnostic_question_num is not None:
-            if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n" \
-                                 "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n" \
-                                 "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n" \
-                                 "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n" \
-                                 "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
-            elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS ONLY:\n" \
-                    "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n" \
-                    "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n" \
-                    "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n" \
-                    "Example: 'Have you had any recent lab tests for this condition, and what do you remember about the results?'"
-            elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
-                deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n" \
-                                 "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n" \
-                                 "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n" \
-                    "Format: Ask if they've had screening exams AND when they were last done.\n" \
-                    "Example: 'Have you had any screening tests for complications related to this condition (like eye, heart, or kidney exams), and when were they last done?'"
+            if lang == "es":
+                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
+                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #1 - MONITOREO EN CASA Y CLÍNICO:\n" \
+                                     "Pregunte sobre cómo el paciente monitorea esta condición crónica TANTO en casa como en entornos clínicos.\n" \
+                                     "Ejemplos: lecturas de azúcar en sangre en casa, controles de presión arterial en casa, y controles con dispositivos o doctores en la clínica.\n" \
+                                     "Formato: Pregunte sobre la frecuencia del monitoreo Y los valores/lecturas típicas (en casa y/o clínica).\n" \
+                                     "Ejemplo: '¿Con qué frecuencia usted o sus doctores revisan sus lecturas para esta condición, y cuáles son sus valores usuales?'"
+                elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
+                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #2 - SOLO RESULTADOS DE PRUEBAS DE LABORATORIO:\n" \
+                        "Pregunte sobre RESULTADOS DE PRUEBAS DE LABORATORIO RECIENTES relevantes para esta condición crónica.\n" \
+                        "Enfóquese en: HbA1c, glucosa en ayunas, pruebas de función renal, paneles de colesterol, pruebas de tiroides, u otras pruebas de laboratorio específicas de la condición.\n" \
+                        "Formato: Pregunte qué pruebas de laboratorio recientes han tenido Y qué recuerdan sobre los resultados.\n" \
+                        "Ejemplo: '¿Ha tenido alguna prueba de laboratorio reciente para esta condición, y qué recuerda sobre los resultados?'"
+                elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
+                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #3 - EXÁMENES DE DETECCIÓN/CHECKS DE COMPLICACIONES (NO PRUEBAS DE LAB):\n" \
+                                     "Pregunte sobre EXÁMENES DE DETECCIÓN FORMALES y CHECKS DE COMPLICACIONES (no pruebas de laboratorio rutinarias) realizados debido a esta condición crónica.\n" \
+                                     "Enfóquese en: exámenes de ojos/pies, imágenes cardíacas o pruebas de esfuerzo, imágenes renales, pruebas de función pulmonar, u otros exámenes de detección.\n" \
+                        "Formato: Pregunte si han tenido exámenes de detección Y cuándo fueron realizados por última vez.\n" \
+                        "Ejemplo: '¿Ha tenido alguna prueba de detección para complicaciones relacionadas con esta condición (como exámenes de ojos, corazón o riñones), y cuándo fueron realizados por última vez?'"
+            else:
+                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
+                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n" \
+                                     "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n" \
+                                     "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n" \
+                                     "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n" \
+                                     "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
+                elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
+                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS ONLY:\n" \
+                        "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n" \
+                        "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n" \
+                        "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n" \
+                        "Example: 'Have you had any recent lab tests for this condition, and what do you remember about the results?'"
+                elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
+                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n" \
+                                     "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n" \
+                                     "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n" \
+                        "Format: Ask if they've had screening exams AND when they were last done.\n" \
+                        "Example: 'Have you had any screening tests for complications related to this condition (like eye, heart, or kidney exams), and when were they last done?'"
         user_prompt = f"""
 CHOSEN TOPIC (MUST FOLLOW): {chosen_topic}{deep_diag_note}
 Patient:
@@ -789,7 +876,7 @@ Generate ONE question now, strictly about {chosen_topic}.
             except Exception as e:
                 logger.warning("Agent3: failed to persist interaction (attempt 1): %s", e)
         # If question is empty or doesn't match topic => retry once
-        if (not q1) or (not self._question_matches_topic(chosen_topic, q1)):
+        if (not q1) or (not self._question_matches_topic(chosen_topic, q1, language)):
             correction = f"""
 Your previous question was not clearly focused on the topic: {chosen_topic}
 Please generate a question that is SPECIFICALLY about {chosen_topic}.
@@ -811,7 +898,7 @@ Return ONE question ONLY.
                         visit_id=visit_id,
                         patient_id=patient_id,
                         question_number=question_number,
-                        question_text=q2 if q2 and self._question_matches_topic(chosen_topic, q2) else None,
+                        question_text=q2 if q2 and self._question_matches_topic(chosen_topic, q2, language) else None,
                         agent_name="agent3_question_generator",
                         user_prompt=user_prompt + "\n\n" + correction,  # Only user_prompt, NO system_prompt
                         response_text=response_text_2,
@@ -823,10 +910,10 @@ Return ONE question ONLY.
                     )
                 except Exception as e:
                     logger.warning("Agent3: failed to persist interaction (attempt 2): %s", e)
-            if q2 and self._question_matches_topic(chosen_topic, q2):
+            if q2 and self._question_matches_topic(chosen_topic, q2, language):
                 return q2
             # deterministic fallback
-            return self._postprocess_question_text(self._get_fallback_question(chosen_topic))
+            return self._postprocess_question_text(self._get_fallback_question(chosen_topic, language))
         return q1
 # =============================================================================
 # OPTIONAL: Safety Validator
@@ -967,7 +1054,7 @@ class OpenAIQuestionService(QuestionService):
 
     def _closing(self, language: str) -> str:
         lang = self._normalize_language(language)
-        return "¿Hay algo más que le gustaría compartir sobre su condición?" if lang == "sp" else \
+        return "¿Hay algo más que le gustaría compartir sobre su condición?" if lang == "es" else \
             "Is there anything else you'd like to share about your condition?"
 
     async def generate_first_question(
@@ -979,7 +1066,7 @@ class OpenAIQuestionService(QuestionService):
         question_number: Optional[int] = None,
     ) -> str:
         lang = self._normalize_language(language)
-        return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?" if lang == "sp" else \
+        return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?" if lang == "es" else \
             "Why have you come in today? What is the main concern you want help with?"
 
     async def generate_next_question(
@@ -1127,7 +1214,7 @@ class OpenAIQuestionService(QuestionService):
             if is_chronic or is_hereditary:
                 # Return consent question directly (not a topic)
                 lang = self._normalize_language(language)
-                if lang == "sp":
+                if lang == "es":
                     return "¿Le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?"
                 return "Would you like to answer some detailed diagnostic questions related to your symptoms?"
             elif is_women_health:
@@ -1488,7 +1575,7 @@ class OpenAIQuestionService(QuestionService):
         enable_ros = enabled_sections.get("review_of_systems", True)
         enable_meds = enabled_sections.get("current_medication", True)
 
-        if lang == "sp":
+        if lang == "es":
             # Build dynamic Spanish headings based on enabled sections
             headings_lines_es: list[str] = []
             if enable_cc:
@@ -1654,6 +1741,7 @@ class OpenAIQuestionService(QuestionService):
             
             exclusion_rules_text_es = "\n".join(exclusion_rules_es) if exclusion_rules_es else ""
 
+            output_language = _get_output_language_name(language)
             prompt = (
                 "Rol y Tarea\n"
                 "Eres un Asistente de Admisión Clínica.\n"
@@ -1664,6 +1752,10 @@ class OpenAIQuestionService(QuestionService):
                 f"{section_definitions_text_es}"
                 "REGLAS DE EXCLUSIÓN (CRÍTICO - Estas secciones están DESHABILITADAS y deben ser completamente excluidas):\n"
                 f"{exclusion_rules_text_es}"
+                "Reglas de Idioma:\n"
+                f"- Escribe todos los valores de texto en lenguaje natural en {output_language}.\n"
+                "- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.\n"
+                "- Mantén la terminología médica apropiada para {output_language}.\n\n"
                 "Reglas Críticas\n"
                 "- No inventes, adivines o expandas más allá de la entrada proporcionada.\n"
                 "- La salida debe ser texto plano con encabezados de sección, una sección por línea "
@@ -1857,6 +1949,7 @@ class OpenAIQuestionService(QuestionService):
             
             exclusion_rules_text = "\n".join(exclusion_rules) if exclusion_rules else ""
 
+            output_language = _get_output_language_name(language)
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
@@ -1867,6 +1960,10 @@ class OpenAIQuestionService(QuestionService):
                 f"{section_definitions_text}"
                 "EXCLUSION RULES (CRITICAL - These sections are DISABLED and must be completely excluded):\n"
                 f"{exclusion_rules_text}"
+                "Language Rules:\n"
+                f"- Write all natural-language text values in {output_language}.\n"
+                "- Do NOT translate JSON keys, enums, codes, field names, or IDs.\n"
+                "- Keep medical terminology appropriate for {output_language}.\n\n"
                 "Critical Rules\n"
                 "- Do not invent, guess, or expand beyond the provided input.\n"
                 "- Output must be plain text with section headings, one section per line (no extra blank lines).\n"
@@ -2003,8 +2100,6 @@ class OpenAIQuestionService(QuestionService):
                 "unknown",
                 "don't know",
                 "dont know",
-                "no se",
-                "no proporcionado",
             ]:
                 continue
 
@@ -2072,7 +2167,7 @@ class OpenAIQuestionService(QuestionService):
         """Use LLM to analyze question-answer pairs for subtle abusive language."""
         lang = self._normalize_language(language)
 
-        if lang == "sp":
+        if lang == "es":
             prompt = f"""
 Analiza estas respuestas de admisión del paciente para detectar LENGUAJE ABUSIVO O INAPROPIADO:
 
@@ -2209,7 +2304,7 @@ Responses to analyze:
     def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
         """Get message for LLM-detected abusive language."""
         lang = self._normalize_language(language)
-        if lang == "sp":
+        if lang == "es":
             return f"⚠️ BANDERA ROJA: Lenguaje abusivo detectado. Razón: {reason}"
         else:
             return f"⚠️ RED FLAG: Abusive language detected. Reason: {reason}"
@@ -2267,14 +2362,14 @@ Responses to analyze:
             "mamón",
         ]
 
-        abusive_words = spanish_abusive if lang == "sp" else english_abusive
+        abusive_words = spanish_abusive if lang == "es" else english_abusive
 
         return any(word in text_lower for word in abusive_words)
 
     def _get_abusive_language_message(self, language: str = "en") -> str:
         """Get message for abusive language red flag."""
         lang = self._normalize_language(language)
-        if lang == "sp":
+        if lang == "es":
             return (
                 "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
             )

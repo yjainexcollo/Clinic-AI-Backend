@@ -13,11 +13,12 @@ from clinicai.domain.errors import DuplicatePatientError, PatientNotFoundError
 
 class CreateWalkInVisitRequest:
     """Request for creating a walk-in visit."""
-    def __init__(self, name: str, mobile: str, age: int = None, gender: str = None):
+    def __init__(self, name: str, mobile: str, age: int = None, gender: str = None, language: str = "en"):
         self.name = name
         self.mobile = mobile
         self.age = age
         self.gender = gender
+        self.language = language
 
 
 class CreateWalkInVisitResponse:
@@ -47,7 +48,10 @@ class CreateWalkInVisitUseCase:
         
         if existing_patient:
             # Use existing patient for walk-in visit
+            # Update patient's language preference for this visit
+            existing_patient.language = request.language
             patient = existing_patient
+            await self._patient_repository.save(patient)
         else:
             # Create new patient
             patient_id = PatientId.generate(request.name.split(" ")[0], request.mobile)
@@ -60,7 +64,7 @@ class CreateWalkInVisitUseCase:
                 age=request.age or 0,
                 gender=request.gender,
                 # recently_travelled removed from Patient - now stored on Visit
-                language="en",
+                language=request.language,
             )
             
             # Save patient

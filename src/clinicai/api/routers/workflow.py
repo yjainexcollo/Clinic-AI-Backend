@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 import logging
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from ...application.use_cases.create_walk_in_visit import (
     CreateWalkInVisitUseCase,
@@ -26,6 +26,19 @@ class CreateWalkInVisitRequestSchema(BaseModel):
     mobile: str = Field(..., description="Patient mobile number")
     age: int = Field(None, description="Patient age")
     gender: str = Field(None, description="Patient gender")
+    language: str = Field("en", description="Patient preferred language (en or sp)", pattern=r"^(en|es|sp)$")
+    
+    @validator("language", pre=True)
+    def normalize_language(cls, v):
+        """Normalize language codes: 'es' -> 'sp' for consistency with frontend."""
+        if v and isinstance(v, str):
+            normalized = v.lower().strip()
+            # Map 'es' to 'sp' for consistency with frontend LanguageContext
+            if normalized == "es":
+                return "sp"
+            if normalized in ["en", "sp"]:
+                return normalized
+        return "en"  # Default to English
 
 
 class CreateWalkInVisitResponseSchema(BaseModel):
@@ -78,7 +91,8 @@ async def create_walk_in_visit(
             name=request.name,
             mobile=request.mobile,
             age=request.age,
-            gender=request.gender
+            gender=request.gender,
+            language=request.language
         )
         
         # Execute use case
