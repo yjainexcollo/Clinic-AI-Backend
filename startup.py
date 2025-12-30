@@ -4,6 +4,22 @@ import uvicorn
 import logging
 import traceback
 
+# Ensure virtualenv site-packages are used before global /agents/python packages on Azure
+try:
+    venv_site = os.path.join(
+        sys.prefix,
+        "lib",
+        f"python{sys.version_info.major}.{sys.version_info.minor}",
+        "site-packages",
+    )
+    if os.path.isdir(venv_site) and venv_site not in sys.path:
+        # Insert at the front so it takes precedence over /agents/python
+        sys.path.insert(0, venv_site)
+        print(f"Using venv site-packages first: {venv_site}", flush=True)
+except Exception as e:
+    # Don't fail startup if this detection ever breaks; just log a warning
+    print(f"Warning: failed to adjust sys.path for venv site-packages: {e}", flush=True)
+
 # Configure logging to stdout (Azure App Service reads from here)
 logging.basicConfig(
     level=logging.INFO,
