@@ -521,6 +521,7 @@ class AnswerIntakeUseCase:
                 answer_text = (qa.answer or "").strip().lower()
                 if any(resp in answer_text for resp in positive_responses):
                     # With positive consent, allow up to 13 questions (for deep diagnostic questions)
+                    # This overrides base_max to ensure question 13 (mandatory closing) is asked
                     new_limit = 13
                     break
                 if any(resp in answer_text for resp in negative_responses):
@@ -528,5 +529,9 @@ class AnswerIntakeUseCase:
                     new_limit = 10
                     break
 
-        # Ensure max never exceeds settings limit
-        visit.intake_session.max_questions = min(new_limit, base_max)
+        # If positive consent was given, always allow 13 questions (override base_max)
+        # Otherwise, respect the base_max limit from settings
+        if new_limit == 13:
+            visit.intake_session.max_questions = 13
+        else:
+            visit.intake_session.max_questions = min(new_limit, base_max)

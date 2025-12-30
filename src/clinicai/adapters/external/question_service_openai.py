@@ -801,11 +801,12 @@ Requirements:
 - Do not repeat questions from the conversation history
 - Make the question specific and easy for the patient to answer
 Topic-specific guidance:
-- duration: Ask how long they've had the problem AND what might have caused it
+- duration: Ask how long they've had the problem AND MANDATORY: what might have caused it (cause of illness is required)
 - current_medications: Ask about medications, home remedies, AND dosages/frequency
 - past_medical_history: If chronic condition, focus on related conditions only. If non-chronic, ask about conditions related to chief complaint AND associated symptoms
 - pain_assessment: Ask about severity (0-10), characterization, AND location/radiation
-- triggers: Ask about what brings it on AND what makes it worse
+- triggers: Ask about what brings it on AND what makes it worse AND what relieves it (relieving factors)
+- travel_history: Ask detailed, comprehensive questions about travel history including: destination(s), time of travel, activities during travel, any exposures (food, water, insects, animals, people), symptoms that started during or after travel, and any preventive measures taken (vaccinations, medications)
 - lifestyle_functional_impact: Ask about daily activities, work, AND routine changes
 - temporal: Ask about frequency AND progression (better/worse/same)
 - chronic_monitoring: Ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values
@@ -1095,8 +1096,8 @@ class OpenAIQuestionService(QuestionService):
         question_number: Optional[int] = None,
     ) -> str:
         lang = self._normalize_language(language)
-        return "¿Por qué ha venido hoy? ¿Cuál es la principal preocupación con la que necesita ayuda?" if lang == "es" else \
-            "Why have you come in today? What is the main concern you want help with?"
+        return "¿Qué problema o preocupación está aquí para discutir hoy?" if lang == "es" else \
+            "What problem or concern are you here to discuss today?"
 
     async def generate_next_question(
         self,
