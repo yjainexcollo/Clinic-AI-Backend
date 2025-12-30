@@ -5,6 +5,7 @@ import logging
 import traceback
 
 # Ensure virtualenv site-packages are used before global /agents/python packages on Azure
+# This fixes the ImportError: cannot import name 'Sentinel' from 'typing_extensions' issue
 try:
     venv_site = os.path.join(
         sys.prefix,
@@ -12,13 +13,54 @@ try:
         f"python{sys.version_info.major}.{sys.version_info.minor}",
         "site-packages",
     )
-    if os.path.isdir(venv_site) and venv_site not in sys.path:
-        # Insert at the front so it takes precedence over /agents/python
-        sys.path.insert(0, venv_site)
+    if os.path.isdir(venv_site):
+        # Remove /agents/python from sys.path if present (Azure's old typing_extensions)
+        # This prevents conflicts with the venv's newer typing_extensions
+        agents_python_paths = [p for p in sys.path if '/agents/python' in p]
+        for path in agents_python_paths:
+            try:
+                sys.path.remove(path)
+                print(f"Removed Azure global path from sys.path: {path}", flush=True)
+            except ValueError:
+                pass  # Already removed
+        
+        # Insert venv site-packages at the front so it takes precedence
+        if venv_site not in sys.path:
+            sys.path.insert(0, venv_site)
+        else:
+            # If it's already there, move it to the front
+            sys.path.remove(venv_site)
+            sys.path.insert(0, venv_site)
         print(f"Using venv site-packages first: {venv_site}", flush=True)
+        
+        # Pre-import and cache typing_extensions from venv BEFORE pydantic tries to import it
+        # This ensures Python uses the correct version even if /agents/python was in sys.path earlier
+        try:
+            # Clear any existing typing_extensions from sys.modules if it came from /agents/python
+            if 'typing_extensions' in sys.modules:
+                old_mod = sys.modules['typing_extensions']
+                old_file = getattr(old_mod, '__file__', '')
+                if '/agents/python' in str(old_file):
+                    del sys.modules['typing_extensions']
+                    print(f"Cleared old typing_extensions from sys.modules (was: {old_file})", flush=True)
+            
+            # Now import typing_extensions - Python will find it in venv_site first
+            import typing_extensions
+            typing_ext_file = getattr(typing_extensions, '__file__', 'unknown')
+            print(f"typing_extensions loaded from: {typing_ext_file}", flush=True)
+            if hasattr(typing_extensions, 'Sentinel'):
+                print("✅ typing_extensions.Sentinel is available", flush=True)
+            else:
+                print("⚠️  typing_extensions.Sentinel NOT found - this may cause issues", flush=True)
+        except Exception as import_err:
+            print(f"⚠️  Failed to pre-import typing_extensions: {import_err}", flush=True)
+            import traceback
+            print(traceback.format_exc(), flush=True)
 except Exception as e:
     # Don't fail startup if this detection ever breaks; just log a warning
     print(f"Warning: failed to adjust sys.path for venv site-packages: {e}", flush=True)
+    import traceback
+    print(traceback.format_exc(), flush=True)
 
 # Configure logging to stdout (Azure App Service reads from here)
 logging.basicConfig(
