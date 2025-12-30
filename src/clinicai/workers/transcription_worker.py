@@ -837,11 +837,22 @@ class TranscriptionWorker:
             logger.info("🛑 Shutdown signal received, stopping worker gracefully...")
             shutdown_event.set()
         
+        # Setup signal handlers only on Unix-like systems (not Windows)
         import signal
-        if hasattr(signal, 'SIGTERM'):
-            loop = asyncio.get_event_loop()
-            loop.add_signal_handler(signal.SIGTERM, signal_handler)
-            loop.add_signal_handler(signal.SIGINT, signal_handler)
+        import sys
+        if sys.platform != 'win32' and hasattr(signal, 'SIGTERM'):
+            try:
+                loop = asyncio.get_running_loop()
+                if hasattr(loop, 'add_signal_handler'):
+                    loop.add_signal_handler(signal.SIGTERM, signal_handler)
+                    loop.add_signal_handler(signal.SIGINT, signal_handler)
+                    logger.debug("Signal handlers registered for graceful shutdown")
+            except (NotImplementedError, RuntimeError, AttributeError) as e:
+                # Signal handlers not supported on this platform (Windows, or event loop doesn't support it)
+                logger.debug(f"Signal handlers not available on this platform: {e}")
+        else:
+            # On Windows, signal handlers are not available
+            logger.debug("Running on Windows - signal handlers not available, using event-based shutdown")
         
         while not shutdown_event.is_set():
             try:

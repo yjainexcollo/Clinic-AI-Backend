@@ -96,34 +96,33 @@ class AzureOpenAIClient:
                         if span:
                             add_span_attribute(span, "attempt", attempt + 1)
                             add_span_attribute(span, "max_tokens", max_tokens or "unlimited")
-                            
-                # Make API call - Azure OpenAI uses deployment_name instead of model
-                response = await self.client.chat.completions.create(
-                    model=self.deployment_name,  # Use deployment name, not model name
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs
-                )
-                
-                # Calculate metrics
-                latency = time.time() - start_time
-                metrics = self._calculate_metrics(response, latency)
-                
-                        # Record custom metrics for Application Insights
-                        if OBSERVABILITY_AVAILABLE:
-                            record_ai_request(
-                                model=self.deployment_name,
-                                latency_ms=metrics['latency_ms'],
-                                tokens=metrics['total_tokens'],
-                                success=True
-                            )
-                            if span:
-                                add_span_attribute(span, "tokens", metrics['total_tokens'])
-                                add_span_attribute(span, "latency_ms", metrics['latency_ms'])
-                                set_span_status(span, success=True)
                         
-                # Log metrics
+                        # Make API call - Azure OpenAI uses deployment_name instead of model
+                        response = await self.client.chat.completions.create(
+                            model=self.deployment_name,  # Use deployment name, not model name
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            **kwargs
+                        )
+                        
+                        # Calculate metrics
+                        latency = time.time() - start_time
+                        metrics = self._calculate_metrics(response, latency)
+                        
+                        # Record custom metrics for Application Insights
+                        record_ai_request(
+                            model=self.deployment_name,
+                            latency_ms=metrics['latency_ms'],
+                            tokens=metrics['total_tokens'],
+                            success=True
+                        )
+                        if span:
+                            add_span_attribute(span, "tokens", metrics['total_tokens'])
+                            add_span_attribute(span, "latency_ms", metrics['latency_ms'])
+                            set_span_status(span, success=True)
+                        
+                        # Log metrics
                         logger.info(
                             f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
                             f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
@@ -144,13 +143,13 @@ class AzureOpenAIClient:
                     latency = time.time() - start_time
                     metrics = self._calculate_metrics(response, latency)
                     
-                logger.info(
-                    f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
-                    f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
-                    f"patient={patient_id}"
-                )
-                
-                return response, metrics
+                    logger.info(
+                        f"AI_CALL: deployment={self.deployment_name} prompt_name={prompt_name} "
+                        f"tokens={metrics['total_tokens']} latency={metrics['latency_ms']}ms "
+                        f"patient={patient_id}"
+                    )
+                    
+                    return response, metrics
                 
             except Exception as e:
                 latency = time.time() - start_time

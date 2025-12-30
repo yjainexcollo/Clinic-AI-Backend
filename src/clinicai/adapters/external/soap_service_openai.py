@@ -266,29 +266,6 @@ class OpenAISoapService(SoapService):
         )
 
         # Build JSON schema snippets honoring SOAP order
-        subjective_sp = '    "subjective": "Síntomas reportados por el paciente, preocupaciones e historial discutido"'
-        objective_sp = """    "objective": {
-        "vital_signs": {
-            "blood_pressure": "120/80 mmHg",
-            "heart_rate": "74 bpm",
-            "temperature": "36.4C",
-            "SpO2": "92% en aire ambiente",
-            "weight": "80 kg"
-        },
-        "physical_exam": {
-            "general_appearance": "El paciente parece cansado pero cooperativo",
-            "HEENT": "No discutido",
-            "cardiac": "No discutido",
-            "respiratory": "No discutido",
-            "abdominal": "No discutido",
-            "neuro": "No discutido",
-            "extremities": "No discutido",
-            "gait": "No discutido"
-        }
-    }"""
-        assessment_sp = '    "assessment": "Impresiones clínicas y razonamiento discutido por el médico"'
-        plan_sp = '    "plan": "Plan de tratamiento, instrucciones de seguimiento y próximos pasos discutidos"'
-
         subjective_en = '    "subjective": "Patient\'s reported symptoms, concerns, and history as discussed"'
         objective_en = """    "objective": {
         "vital_signs": {
@@ -312,69 +289,18 @@ class OpenAISoapService(SoapService):
         assessment_en = '    "assessment": "Clinical impressions and reasoning discussed by the physician"'
         plan_en = '    "plan": "Treatment plan, follow-up instructions, and next steps discussed"'
 
-        sp_section_map = {
-            "subjective": subjective_sp,
-            "objective": objective_sp,
-            "assessment": assessment_sp,
-            "plan": plan_sp,
-        }
-        en_section_map = {
+        section_map = {
             "subjective": subjective_en,
             "objective": objective_en,
             "assessment": assessment_en,
             "plan": plan_en,
         }
 
-        ordered_sp_sections = ",\n".join(sp_section_map[s] for s in soap_order)
-        ordered_en_sections = ",\n".join(en_section_map[s] for s in soap_order)
+        ordered_en_sections = ",\n".join(section_map[s] for s in soap_order)
 
-        # Create language-aware prompt
+        # Create language-aware prompt - unified English prompt with dynamic language instructions
         output_language = self._get_output_language_name(language)
-        if lang == "es":
-            prompt = f"""
-Eres un escribano clínico que genera notas SOAP a partir de consultas médico-paciente.
-
-{template_instructions if template_instructions else ""}
-
-CONTEXTO:
-{context}
-
-TRANSCRIPCIÓN DE CONSULTA:
-{transcript}
-
-INSTRUCCIONES:
-{pref_snippet}
-1. Genera una nota SOAP completa basada en la transcripción y contexto
-2. NO hagas diagnósticos o recomendaciones de tratamiento a menos que sean explícitamente declarados por el médico
-3. Usa terminología médica apropiadamente
-4. Sé objetivo y factual
-5. Si la información no está clara o falta, marca como "No claro" o "No discutido"
-6. Enfócate en lo que realmente se dijo durante la consulta
-7. Nivel de detalle preferido: {detail_level}
-8. Formato preferido: {formatting_pref}
-
-Reglas de Idioma:
-- Escribe todos los valores de texto en lenguaje natural en {output_language}.
-- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.
-- Mantén la terminología médica apropiada para {output_language}.
-
-FORMATO REQUERIDO (JSON):
-{{
-{ordered_sp_sections},
-    "highlights": ["Punto clínico clave 1", "Punto clínico clave 2", "Punto clínico clave 3"],
-    "red_flags": ["Cualquier síntoma o hallazgo preocupante mencionado"],
-    "model_info": {{
-        "model": "{self._settings.soap.model}",
-        "temperature": {self._settings.soap.temperature},
-        "max_tokens": {self._settings.soap.max_tokens}
-    }},
-    "confidence_score": 0.95
-}}
-
-Genera la nota SOAP ahora:
-"""
-        else:
-            prompt = f"""
+        prompt = f"""
 You are a clinical scribe generating SOAP notes from doctor-patient consultations. 
 
 {template_instructions if template_instructions else ""}
@@ -680,87 +606,9 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
         """Generate post-visit summary for patient sharing."""
         # Normalize language code
         lang = self._normalize_language(language)
-        # Create the prompt for post-visit summary
+        # Create the prompt for post-visit summary - unified English prompt with dynamic language instructions
         output_language = self._get_output_language_name(language)
-        if lang == "es":
-            prompt = f"""
-Estás generando un resumen post-consulta para un paciente para compartir por WhatsApp. Debe ser claro, completo y amigable para el paciente.
-
-INFORMACIÓN DEL PACIENTE:
-- Nombre: {patient_data.get('name', 'Paciente')}
-- Edad: {patient_data.get('age', 'N/A')}
-- Fecha de Visita: {patient_data.get('visit_date', 'N/A')}
-- Motivo de Consulta: {patient_data.get('symptom', 'N/A')}
-
-DATOS DE NOTA SOAP:
-- Subjetivo: {soap_data.get('subjective', '')}
-- Objetivo: {soap_data.get('objective', '')}
-- Evaluación: {soap_data.get('assessment', '')}
-- Plan: {soap_data.get('plan', '')}
-- Aspectos Destacados: {soap_data.get('highlights', [])}
-- Señales de Alerta: {soap_data.get('red_flags', [])}
-
-INSTRUCCIONES:
-Genera un resumen post-consulta completo siguiendo esta estructura exacta en formato JSON:
-
-Reglas de Idioma:
-- Escribe todos los valores de texto en lenguaje natural en {output_language}.
-- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.
-- Mantén la terminología médica apropiada para {output_language}.
-
-{{
-    "key_findings": [
-        "Hallazgo clave 1 de la consulta",
-        "Hallazgo clave 2 de la consulta",
-        "Hallazgo clave 3 de la consulta"
-    ],
-    "diagnosis": "Diagnóstico en lenguaje simple y amigable para el paciente",
-    "medications": [
-        {{
-            "name": "Nombre del medicamento (genérico preferido)",
-            "dosage": "Cantidad de dosis",
-            "frequency": "Con qué frecuencia tomarlo",
-            "duration": "Por cuánto tiempo tomarlo",
-            "purpose": "Para qué sirve"
-        }}
-    ],
-    "other_recommendations": [
-        "Recomendación de estilo de vida 1",
-        "Consejo dietético 2",
-        "Recomendaciones de fisioterapia o ejercicio"
-    ],
-    "tests_ordered": [
-        {{
-            "test_name": "Nombre de la prueba",
-            "purpose": "Por qué se necesita esta prueba",
-            "instructions": "Cuándo y dónde realizarla"
-        }}
-    ],
-    "next_appointment": "Detalles de la próxima cita si está programada",
-    "red_flag_symptoms": [
-        "Señal de advertencia 1 - cuándo regresar inmediatamente",
-        "Señal de advertencia 2 - cuándo ir a emergencias",
-        "Señal de advertencia 3 - síntomas a vigilar"
-    ],
-    "patient_instructions": [
-        "Instrucción clara 1 (qué hacer)",
-        "Instrucción clara 2 (qué no hacer)",
-        "Instrucción clara 3 (cuidado en casa)"
-    ],
-    "reassurance_note": "Mensaje alentador y tranquilizador para el paciente"
-}}
-
-Asegúrate de que todo el contenido esté:
-- Escrito en lenguaje simple y claro
-- Amigable para el paciente y fácil de entender
-- Completo pero conciso
-- Accionable con instrucciones específicas
-- Alentador y de apoyo
-
-Genera el resumen post-consulta ahora:
-"""
-        else:
-            prompt = f"""
+        prompt = f"""
 You are generating a post-visit summary for a patient to share via WhatsApp. This should be clear, comprehensive, and patient-friendly.
 
 PATIENT INFORMATION:

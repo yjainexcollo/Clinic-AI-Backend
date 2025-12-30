@@ -295,29 +295,59 @@ async def lifespan(app: FastAPI):
                 msg = f"   Deployment: {settings.azure_openai.deployment_name}"
                 print(msg, flush=True)
                 logger.info(msg)
-                from .core.azure_openai_client import validate_azure_openai_deployment
                 
-                # Validate chat deployment (will try multiple API versions automatically)
-                is_valid, error_msg = await validate_azure_openai_deployment(
-                    endpoint=settings.azure_openai.endpoint,
-                    api_key=settings.azure_openai.api_key,
-                    api_version=settings.azure_openai.api_version,
-                    deployment_name=settings.azure_openai.deployment_name,
-                    timeout=10.0,
-                    try_alternative_versions=True
-                )
+                # Initialize error_msg to None to avoid scope issues
+                error_msg = None
                 
-                if not is_valid:
-                    error_detail = f"❌ Deployment validation failed:"
-                    print(error_detail, flush=True)
-                    logger.error(error_detail)
-                    error_detail2 = f"   {error_msg}"
-                    print(error_detail2, flush=True)
-                    logger.error(error_detail2)
-                    sys.stderr.flush()
-                    raise ValueError(
-                        f"Azure OpenAI chat deployment validation failed: {error_msg}"
+                # Import and validate with proper error handling
+                try:
+                    from .core.azure_openai_client import validate_azure_openai_deployment
+                    msg = "   Starting deployment validation (this may take a few seconds)..."
+                    print(msg, flush=True)
+                    logger.info(msg)
+                    
+                    # Validate chat deployment (will try multiple API versions automatically)
+                    is_valid, error_msg = await validate_azure_openai_deployment(
+                        endpoint=settings.azure_openai.endpoint,
+                        api_key=settings.azure_openai.api_key,
+                        api_version=settings.azure_openai.api_version,
+                        deployment_name=settings.azure_openai.deployment_name,
+                        timeout=10.0,
+                        try_alternative_versions=True
                     )
+                    
+                    if not is_valid:
+                        error_detail = f"❌ Deployment validation failed:"
+                        print(error_detail, flush=True)
+                        logger.error(error_detail)
+                        error_detail2 = f"   {error_msg}"
+                        print(error_detail2, flush=True)
+                        logger.error(error_detail2)
+                        sys.stderr.flush()
+                        raise ValueError(
+                            f"Azure OpenAI chat deployment validation failed: {error_msg}"
+                        )
+                except SyntaxError as e:
+                    error_msg = f"Syntax error in azure_openai_client.py: {e}"
+                    print(f"⚠️  {error_msg}", flush=True)
+                    logger.warning(error_msg)
+                    # Don't fail startup for syntax errors, just log warning
+                except ValueError as e:
+                    # Re-raise ValueError (validation failures)
+                    raise
+                except Exception as e:
+                    # Catch any other errors during validation
+                    error_str = str(e)
+                    if "unexpected indent" in error_str or "SyntaxError" in error_str:
+                        error_msg = f"⚠️  Azure OpenAI validation error: {error_str}"
+                        print(error_msg, flush=True)
+                        logger.warning(error_msg)
+                        # Don't fail startup for syntax errors, just log warning
+                    else:
+                        error_msg = f"Error importing or validating azure_openai_client: {e}"
+                        print(f"⚠️  {error_msg}", flush=True)
+                        logger.warning(error_msg)
+                        # Don't fail startup, just log warning
                 
                 # If validation succeeded but with a different API version, show a warning
                 if error_msg and "API version" in error_msg:

@@ -318,6 +318,7 @@ Rules:
 - topic_plan must be a subset of priority_topics
 - if travel checkbox is NO, set is_travel_related=false and avoid_topics includes travel_history
 - avoid menstrual_cycle for males or age<12 or age>60
+- For female patients aged 12-60: If chief complaint includes stomach pain, abdominal pain, pelvic pain, lower abdominal pain, bloating, or any pain/discomfort in the abdominal/pelvic region, set is_womens_health=true and include menstrual_cycle in priority_topics (unless explicitly contraindicated)
 Return ONLY JSON.
 """
         user_prompt = f"""
@@ -381,9 +382,13 @@ Return the JSON plan now.
             if "travel_history" not in avoid_topics:
                 avoid_topics.append("travel_history")
             condition_props["is_travel_related"] = False
+        # Process gender and age restrictions for menstrual_cycle
+        is_female = False
+        is_male = False
         if patient_gender:
             g = patient_gender.lower().strip()
             is_male = g in ["male", "m", "masculino", "hombre"]
+            is_female = g in ["female", "f", "femenino", "mujer"]
             if is_male:
                 priority_topics = [t for t in priority_topics if t != "menstrual_cycle"]
                 if "menstrual_cycle" not in avoid_topics:
@@ -392,6 +397,30 @@ Return the JSON plan now.
             priority_topics = [t for t in priority_topics if t != "menstrual_cycle"]
             if "menstrual_cycle" not in avoid_topics:
                 avoid_topics.append("menstrual_cycle")
+        
+        # Explicit logic: For female patients aged 12-60 with stomach/abdominal/pelvic pain symptoms,
+        # ensure is_womens_health is set and menstrual_cycle is included
+        is_reproductive_age = patient_age is not None and 12 <= patient_age <= 60
+        if is_female and is_reproductive_age:
+            # Check if chief complaint contains women's health related symptoms
+            complaint_lower = chief_complaint.lower()
+            womens_health_symptoms = [
+                "stomach pain", "stomachache", "abdominal pain", "pelvic pain",
+                "lower abdominal", "belly pain", "tummy pain", "abdominal discomfort",
+                "pelvic discomfort", "stomach ache", "dolor de estómago", "dolor abdominal",
+                "dolor pélvico", "dolor abdominal inferior", "dolor de barriga"
+            ]
+            
+            has_womens_health_symptom = any(symptom in complaint_lower for symptom in womens_health_symptoms)
+            
+            if has_womens_health_symptom:
+                # Set is_womens_health to true
+                condition_props["is_womens_health"] = True
+                # Ensure menstrual_cycle is in priority_topics if not already there and not avoided
+                if "menstrual_cycle" not in priority_topics and "menstrual_cycle" not in avoid_topics:
+                    priority_topics.append("menstrual_cycle")
+                    logger.info("Added menstrual_cycle to priority_topics for female patient (age %s) with stomach/abdominal pain: %s", patient_age, chief_complaint)
+        
         topic_plan = _ensure_nonempty_topic_plan(priority_topics, parsed.topic_plan or [])
         avoid_set = set(avoid_topics)
         topic_plan = [t for t in topic_plan if t not in avoid_set]
@@ -1575,228 +1604,20 @@ class OpenAIQuestionService(QuestionService):
         enable_ros = enabled_sections.get("review_of_systems", True)
         enable_meds = enabled_sections.get("current_medication", True)
 
-        if lang == "es":
-            # Build dynamic Spanish headings based on enabled sections
-            headings_lines_es: list[str] = []
-            if enable_cc:
-                headings_lines_es.append("Motivo de Consulta:")
-            if enable_hpi:
-                headings_lines_es.append("HPI:")
-            if enable_history:
-                headings_lines_es.append("Historia:")
-            if enable_ros:
-                headings_lines_es.append("Revisión de Sistemas:")
-            if enable_meds:
-                headings_lines_es.append("Medicación Actual:")
-            headings_text_es = "\n".join(headings_lines_es) + ("\n\n" if headings_lines_es else "\n\n")
-
-            # Dynamic example block based on enabled sections
-            example_lines_es: list[str] = []
-            if enable_cc:
-                example_lines_es.append("Motivo de Consulta: El paciente reporta dolor de cabeza severo por 3 días.")
-            if enable_hpi:
-                example_lines_es.append(
-                    "HPI: El paciente describe una semana de dolores de cabeza persistentes que comienzan en la mañana "
-                    "y empeoran durante el día, llegando hasta 8/10 en los últimos 3 días."
-                )
-            if enable_history:
-                example_lines_es.append(
-                    "Historia: Médica: hipertensión; Quirúrgica: colecistectomía hace cinco años; Estilo de vida: no fumador."
-                )
-            if enable_meds:
-                example_lines_es.append(
-                    "Medicación Actual: En medicamentos: lisinopril 10 mg diario e ibuprofeno según necesidad."
-                )
-            example_block_es = "\n".join(example_lines_es) + ("\n\n" if example_lines_es else "\n\n")
-
-            # Dynamic guidelines text based on enabled sections
-            guidelines_es_lines: list[str] = []
-            if enable_cc:
-                guidelines_es_lines.append(
-                    "- Motivo de Consulta: Una línea en las propias palabras del paciente si está disponible."
-                )
-            if enable_hpi:
-                guidelines_es_lines.append(
-                    "- HPI: UN párrafo legible tejiendo OLDCARTS en prosa."
-                )
-            if enable_history:
-                guidelines_es_lines.append(
-                    "- Historia: Una línea combinando elementos médicos, quirúrgicos, familiares y de estilo de vida "
-                    "(solo si 'Historia' está en los encabezados)."
-                )
-            if enable_ros:
-                guidelines_es_lines.append(
-                    "- Revisión de Sistemas: Una línea narrativa resumiendo positivos/negativos por sistemas "
-                    "(solo si 'Revisión de Sistemas' está en los encabezados)."
-                )
-            if enable_meds:
-                guidelines_es_lines.append(
-                    "- Medicación Actual: Una línea narrativa con medicamentos/suplementos realmente declarados por el "
-                    "paciente o mención de imágenes de medicamentos (solo si 'Medicación Actual' está en los encabezados)."
-                )
-            guidelines_text_es = "\n".join(guidelines_es_lines) + ("\n\n" if guidelines_es_lines else "\n\n")
-
-            # Build comprehensive section definitions (Spanish)
-            section_definitions_es: list[str] = []
-            
-            if enable_cc:
-                section_definitions_es.append(
-                    "MOTIVO DE CONSULTA:\n"
-                    "- Contiene: La razón principal de la visita en las propias palabras del paciente (de Q1/campo síntoma)\n"
-                    "- NO contiene: Detalles sobre duración, severidad, medicamentos, historia u otras secciones\n"
-                    "- Formato: Una línea, palabras exactas del paciente o paráfrasis cercana\n"
-                )
-            
-            if enable_hpi:
-                hpi_fields_note_es = ""
-                hpi_config = section_cfg.get("hpi", {})
-                hpi_selected = hpi_config.get("selected_fields", [])
-                if hpi_selected:
-                    hpi_fields_note_es = f"\n- Enfócate SOLO en estos aspectos: {', '.join(hpi_selected)}\n- Omite otros detalles de HPI que no estén en esta lista."
-                
-                section_definitions_es.append(
-                    "HPI (Historia de la Enfermedad Actual):\n"
-                    "- Contiene: Inicio, ubicación, duración, caracterización/calidad, factores agravantes/aliviadores, "
-                    "radiación, patrón temporal, severidad, síntomas asociados, negativos relevantes\n"
-                    "- NO contiene: Medicamentos, historia médica, historia familiar, historia quirúrgica, historia de estilo de vida, "
-                    "alergias o información de revisión de sistemas\n"
-                    f"- Formato: UN párrafo legible tejiendo OLDCARTS en prosa{hpi_fields_note_es}\n"
-                )
-            
-            if enable_history:
-                history_fields_note_es = ""
-                history_config = section_cfg.get("history", {})
-                history_selected = history_config.get("selected_fields", [])
-                if history_selected:
-                    history_fields_note_es = f"\n- Enfócate SOLO en estos tipos: {', '.join(history_selected)}\n- Omite otros tipos de historia que no estén en esta lista."
-                
-                section_definitions_es.append(
-                    "HISTORIA:\n"
-                    "- Contiene: Condiciones médicas pasadas, historia quirúrgica, historia familiar, factores de estilo de vida, historia de viajes\n"
-                    "- NO contiene: Medicamentos actuales, síntomas actuales (HPI), motivo de consulta o revisión de sistemas\n"
-                    f"- Formato: Una línea combinando elementos médicos/quirúrgicos/familiares/de estilo de vida{history_fields_note_es}\n"
-                )
-            
-            if enable_ros:
-                section_definitions_es.append(
-                    "REVISIÓN DE SISTEMAS:\n"
-                    "- Contiene: Positivos y negativos basados en sistemas (cardiovascular, respiratorio, gastrointestinal, etc.)\n"
-                    "- NO contiene: Detalles del motivo de consulta, detalles de HPI, medicamentos o historia específica\n"
-                    "- Formato: Una línea narrativa resumiendo hallazgos basados en sistemas\n"
-                )
-            
-            if enable_meds:
-                section_definitions_es.append(
-                    "MEDICACIÓN ACTUAL:\n"
-                    "- Contiene: Medicamentos actuales, suplementos, dosis, alergias\n"
-                    "- NO contiene: Medicamentos pasados, historia médica o información que pertenece a otras secciones\n"
-                    "- Formato: Una línea narrativa con medicamentos/suplementos realmente declarados por el paciente\n"
-                )
-            
-            section_definitions_text_es = "\n".join(section_definitions_es) + "\n\n" if section_definitions_es else ""
-            
-            # Build explicit exclusion rules for disabled sections (Spanish)
-            exclusion_rules_es: list[str] = []
-            
-            if not enable_cc:
-                exclusion_rules_es.append(
-                    "❌ MOTIVO DE CONSULTA está DESHABILITADO:\n"
-                    "- NO crees una sección 'Motivo de Consulta:'\n"
-                    "- NO menciones el motivo de consulta o síntoma principal en ninguna otra sección\n"
-                    "- La información del síntoma debe ser completamente excluida del resumen\n\n"
-                )
-            
-            if not enable_hpi:
-                exclusion_rules_es.append(
-                    "❌ HPI está DESHABILITADO:\n"
-                    "- NO crees una sección 'HPI:'\n"
-                    "- NO incluyas inicio, ubicación, duración, severidad, síntomas asociados, "
-                    "factores agravantes/aliviadores o cualquier información relacionada con HPI en ninguna sección\n\n"
-                )
-            
-            if not enable_history:
-                exclusion_rules_es.append(
-                    "❌ HISTORIA está DESHABILITADA:\n"
-                    "- NO crees una sección 'Historia:'\n"
-                    "- NO menciones condiciones médicas pasadas, historia quirúrgica, historia familiar, "
-                    "factores de estilo de vida o historia de viajes en NINGUNA sección (incluyendo HPI)\n\n"
-                )
-            
-            if not enable_ros:
-                exclusion_rules_es.append(
-                    "❌ REVISIÓN DE SISTEMAS está DESHABILITADA:\n"
-                    "- NO crees una sección 'Revisión de Sistemas:'\n"
-                    "- NO incluyas información de revisión basada en sistemas en ninguna sección\n\n"
-                )
-            
-            if not enable_meds:
-                exclusion_rules_es.append(
-                    "❌ MEDICACIÓN ACTUAL está DESHABILITADA:\n"
-                    "- NO crees una sección 'Medicación Actual:'\n"
-                    "- NO menciones medicamentos, drogas, suplementos, recetas, dosis o alergias "
-                    "EN NINGÚN LUGAR del resumen, incluyendo dentro de HPI, Historia o cualquier otra sección\n"
-                    "- Si la información de medicamentos aparece en las respuestas de admisión, "
-                    "exclúyela completamente de todas las secciones\n\n"
-                )
-            
-            exclusion_rules_text_es = "\n".join(exclusion_rules_es) if exclusion_rules_es else ""
-
-            output_language = _get_output_language_name(language)
-            prompt = (
-                "Rol y Tarea\n"
-                "Eres un Asistente de Admisión Clínica.\n"
-                "Tu tarea es generar un Resumen Pre-Consulta conciso y clínicamente útil (~180-200 palabras) "
-                "basado estrictamente en las respuestas de admisión proporcionadas.\n\n"
-                f"{prefs_snippet}"
-                "DEFINICIONES DE SECCIONES (CRÍTICO - Sigue estos límites exactamente):\n"
-                f"{section_definitions_text_es}"
-                "REGLAS DE EXCLUSIÓN (CRÍTICO - Estas secciones están DESHABILITADAS y deben ser completamente excluidas):\n"
-                f"{exclusion_rules_text_es}"
-                "Reglas de Idioma:\n"
-                f"- Escribe todos los valores de texto en lenguaje natural en {output_language}.\n"
-                "- NO traduzcas claves JSON, enumeraciones, códigos, nombres de campos o IDs.\n"
-                "- Mantén la terminología médica apropiada para {output_language}.\n\n"
-                "Reglas Críticas\n"
-                "- No inventes, adivines o expandas más allá de la entrada proporcionada.\n"
-                "- La salida debe ser texto plano con encabezados de sección, una sección por línea "
-                "(sin líneas en blanco adicionales).\n"
-                "- Usa solo los encabezados exactos listados a continuación. No agregues, renombres o "
-                "reordenes encabezados.\n"
-                "- Sin viñetas, numeración o formato markdown.\n"
-                "- Escribe en un tono de entrega clínica: corto, factual, sin duplicados y neutral.\n"
-                "- Incluye una sección SOLO si contiene contenido real de las respuestas del paciente.\n"
-                "- No uses marcadores de posición como \"N/A\", \"No proporcionado\", \"no reportado\", o \"niega\".\n"
-                "- No incluyas secciones para temas que no fueron preguntados o discutidos.\n"
-                "- No incluyas secciones que NO estén presentes en la lista de encabezados proporcionada.\n"
-                "- Usa frases orientadas al paciente: \"El paciente reporta...\", \"Niega...\", \"En medicamentos:...\".\n"
-                "- No incluyas observaciones clínicas, diagnósticos, planes, signos vitales o hallazgos del examen "
-                "(la pre-consulta es solo lo reportado por el paciente).\n"
-                "- Normaliza pronunciaciones médicas obvias a términos correctos sin agregar nueva información.\n"
-                "- Cada sección debe contener SOLO información que pertenece a esa sección (ver DEFINICIONES DE SECCIONES arriba).\n"
-                "- NO permitas que la información de secciones deshabilitadas se filtre a secciones habilitadas.\n\n"
-                "Encabezados (usa MAYÚSCULAS EXACTAS; incluye solo si tienes datos reales de las respuestas del paciente)\n"
-                f"{headings_text_es}"
-                "Pautas de Contenido por Sección (aplican solo a los encabezados listados arriba)\n"
-                f"{guidelines_text_es}"
-                "Ejemplo de Formato\n"
-                "(Estructura y tono solamente—el contenido será diferente; cada sección en una sola línea.)\n"
-                f"{example_block_es}"
-                f"{f'Imágenes de Medicamentos: {medication_images_info}' if medication_images_info else ''}\n\n"
-                f"Respuestas de Admisión (FILTRADAS - solo datos de secciones habilitadas incluidas):\n{self._format_intake_answers(filtered_intake_answers)}"
-            )
-        else:
-            # Build dynamic English headings based on enabled sections
-            headings_lines = []
-            if enable_cc:
-                headings_lines.append("Chief Complaint:")
-            if enable_hpi:
-                headings_lines.append("HPI:")
-            if enable_history:
-                headings_lines.append("History:")
-            if enable_ros:
-                headings_lines.append("Review of Systems:")
-            if enable_meds:
-                headings_lines.append("Current Medication:")
+        # Build dynamic English headings based on enabled sections - unified prompt with dynamic language instructions
+        output_language = _get_output_language_name(language)
+        # Build dynamic English headings based on enabled sections (unified for all languages)
+        headings_lines = []
+        if enable_cc:
+            headings_lines.append("Chief Complaint:")
+        if enable_hpi:
+            headings_lines.append("HPI:")
+        if enable_history:
+            headings_lines.append("History:")
+        if enable_ros:
+            headings_lines.append("Review of Systems:")
+        if enable_meds:
+            headings_lines.append("Current Medication:")
             headings_text = "\n".join(headings_lines) + ("\n\n" if headings_lines else "\n\n")
 
             # Dynamic example block based on enabled sections
@@ -1949,7 +1770,7 @@ class OpenAIQuestionService(QuestionService):
             
             exclusion_rules_text = "\n".join(exclusion_rules) if exclusion_rules else ""
 
-            output_language = _get_output_language_name(language)
+        # Use unified English prompt with dynamic language instructions for all languages
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
@@ -2166,46 +1987,10 @@ class OpenAIQuestionService(QuestionService):
     ) -> List[Dict[str, str]]:
         """Use LLM to analyze question-answer pairs for subtle abusive language."""
         lang = self._normalize_language(language)
+        output_language = _get_output_language_name(language)
 
-        if lang == "es":
-            prompt = f"""
-Analiza estas respuestas de admisión del paciente para detectar LENGUAJE ABUSIVO O INAPROPIADO:
-
-IMPORTANTE: Busca lenguaje abusivo, ofensivo, o inapropiado, incluyendo:
-- Profanidad directa o disfrazada
-- Insultos, desprecios, o lenguaje degradante
-- Lenguaje sexual inapropiado
-- Comentarios racistas, sexistas, o discriminatorios
-- Amenazas o lenguaje agresivo
-- Sarcasmo ofensivo o pasivo-agresivo
-- Lenguaje que sea inapropiado en un contexto médico
-
-NO marques como abusivo:
-- Lenguaje médico técnico
-- Descripciones de síntomas
-- Respuestas apropiadas a preguntas médicas
-- Expresiones de dolor o frustración legítima
-
-Para cada respuesta, determina si contiene lenguaje abusivo o inapropiado.
-
-Responde SOLO en formato JSON con este esquema:
-{{
-    "abusive_language": [
-        {{
-            "question": "pregunta completa",
-            "answer": "respuesta completa",
-            "reason": "explicación específica de por qué es lenguaje abusivo"
-        }}
-    ]
-}}
-
-Si no hay lenguaje abusivo, devuelve: {{"abusive_language": []}}
-
-Respuestas a analizar:
-{self._format_qa_pairs(questions_asked)}
-"""
-        else:
-            prompt = f"""
+        # Unified English prompt with dynamic language instructions
+        prompt = f"""
 Analyze these patient intake responses for ABUSIVE OR INAPPROPRIATE LANGUAGE:
 
 IMPORTANT: Look for abusive, offensive, or inappropriate language, including:
@@ -2225,13 +2010,18 @@ DO NOT flag as abusive:
 
 For each response, determine if it contains abusive or inappropriate language.
 
+Language Rules:
+- Write all natural-language text values in {output_language}.
+- Do NOT translate JSON keys, enums, codes, field names, or IDs.
+- Keep medical terminology appropriate for {output_language}.
+
 Respond ONLY in JSON format with this schema:
 {{
     "abusive_language": [
         {{
             "question": "full question",
             "answer": "full answer",
-            "reason": "specific explanation of why this is abusive language"
+            "reason": "specific explanation of why this is abusive language (write in {output_language})"
         }}
     ]
 }}
