@@ -17,6 +17,20 @@ jobs:
     name: Run backend tests
     runs-on: ubuntu-latest
 
+    services:
+      mongodb:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: test
+          MONGO_INITDB_ROOT_PASSWORD: test
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -35,5 +49,8 @@ jobs:
           pip install -e .
 
       - name: Run tests
+        env:
+          MONGO_URI: mongodb://test:test@localhost:27017/test_db
+          APP_ENV: test
         run: |
           pytest tests/ -v
