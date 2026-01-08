@@ -1,18 +1,7 @@
 [flake8]
 max-line-length = 120
-extend-ignore = 
-    E203,  # whitespace before ':'
-    W503,  # line break before binary operator
-    E501,  # line too long (Black handles this)
-    F401,  # imported but unused (will clean up incrementally)
-    F841,  # local variable assigned but never used
-    F541,  # f-string without placeholders
-    E712,  # comparison to True/False
-    E722,  # bare except
-    E402,  # module level import not at top (architectural)
-    F811,  # redefinition of unused
-    F821,  # undefined name
-    W291,  # trailing whitespace
+# Temporarily ignore these errors for incremental cleanup
+extend-ignore = E203,W503,E501,F401,F841,F541,E712,E722,E402,F811,F821,W291
 exclude = .git,__pycache__,build,dist,.eggs,.venv
 per-file-ignores =
     __init__.py:F401
