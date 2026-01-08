@@ -89,7 +89,7 @@ where = ["src"]
 "*" = ["py.typed"]
 
 [tool.black]
-line-length = 88
+line-length = 120
 target-version = ['py311']
 include = '\.pyi?$'
 extend-exclude = '''
@@ -109,7 +109,7 @@ extend-exclude = '''
 [tool.isort]
 profile = "black"
 multi_line_output = 3
-line_length = 88
+line_length = 120
 known_first_party = ["clinicai"]
 known_third_party = ["fastapi", "pydantic", "motor", "beanie", "openai"]
 
