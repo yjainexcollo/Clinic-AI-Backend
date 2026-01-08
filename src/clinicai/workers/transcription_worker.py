@@ -908,12 +908,14 @@ class TranscriptionWorker:
         worker_process_id = os.getpid()
         logger.info(f"🚀 Starting transcription worker (PID: {worker_process_id})...")
 
-        # Check if ENABLE_TRANSCRIPTION_WORKER is set (only warn if both are running)
+        # Check if ENABLE_TRANSCRIPTION_WORKER is set (warn if both running)
         if os.getenv("ENABLE_TRANSCRIPTION_WORKER", "false").lower() == "true":
             logger.warning(
                 "⚠️  ENABLE_TRANSCRIPTION_WORKER=true detected. "
-                "If this worker is running as a separate process, you may have duplicate workers. "
-                "Recommended: run worker either in-process (ENABLE_TRANSCRIPTION_WORKER=true) "
+                "If this worker is running as a separate process, "
+                "you may have duplicate workers. "
+                "Recommended: run worker either in-process "
+                "(ENABLE_TRANSCRIPTION_WORKER=true) "
                 "OR as separate process (worker_startup.py), not both."
             )
 
@@ -949,7 +951,8 @@ class TranscriptionWorker:
                 task.add_done_callback(active_tasks.discard)
 
             async with semaphore:
-                # Poison messages are handled separately to ensure DB is updated before moving to poison queue
+                # Poison messages are handled separately to ensure DB is
+                # updated before moving to poison queue
                 if job.get("poison"):
                     await self._handle_poison_job(job)
                 else:
@@ -978,12 +981,14 @@ class TranscriptionWorker:
                     loop.add_signal_handler(signal.SIGINT, signal_handler)
                     logger.debug("Signal handlers registered for graceful shutdown")
             except (NotImplementedError, RuntimeError, AttributeError) as e:
-                # Signal handlers not supported on this platform (Windows, or event loop doesn't support it)
+                # Signal handlers not supported on this platform
+                # (Windows, or event loop doesn't support it)
                 logger.debug(f"Signal handlers not available on this platform: {e}")
         else:
             # On Windows, signal handlers are not available
             logger.debug(
-                "Running on Windows - signal handlers not available, using event-based shutdown"
+                "Running on Windows - signal handlers not available, "
+                "using event-based shutdown"
             )
 
         while not shutdown_event.is_set():
@@ -1022,7 +1027,8 @@ class TranscriptionWorker:
                 # Periodic queue status logging (every 5 minutes)
                 current_time = time.time()
                 if current_time - last_queue_status_log >= queue_status_log_interval:
-                    # Defensive: use property if available, otherwise fallback to settings
+                    # Defensive: use property if available, otherwise
+                    # fallback to settings
                     queue_name = getattr(self.queue_service, "queue_name", None)
                     if queue_name is None:
                         queue_name = self.queue_service.settings.queue_name
@@ -1044,7 +1050,8 @@ class TranscriptionWorker:
         # Graceful shutdown: wait for active tasks with timeout
         if active_tasks:
             logger.info(
-                f"⏳ Waiting for {len(active_tasks)} active job(s) to complete (max 60s)..."
+                f"⏳ Waiting for {len(active_tasks)} active job(s) to "
+                f"complete (max 60s)..."
             )
             try:
                 await asyncio.wait_for(
@@ -1053,7 +1060,8 @@ class TranscriptionWorker:
                 logger.info("✅ All active jobs completed")
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"⚠️  Timeout waiting for {len(active_tasks)} job(s) to complete. Cancelling..."
+                    f"⚠️  Timeout waiting for {len(active_tasks)} job(s) "
+                    f"to complete. Cancelling..."
                 )
                 for task in active_tasks:
                     if not task.done():
