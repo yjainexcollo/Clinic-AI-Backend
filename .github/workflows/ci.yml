@@ -133,18 +133,18 @@ jobs:
           docker run -d \
             --name test-container \
             -p 8000:8000 \
-            -e APP_ENV=testing \
-            -e DEBUG=true \
-            -e MONGO_URI=mongodb://test:test@172.17.0.1:27017/test_db?authSource=admin \
-            -e MONGO_DB_NAME=test_db \
-            -e AZURE_KEY_VAULT_NAME="" \
-            -e SECURITY_SECRET_KEY=test-secret-key-minimum-32-characters-long-for-jwt \
-            -e ENCRYPTION_KEY=test-encryption-key-base64-encoded-32-bytes-fernet \
-            -e API_KEYS=test-key:test-user \
-            -e AZURE_OPENAI_ENDPOINT=https://test.openai.azure.com/ \
-            -e AZURE_OPENAI_API_KEY=test-key \
-            -e AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini \
-            -e AZURE_BLOB_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test;EndpointSuffix=core.windows.net \
+            -e "APP_ENV=testing" \
+            -e "DEBUG=true" \
+            -e "MONGO_URI=mongodb://test:test@172.17.0.1:27017/test_db?authSource=admin" \
+            -e "MONGO_DB_NAME=test_db" \
+            -e "AZURE_KEY_VAULT_NAME=" \
+            -e "SECURITY_SECRET_KEY=test-secret-key-minimum-32-characters-long-for-jwt" \
+            -e "ENCRYPTION_KEY=test-encryption-key-base64-encoded-32-bytes-fernet" \
+            -e "API_KEYS=test-key:test-user" \
+            -e "AZURE_OPENAI_ENDPOINT=https://test.openai.azure.com/" \
+            -e "AZURE_OPENAI_API_KEY=test-key" \
+            -e "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini" \
+            -e "AZURE_BLOB_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test;EndpointSuffix=core.windows.net" \
             clinicai-backend:ci-test
           
           # Wait for container to start

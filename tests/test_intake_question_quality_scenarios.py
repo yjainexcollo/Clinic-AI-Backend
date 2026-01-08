@@ -403,18 +403,22 @@ async def evaluate_questions_with_llm(
         "Your tasks:\n"
         "1. Judge whether the questions are medically appropriate, safe, and relevant.\n"
         "2. Check if they:\n"
-        "   - Cover key aspects (onset/duration, severity, associated symptoms, red flags,\n"
-        "     past medical history/medications when needed, travel/menstrual only when relevant).\n"
+        "   - Cover key aspects (onset/duration, severity, associated symptoms,\n"
+        "     red flags, past medical history/medications when needed,\n"
+        "     travel/menstrual only when relevant).\n"
         "   - Avoid redundant or near-duplicate questions.\n"
-        "   - Respect obvious safety rules (no menstrual questions for male/<12/>60; no irrelevant heavy travel questions;\n"
-        "     no invasive diagnostic interrogation without context; etc.).\n"
-        "3. Assign an overall score from 0 to 10 (0 = completely inappropriate; 10 = excellent clinic-grade intake).\n"
+        "   - Respect obvious safety rules (no menstrual questions for\n"
+        "     male/<12/>60; no irrelevant heavy travel questions; no invasive\n"
+        "     diagnostic interrogation without context; etc.).\n"
+        "3. Assign an overall score from 0 to 10 (0 = completely inappropriate;\n"
+        "   10 = excellent clinic-grade intake).\n"
         "4. Briefly explain the reasoning.\n\n"
         "IMPORTANT:\n"
         "- Do NOT change or invent new questions.\n"
         "- Only judge the quality of the questions provided.\n"
         "- Be conservative about safety: if in doubt, mark safety_ok=false.\n"
-        "- Return STRICT JSON only, with keys: rating, coverage_ok, safety_ok, redundancy_ok, summary.\n"
+        "- Return STRICT JSON only, with keys: rating, coverage_ok,\n"
+        "  safety_ok, redundancy_ok, summary.\n"
     )
 
     user_content = {
@@ -488,7 +492,10 @@ async def evaluate_questions_with_llm(
     reason="Azure OpenAI credentials not available in CI",
 )
 async def test_question_quality_across_25_scenarios() -> None:
-    """Integration test: run multi-agent intake and LLM evaluator across 25 scenarios."""
+    """
+    Integration test: run multi-agent intake and LLM evaluator
+    across 25 scenarios.
+    """
     service = OpenAIQuestionService()
 
     results: List[tuple[Scenario, List[tuple[str, str]], QuestionEvaluation]] = []
@@ -497,7 +504,8 @@ async def test_question_quality_across_25_scenarios() -> None:
         # Progress log so long-running runs show where we are
         print(
             f"\n=== Running scenario: {scenario.name} "
-            f"(lang={scenario.language}, age={scenario.patient_age}, gender={scenario.patient_gender}) ==="
+            f"(lang={scenario.language}, age={scenario.patient_age}, "
+            f"gender={scenario.patient_gender}) ==="
         )
         qa_pairs = await run_intake_for_scenario(service, scenario)
         questions_only = [q for q, _ in qa_pairs]
@@ -542,7 +550,8 @@ async def test_question_quality_across_25_scenarios() -> None:
     ]
     if non_edge_results:
         avg_rating = sum(non_edge_results) / len(non_edge_results)
-        # Do not fail the suite aggressively yet, but ensure we don't regress to very low quality overall
+        # Do not fail the suite aggressively yet, but ensure we don't
+        # regress to very low quality overall
         assert avg_rating >= 5.0, (
             f"Average rating across non-edge scenarios is low ({avg_rating:.2f}); "
             "question quality may have regressed."
