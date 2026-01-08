@@ -141,9 +141,9 @@ jobs:
             -e "SECURITY_SECRET_KEY=test-secret-key-minimum-32-characters-long-for-jwt" \
             -e "ENCRYPTION_KEY=test-encryption-key-base64-encoded-32-bytes-fernet" \
             -e "API_KEYS=test-key:test-user" \
-            -e "AZURE_OPENAI_ENDPOINT=https://test.openai.azure.com/" \
-            -e "AZURE_OPENAI_API_KEY=test-key" \
-            -e "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini" \
+            -e "AZURE_OPENAI_ENDPOINT=" \
+            -e "AZURE_OPENAI_API_KEY=" \
+            -e "AZURE_OPENAI_DEPLOYMENT_NAME=" \
             -e "AZURE_BLOB_CONNECTION_STRING=" \
             -e "ENABLE_TRANSCRIPTION_WORKER=false" \
             clinicai-backend:ci-test
