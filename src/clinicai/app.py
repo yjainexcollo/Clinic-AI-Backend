@@ -375,7 +375,9 @@ async def lifespan(app: FastAPI):
             else:
                 # Azure OpenAI is required in production, but optional in testing
                 if settings.is_testing:
-                    warning_msg = "⚠️  Azure OpenAI not configured (running in testing mode - functionality will be limited)"
+                    warning_msg = (
+                        "⚠️  Azure OpenAI not configured (running in testing mode - functionality will be limited)"
+                    )
                     print(warning_msg, flush=True)
                     logger.warning(warning_msg)
                 else:
