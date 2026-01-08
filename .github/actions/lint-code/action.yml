@@ -41,7 +41,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        flake8 ${{ inputs.src-paths }} --max-line-length=120 --extend-ignore=E203,W503
+        flake8 ${{ inputs.src-paths }}
 
     - name: Run mypy (type check)
       shell: bash
