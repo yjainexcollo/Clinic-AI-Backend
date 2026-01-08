@@ -6,12 +6,13 @@ It supports both Managed Identity (for Azure App Service) and DefaultAzureCreden
 (for local development).
 """
 
-import os
 import logging
+import os
 from typing import Optional
+
+from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from azure.keyvault.secrets import SecretClient
-from azure.core.exceptions import AzureError
 
 logger = logging.getLogger("clinicai")
 

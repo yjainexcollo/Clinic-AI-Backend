@@ -3,12 +3,12 @@
 import logging
 import os
 import re
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from clinicai.adapters.db.mongo.models.doctor_m import DoctorMongo
-
 
 logger = logging.getLogger(__name__)
 

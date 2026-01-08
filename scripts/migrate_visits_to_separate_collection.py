@@ -20,17 +20,18 @@ import asyncio
 import json
 import sys
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 # Add the src directory to the Python path
 sys.path.insert(0, "src")
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from clinicai.core.config import get_settings
-from clinicai.adapters.db.mongo.models.patient_m import VisitMongo, PatientMongo
+
+from clinicai.adapters.db.mongo.models.patient_m import PatientMongo, VisitMongo
 from clinicai.adapters.db.mongo.repositories.visit_repository import (
     MongoVisitRepository,
 )
+from clinicai.core.config import get_settings
 from clinicai.domain.value_objects.visit_id import VisitId
 
 

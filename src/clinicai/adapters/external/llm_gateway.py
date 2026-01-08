@@ -11,12 +11,12 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
+from clinicai.adapters.external.prompt_registry import PROMPT_VERSIONS, PromptScenario
 from clinicai.core.ai_client import AzureAIClient
 from clinicai.observability.tracing import (
-    trace_operation,
     add_span_attribute,
     set_span_status,
+    trace_operation,
 )
 
 logger = logging.getLogger(__name__)

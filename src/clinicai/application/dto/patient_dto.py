@@ -4,7 +4,7 @@ Removed unused imports; behavior unchanged.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from ...domain.entities.patient import Patient
 

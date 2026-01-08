@@ -6,9 +6,10 @@ This service validates API keys and tokens to identify users accessing PHI.
 All PHI access must be authenticated for HIPAA compliance.
 """
 
-import os
 import logging
+import os
 from typing import Optional
+
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)

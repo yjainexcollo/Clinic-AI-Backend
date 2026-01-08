@@ -4,15 +4,15 @@ OpenAI-based SOAP generation service implementation.
 
 import asyncio
 import json
-from typing import Dict, Any, Optional, List
 import logging
-from clinicai.core.ai_factory import get_ai_client
+from typing import Any, Dict, List, Optional
 
-from clinicai.application.ports.services.soap_service import SoapService
-from clinicai.core.config import get_settings
-from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
-from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
 from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
+from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
+from clinicai.adapters.external.prompt_registry import PROMPT_VERSIONS, PromptScenario
+from clinicai.application.ports.services.soap_service import SoapService
+from clinicai.core.ai_factory import get_ai_client
+from clinicai.core.config import get_settings
 
 
 class OpenAISoapService(SoapService):

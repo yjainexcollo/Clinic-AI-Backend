@@ -1,25 +1,26 @@
 """Note-related API endpoints for Step-03 functionality."""
 
+import asyncio
 import logging
+import os
+import tempfile
 import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
-    HTTPException,
-    status,
-    UploadFile,
+    BackgroundTasks,
     File,
     Form,
-    BackgroundTasks,
+    HTTPException,
     Request,
+    UploadFile,
+    status,
 )
-from fastapi.responses import Response as FastAPIResponse, JSONResponse
+from fastapi.responses import JSONResponse
+from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
-import tempfile
-import os
-import asyncio
-from datetime import datetime
 
 from ...application.dto.patient_dto import (
     AudioTranscriptionRequest,
@@ -29,26 +30,25 @@ from ...application.dto.patient_dto import (
     SoapNoteDTO,
     TranscriptionSessionDTO,
 )
-from ..schemas.medical import SOAPNoteRequest
-from pydantic import BaseModel
-from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from ...application.use_cases.generate_soap_note import GenerateSoapNoteUseCase
+from ...application.use_cases.transcribe_audio import TranscribeAudioUseCase
+from ...core.config import get_settings
+from ...core.utils.crypto import decode_patient_id
 from ...domain.errors import (
     PatientNotFoundError,
     VisitNotFoundError,
 )
 from ..deps import (
-    PatientRepositoryDep,
-    VisitRepositoryDep,
-    TranscriptionServiceDep,
     AudioRepositoryDep,
+    PatientRepositoryDep,
     SoapServiceDep,
+    TranscriptionServiceDep,
+    VisitRepositoryDep,
 )
-from ...core.utils.crypto import decode_patient_id
 from ..schemas import ErrorResponse
-from ...core.config import get_settings
 from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import ok, fail
+from ..schemas.medical import SOAPNoteRequest
+from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/notes")
 logger = logging.getLogger("clinicai")
@@ -281,8 +281,8 @@ async def transcribe_audio(
         if needs_normalization:
             try:
                 from ...core.audio_utils import (
-                    normalize_audio_to_wav,
                     get_audio_duration,
+                    normalize_audio_to_wav,
                 )
 
                 logger.info(
@@ -1171,8 +1171,9 @@ async def get_transcription_dialogue(
 ):
     """Get transcript + doctor/patient dialogue for a visit."""
     try:
-        from ...domain.value_objects.patient_id import PatientId
         import urllib.parse
+
+        from ...domain.value_objects.patient_id import PatientId
 
         # Find patient (decode opaque id from client)
         # URL-decode first to restore any encoded '=' characters in Fernet tokens
@@ -1340,9 +1341,10 @@ async def get_soap_note(
 ):
     """Get SOAP note for a visit."""
     try:
-        from ...domain.value_objects.patient_id import PatientId
-        from ...core.utils.crypto import decode_patient_id
         import urllib.parse
+
+        from ...core.utils.crypto import decode_patient_id
+        from ...domain.value_objects.patient_id import PatientId
 
         # Support opaque patient_id tokens from clients
         decoded_param = urllib.parse.unquote(patient_id)
@@ -1497,8 +1499,9 @@ async def structure_dialogue(
     """Clean PII and structure transcript into alternating Doctor/Patient JSON using LLM."""
     try:
         # Resolve patient and transcript
-        from ...domain.value_objects.patient_id import PatientId
         from urllib.parse import unquote
+
+        from ...domain.value_objects.patient_id import PatientId
 
         decoded = unquote(patient_id)
         try:

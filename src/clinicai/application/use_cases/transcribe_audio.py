@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import re
+import time
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+from ...core.ai_client import AzureAIClient
+from ...core.ai_factory import get_ai_client
+from ...core.config import get_settings
+from ...domain.enums.workflow import VisitWorkflowType
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
-from ...domain.enums.workflow import VisitWorkflowType
 from ..dto.patient_dto import AudioTranscriptionRequest, AudioTranscriptionResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.transcription_service import TranscriptionService
-from ...core.config import get_settings
-from typing import Dict, Any, List, Optional, Tuple
-import asyncio
-import logging
-import json
-import re
-import time
-from datetime import datetime, timedelta
-
-from ...core.ai_client import AzureAIClient
-from ...core.ai_factory import get_ai_client
 
 # Module-level logger to avoid UnboundLocalError from function-level assignments
 LOGGER = logging.getLogger("clinicai")

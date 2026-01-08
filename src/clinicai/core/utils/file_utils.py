@@ -7,7 +7,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 
 def get_file_extension(filename: str) -> str:

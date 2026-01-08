@@ -3,7 +3,7 @@ Transcription service interface for audio-to-text conversion.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 
 class TranscriptionService(ABC):

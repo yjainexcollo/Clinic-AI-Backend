@@ -6,12 +6,14 @@ from URL paths where possible. For endpoints with IDs in the request body, those
 should set request.state.audit_patient_id and request.state.audit_visit_id for accurate logging.
 """
 
+import logging
 import time
 import uuid
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+
 from ..core.hipaa_audit import get_audit_logger
-import logging
 
 logger = logging.getLogger(__name__)
 

@@ -17,14 +17,15 @@ Usage:
 
 import argparse
 import asyncio
-import time
 import sys
-from typing import Dict, List, Any
+import time
+from typing import Any, Dict, List
 
 # Add the src directory to the Python path
 sys.path.insert(0, "src")
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
 from clinicai.core.config import get_settings
 
 

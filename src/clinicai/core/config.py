@@ -5,10 +5,9 @@ This module provides centralized configuration using Pydantic Settings
 for environment-based configuration management.
 """
 
-from typing import List, Optional
-
 import os
 from pathlib import Path
+from typing import List, Optional
 
 from pydantic import Field, field_validator, model_validator, validator
 from pydantic_settings import BaseSettings, SettingsConfigDict

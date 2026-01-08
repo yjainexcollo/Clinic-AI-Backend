@@ -5,9 +5,9 @@ This mirrors the logic used in the visit transcript route so both visit and
 ad-hoc flows produce consistent outputs.
 """
 
-from typing import List, Dict, Optional
 import asyncio
 import re as _re
+from typing import Dict, List, Optional
 
 from clinicai.core.ai_factory import get_ai_client
 from clinicai.core.config import get_settings

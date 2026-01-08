@@ -1,8 +1,9 @@
+import logging
 import os
 import sys
-import uvicorn
-import logging
 import traceback
+
+import uvicorn
 
 # Ensure virtualenv site-packages are used before global /agents/python packages on Azure
 # This fixes the ImportError: cannot import name 'Sentinel' from 'typing_extensions' issue

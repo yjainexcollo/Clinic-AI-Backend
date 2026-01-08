@@ -1,14 +1,14 @@
 """Create Walk-in Visit use case for walk-in patients without intake."""
 
-from clinicai.domain.entities.patient import Patient
-from clinicai.domain.entities.visit import Visit
-from clinicai.domain.value_objects.patient_id import PatientId
-from clinicai.domain.value_objects.visit_id import VisitId
-from clinicai.domain.enums.workflow import VisitWorkflowType
-from clinicai.core.config import get_settings
 from clinicai.application.ports.repositories.patient_repo import PatientRepository
 from clinicai.application.ports.repositories.visit_repo import VisitRepository
+from clinicai.core.config import get_settings
+from clinicai.domain.entities.patient import Patient
+from clinicai.domain.entities.visit import Visit
+from clinicai.domain.enums.workflow import VisitWorkflowType
 from clinicai.domain.errors import DuplicatePatientError, PatientNotFoundError
+from clinicai.domain.value_objects.patient_id import PatientId
+from clinicai.domain.value_objects.visit_id import VisitId
 
 
 class CreateWalkInVisitRequest:

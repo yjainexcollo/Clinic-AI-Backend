@@ -2,9 +2,9 @@
 Domain entities package.
 """
 
+from .doctor import Doctor
 from .patient import Patient
 from .visit import IntakeSession, QuestionAnswer, Visit
-from .doctor import Doctor
 
 __all__ = [
     "Patient",

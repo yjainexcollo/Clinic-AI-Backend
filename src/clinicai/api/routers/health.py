@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+
 from ..schemas.common import ApiResponse
 from ..utils.responses import ok
 
@@ -49,6 +50,7 @@ async def readiness_check(request: Request):
     Checks database, Azure services, and external dependencies.
     """
     import os
+
     from ...core.config import get_settings
 
     checks = {}
@@ -70,8 +72,9 @@ async def readiness_check(request: Request):
 
     # Check Azure Blob Storage connectivity
     try:
-        from ...adapters.storage.azure_blob_service import get_azure_blob_service
         import asyncio
+
+        from ...adapters.storage.azure_blob_service import get_azure_blob_service
 
         blob_service = get_azure_blob_service()
         # Quick check if client can be created

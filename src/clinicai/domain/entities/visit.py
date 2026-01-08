@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from ..enums.workflow import VisitWorkflowType
 from ..errors import (
     DuplicateQuestionError,
     IntakeAlreadyCompletedError,
@@ -14,7 +15,6 @@ from ..errors import (
 )
 from ..value_objects.question_id import QuestionId
 from ..value_objects.visit_id import VisitId
-from ..enums.workflow import VisitWorkflowType
 
 
 @dataclass

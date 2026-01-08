@@ -2,10 +2,10 @@
 Performance timing utilities for transcription pipeline.
 """
 
+import logging
 import time
 from contextlib import contextmanager
-from typing import Dict, Any, Optional
-import logging
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("clinicai")
 # Ensure timing logs are visible at INFO level even if the parent logger is stricter

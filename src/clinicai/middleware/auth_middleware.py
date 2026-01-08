@@ -5,11 +5,13 @@ This middleware enforces authentication on all PHI endpoints for HIPAA complianc
 Public endpoints (health checks, docs) are excluded from authentication requirements.
 """
 
-from fastapi import Request, HTTPException
+import logging
+
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
 from ..core.auth import get_auth_service
-import logging
 
 logger = logging.getLogger(__name__)
 

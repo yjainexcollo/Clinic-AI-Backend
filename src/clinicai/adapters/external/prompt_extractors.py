@@ -7,6 +7,7 @@ normalizing dynamic variables (like {transcript}, {context}) to placeholders.
 
 import re
 from typing import Callable, Dict
+
 from clinicai.adapters.external.prompt_registry import PromptScenario
 
 
@@ -104,6 +105,7 @@ def normalize_template(template: str) -> str:
 def extract_soap_prompt() -> str:
     """Extract SOAP prompt template from soap_service_openai.py (ENGLISH VERSION ONLY)."""
     import inspect
+
     from clinicai.adapters.external import soap_service_openai
 
     method = getattr(soap_service_openai.OpenAISoapService, "generate_soap_note", None)
@@ -155,6 +157,7 @@ def extract_soap_prompt() -> str:
 def extract_postvisit_prompt() -> str:
     """Extract post-visit summary prompt template (ENGLISH VERSION ONLY)."""
     import inspect
+
     from clinicai.adapters.external import soap_service_openai
 
     method = getattr(
@@ -223,6 +226,7 @@ def extract_intake_prompt() -> str:
     """
     import inspect
     import logging
+
     from clinicai.adapters.external import question_service_openai
 
     combined_prompts = []
@@ -360,6 +364,7 @@ def extract_previsit_prompt() -> str:
     We extract only the English version for version tracking.
     """
     import inspect
+
     from clinicai.adapters.external import question_service_openai
 
     method = getattr(
@@ -472,6 +477,7 @@ def extract_redflag_prompt() -> str:
     """Extract red-flag checker prompt template (from Agent-01 analyze_condition)"""
     import inspect
     import logging
+
     from clinicai.adapters.external import question_service_openai
 
     # Agent-01 is MedicalContextAnalyzer

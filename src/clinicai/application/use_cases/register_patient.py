@@ -5,13 +5,13 @@ Formatting-only changes; behavior preserved.
 
 # Unused imports removed
 
+from ...core.config import get_settings
 from ...domain.entities.patient import Patient
 from ...domain.entities.visit import Visit
 
 # Domain events currently not dispatched here; keeping behavior unchanged.
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
-from ...core.config import get_settings
 from ..dto.patient_dto import RegisterPatientRequest, RegisterPatientResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository

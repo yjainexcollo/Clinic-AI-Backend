@@ -4,6 +4,7 @@ MongoDB Beanie models used by the persistence layer.
 Note: These are persisted documents; structure left unchanged to preserve runtime behavior.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -11,7 +12,6 @@ from beanie import Document
 from pydantic import BaseModel, Field, validator
 
 from clinicai.domain.enums.workflow import VisitWorkflowType
-import json
 
 
 class QuestionAnswerMongo(BaseModel):

@@ -6,9 +6,9 @@ binary is missing on the host, returns an empty string without raising.
 
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -33,8 +33,8 @@ def extract_text_from_image(image_path: str) -> str:
 def extract_text_with_quality(image_path: str) -> OCRResult:
     """Extract text from an image file with quality assessment."""
     try:
-        from PIL import Image  # type: ignore
         import pytesseract  # type: ignore
+        from PIL import Image  # type: ignore
 
         img = Image.open(image_path)
 

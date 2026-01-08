@@ -1,30 +1,33 @@
 from __future__ import annotations
+
 import asyncio
-import logging
 import json
+import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
 from collections import Counter
-from pydantic import BaseModel, Field, ValidationError
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
 from pydantic import ConfigDict  # Pydantic v2
-from clinicai.application.ports.services.question_service import QuestionService
-from clinicai.core.config import get_settings
-from clinicai.core.ai_factory import get_ai_client
-from clinicai.core.constants import (
-    ALLOWED_TOPICS,
-    TRAVEL_KEYWORDS,
-    MENSTRUAL_KEYWORDS,
-    HIGH_RISK_COMPLAINT_KEYWORDS,
-    SIMILARITY_STOPWORDS,
-)
+from pydantic import BaseModel, Field, ValidationError
+
+from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
     append_intake_agent_log,
     append_phase_call,
 )
-from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
-from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
+from clinicai.adapters.external.prompt_registry import PROMPT_VERSIONS, PromptScenario
+from clinicai.application.ports.services.question_service import QuestionService
+from clinicai.core.ai_factory import get_ai_client
+from clinicai.core.config import get_settings
+from clinicai.core.constants import (
+    ALLOWED_TOPICS,
+    HIGH_RISK_COMPLAINT_KEYWORDS,
+    MENSTRUAL_KEYWORDS,
+    SIMILARITY_STOPWORDS,
+    TRAVEL_KEYWORDS,
+)
 
 logger = logging.getLogger("clinicai")
 

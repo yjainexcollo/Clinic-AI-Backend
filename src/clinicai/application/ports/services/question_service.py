@@ -3,7 +3,7 @@ Question service interface for AI-powered question generation.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class QuestionService(ABC):

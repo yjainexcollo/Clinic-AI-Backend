@@ -4,8 +4,8 @@ Debug script to print Azure Queue information.
 Uses Settings (NOT direct env vars) to ensure consistency with app/worker.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Bootstrap: Add src directory to Python path for src-layout convenience
@@ -18,9 +18,10 @@ _src_dir_str = str(_src_dir)
 if _src_dir_str not in sys.path:
     sys.path.insert(0, _src_dir_str)
 
-from clinicai.core.config import get_settings
-from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
 import asyncio
+
+from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
+from clinicai.core.config import get_settings
 
 
 def mask_connection_string(conn_str: str) -> str:

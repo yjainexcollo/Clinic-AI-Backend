@@ -2,7 +2,8 @@
 Medical summary schemas for pre-visit and post-visit summaries.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 

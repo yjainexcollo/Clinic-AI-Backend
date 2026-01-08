@@ -3,12 +3,13 @@ Azure OpenAI client for AI operations.
 Tracks all prompts, responses, tokens, latency, and costs
 """
 
+import asyncio
+import logging
 import os
 import time
-import asyncio
+from typing import Any, Dict, List, Optional, Tuple
+
 from openai import AsyncAzureOpenAI
-from typing import Optional, Dict, Any, List, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 try:
     from ..observability.metrics import record_ai_request, record_error
     from ..observability.tracing import (
-        trace_operation,
-        set_span_status,
         add_span_attribute,
+        set_span_status,
+        trace_operation,
     )
 
     OBSERVABILITY_AVAILABLE = True

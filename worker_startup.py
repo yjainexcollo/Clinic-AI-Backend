@@ -44,21 +44,21 @@ async def main():
     """Entry point for standalone worker process."""
     try:
         # Initialize database connection (required for worker)
+        import certifi
         from beanie import init_beanie
         from motor.motor_asyncio import AsyncIOMotorClient
-        import certifi
 
-        from clinicai.core.config import get_settings
-        from clinicai.adapters.db.mongo.models.patient_m import (
-            PatientMongo,
-            VisitMongo,
-            MedicationImageMongo,
-            DoctorPreferencesMongo,
-            AudioFileMongo,
-        )
         from clinicai.adapters.db.mongo.models.blob_file_reference import (
             BlobFileReference,
         )
+        from clinicai.adapters.db.mongo.models.patient_m import (
+            AudioFileMongo,
+            DoctorPreferencesMongo,
+            MedicationImageMongo,
+            PatientMongo,
+            VisitMongo,
+        )
+        from clinicai.core.config import get_settings
 
         settings = get_settings()
         mongo_uri = settings.database.uri

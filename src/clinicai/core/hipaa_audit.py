@@ -3,13 +3,14 @@ HIPAA-compliant audit logging system
 Captures all PHI access with immutable logs stored for 6 years
 """
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
-from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Any, Dict, List, Optional
+
 from bson import ObjectId
-import json
-import hashlib
+from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 

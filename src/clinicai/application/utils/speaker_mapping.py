@@ -3,8 +3,8 @@ Speaker mapping utility for Azure Speech Service.
 Maps speaker IDs from diarization to Doctor/Patient labels.
 """
 
-from typing import List, Dict, Optional, Tuple, Any
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

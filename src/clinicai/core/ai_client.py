@@ -13,25 +13,25 @@ Retries, validation, and advanced monitoring are handled elsewhere.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from openai import AsyncAzureOpenAI
 
 from .config import get_settings
-import logging
-import time
 
 logger = logging.getLogger("clinicai.ai")
 
 # Optional observability (OpenTelemetry + custom metrics)
 try:  # pragma: no cover - optional dependency
     from clinicai.observability import (
-        trace_operation,
-        set_span_status,
+        METRICS_AVAILABLE,
         add_span_attribute,
         record_ai_request,
         record_error,
-        METRICS_AVAILABLE,
+        set_span_status,
+        trace_operation,
     )
 
     OBSERVABILITY_AVAILABLE = True

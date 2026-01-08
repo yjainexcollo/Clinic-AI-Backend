@@ -129,19 +129,27 @@ jobs:
         run: |
           echo "🐳 Starting container smoke test..."
           
-          # Start container in background
+          # Start container in background with all required env vars
           docker run -d \
             --name test-container \
-            --network host \
             -p 8000:8000 \
             -e APP_ENV=testing \
-            -e MONGO_URI=mongodb://test:test@localhost:27017/test_db \
             -e DEBUG=true \
+            -e MONGO_URI=mongodb://test:test@172.17.0.1:27017/test_db?authSource=admin \
+            -e MONGO_DB_NAME=test_db \
+            -e AZURE_KEY_VAULT_NAME="" \
+            -e SECURITY_SECRET_KEY=test-secret-key-minimum-32-characters-long-for-jwt \
+            -e ENCRYPTION_KEY=test-encryption-key-base64-encoded-32-bytes-fernet \
+            -e API_KEYS=test-key:test-user \
+            -e AZURE_OPENAI_ENDPOINT=https://test.openai.azure.com/ \
+            -e AZURE_OPENAI_API_KEY=test-key \
+            -e AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini \
+            -e AZURE_BLOB_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test;EndpointSuffix=core.windows.net \
             clinicai-backend:ci-test
           
           # Wait for container to start
           echo "Waiting for container to start..."
-          sleep 10
+          sleep 15
           
           # Check if container is still running
           if ! docker ps | grep test-container > /dev/null; then

@@ -16,15 +16,15 @@ from datetime import datetime
 from beanie import init_beanie  # type: ignore
 from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
 
-from clinicai.core.config import get_settings
+from clinicai.adapters.db.mongo.models.blob_file_reference import BlobFileReference
+from clinicai.adapters.db.mongo.models.doctor_m import DoctorMongo
 from clinicai.adapters.db.mongo.models.patient_m import (
+    DoctorPreferencesMongo,
     PatientMongo,
     VisitMongo,
-    DoctorPreferencesMongo,
 )
-from clinicai.adapters.db.mongo.models.doctor_m import DoctorMongo
-from clinicai.adapters.db.mongo.models.blob_file_reference import BlobFileReference
 from clinicai.adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
+from clinicai.core.config import get_settings
 
 
 async def migrate() -> None:

@@ -26,6 +26,7 @@ class MongoPatientRepository(PatientRepository):
         # Remove revision_id from the document after saving using raw MongoDB operations
         if patient_mongo.id:
             from motor.motor_asyncio import AsyncIOMotorClient
+
             from clinicai.core.config import get_settings
 
             settings = get_settings()

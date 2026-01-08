@@ -10,7 +10,6 @@ from clinicai.adapters.external.question_service_openai import OpenAIQuestionSer
 from clinicai.core.ai_factory import get_ai_client
 from clinicai.core.config import get_settings
 
-
 # -----------------------------------------------------------------------------
 # Scenario & evaluation models
 # -----------------------------------------------------------------------------

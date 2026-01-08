@@ -3,18 +3,19 @@ Formatting-only changes; behavior preserved.
 """
 
 import logging
-from typing import Optional, List
+from typing import List, Optional
+
+from ...core.config import get_settings
+from ...core.constants import TRAVEL_KEYWORDS
 from ...domain.entities.visit import Visit
 from ...domain.errors import (
+    DuplicateQuestionError,
     IntakeAlreadyCompletedError,
     PatientNotFoundError,
     VisitNotFoundError,
-    DuplicateQuestionError,
 )
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
-from ...core.config import get_settings
-from ...core.constants import TRAVEL_KEYWORDS
 from ..dto.patient_dto import (
     AnswerIntakeRequest,
     AnswerIntakeResponse,
@@ -61,7 +62,7 @@ class AnswerIntakeUseCase:
             raise VisitNotFoundError(request.visit_id)
 
         # Build prior context from latest completed visit (excluding current)
-        from typing import Optional, List
+        from typing import List, Optional
 
         prior_summary: Optional[str] = None
         prior_qas: Optional[List[str]] = None

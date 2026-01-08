@@ -3,6 +3,7 @@ Domain-specific error types for business rule violations.
 """
 
 from typing import Any, Dict, Optional
+
 from clinicai.api.errors import APIError, ConflictError, NotFoundError
 
 

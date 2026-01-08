@@ -2,11 +2,11 @@
 Visit repository interface for managing visit data.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from clinicai.domain.entities.visit import Visit
-from clinicai.domain.value_objects.visit_id import VisitId
 from clinicai.domain.enums.workflow import VisitWorkflowType
+from clinicai.domain.value_objects.visit_id import VisitId
 
 
 class VisitRepository:

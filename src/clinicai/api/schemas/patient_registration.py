@@ -2,12 +2,13 @@
 Patient registration schemas.
 """
 
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
 import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from .common import PersonalInfo, ContactInfo
+from pydantic import BaseModel, Field, validator
+
+from .common import ContactInfo, PersonalInfo
 
 
 class RegisterPatientRequest(BaseModel):

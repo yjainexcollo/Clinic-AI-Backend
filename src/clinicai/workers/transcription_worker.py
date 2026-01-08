@@ -6,8 +6,8 @@ This runs as a separate process/service.
 import asyncio
 import json
 import logging
-import sys
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime, timedelta
@@ -19,17 +19,17 @@ current_dir = Path(__file__).parent.parent.parent.parent
 src_path = current_dir / "src"
 sys.path.insert(0, str(src_path))
 
-from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
+from clinicai.adapters.db.mongo.repositories.audio_repository import AudioRepository
 from clinicai.adapters.db.mongo.repositories.patient_repository import (
     MongoPatientRepository,
 )
 from clinicai.adapters.db.mongo.repositories.visit_repository import (
     MongoVisitRepository,
 )
-from clinicai.adapters.db.mongo.repositories.audio_repository import AudioRepository
+from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
 from clinicai.api.deps import get_transcription_service
-from clinicai.application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from clinicai.application.dto.patient_dto import AudioTranscriptionRequest
+from clinicai.application.use_cases.transcribe_audio import TranscribeAudioUseCase
 from clinicai.core.config import get_settings
 from clinicai.domain.value_objects.patient_id import PatientId
 from clinicai.domain.value_objects.visit_id import VisitId

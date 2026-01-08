@@ -1,19 +1,20 @@
 """Generate Post-Visit Summary use case for Step-04 functionality."""
 
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
+from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
+    append_phase_call,
+)
+
+from ...api.schemas import PostVisitSummaryResponse
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
 from ..dto.patient_dto import PostVisitSummaryRequest
-from ...api.schemas import PostVisitSummaryResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.soap_service import SoapService
-from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
-    append_phase_call,
-)
 
 
 class GeneratePostVisitSummaryUseCase:

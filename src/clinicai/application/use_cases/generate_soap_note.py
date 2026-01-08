@@ -1,5 +1,9 @@
 """Generate SOAP note use case for Step-03 functionality."""
 
+from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
+    append_phase_call,
+)
+
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
@@ -7,9 +11,6 @@ from ..dto.patient_dto import SoapGenerationRequest, SoapGenerationResponse
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.soap_service import SoapService
-from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
-    append_phase_call,
-)
 
 
 class GenerateSoapNoteUseCase:

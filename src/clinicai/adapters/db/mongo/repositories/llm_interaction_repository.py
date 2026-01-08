@@ -3,9 +3,9 @@ Helper functions for structured per-visit LLM interaction logging.
 Collection: llm_interaction
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
-import logging
 
 from clinicai.adapters.db.mongo.models.patient_m import (
     AgentLog,

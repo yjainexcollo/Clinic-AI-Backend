@@ -3,7 +3,8 @@ Blob file reference model for tracking files stored in Azure Blob Storage.
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from beanie import Document
 from pydantic import Field
 

@@ -3,15 +3,15 @@ import logging
 import os
 from typing import Optional
 
-from clinicai.core.config import get_settings
-from clinicai.workers.transcription_stuck_sweeper import run_stuck_sweeper_forever
-from clinicai.adapters.db.mongo.models.patient_m import (
-    VisitMongo,
-)  # ensure models are imported for Beanie
-from clinicai.adapters.db.mongo.models.audio_m import AudioFileMongo
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from clinicai.adapters.db.mongo.models.audio_m import AudioFileMongo
+from clinicai.adapters.db.mongo.models.patient_m import (  # ensure models are imported for Beanie
+    VisitMongo,
+)
+from clinicai.core.config import get_settings
+from clinicai.workers.transcription_stuck_sweeper import run_stuck_sweeper_forever
 
 logger = logging.getLogger("clinicai")
 

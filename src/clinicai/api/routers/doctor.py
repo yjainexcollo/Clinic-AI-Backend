@@ -8,8 +8,8 @@ from ...core.config import get_settings
 from ..schemas.common import ApiResponse
 from ..schemas.doctor_preferences import (
     DoctorPreferencesResponse,
-    UpsertDoctorPreferencesRequest,
     PreVisitSectionConfig,
+    UpsertDoctorPreferencesRequest,
 )
 from ..utils.responses import fail, ok
 

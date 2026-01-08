@@ -5,8 +5,8 @@ Verification script for Azure AI Foundry integration.
 Tests Azure OpenAI connectivity and logs to Application Insights.
 """
 import asyncio
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Add the src directory to the Python path
@@ -22,9 +22,10 @@ if env_file.exists():
 
     load_dotenv(env_file)
 
+import time
+
 from clinicai.core.ai_factory import get_ai_client
 from clinicai.core.config import get_settings
-import time
 
 
 async def main():

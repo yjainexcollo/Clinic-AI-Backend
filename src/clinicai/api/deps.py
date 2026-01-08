@@ -7,16 +7,16 @@ import os
 from functools import lru_cache
 from typing import Annotated, Optional
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
+from ..adapters.db.mongo.repositories.audio_repository import (
+    AudioRepository,
+)
 from ..adapters.db.mongo.repositories.patient_repository import (
     MongoPatientRepository,
 )
 from ..adapters.db.mongo.repositories.visit_repository import (
     MongoVisitRepository,
-)
-from ..adapters.db.mongo.repositories.audio_repository import (
-    AudioRepository,
 )
 from ..adapters.external.question_service_openai import OpenAIQuestionService
 
@@ -25,10 +25,9 @@ from ..adapters.external.soap_service_openai import OpenAISoapService
 from ..application.ports.repositories.patient_repo import PatientRepository
 from ..application.ports.repositories.visit_repo import VisitRepository
 from ..application.ports.services.question_service import QuestionService
-from ..application.ports.services.transcription_service import TranscriptionService
 from ..application.ports.services.soap_service import SoapService
+from ..application.ports.services.transcription_service import TranscriptionService
 from ..core.auth import get_auth_service
-from fastapi import Request
 
 
 @lru_cache()

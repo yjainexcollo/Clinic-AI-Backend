@@ -2,10 +2,11 @@
 Intake session schemas for patient Q&A.
 """
 
+import re
 from datetime import datetime
 from typing import List, Optional
+
 from pydantic import BaseModel, Field, validator
-import re
 
 from .common import QuestionAnswer
 

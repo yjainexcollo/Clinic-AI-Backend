@@ -5,8 +5,8 @@ Provides custom metrics for AI operations, transcription, and application perfor
 """
 
 import logging
-from typing import Optional, Dict, Any
 from time import time
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 

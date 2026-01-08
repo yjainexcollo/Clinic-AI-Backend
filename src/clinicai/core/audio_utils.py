@@ -2,9 +2,9 @@
 Audio processing utilities for normalization and duration extraction.
 """
 
+import logging
 import os
 import subprocess
-import logging
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple

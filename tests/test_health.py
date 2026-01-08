@@ -4,6 +4,7 @@ Health endpoint tests.
 
 import pytest
 from fastapi.testclient import TestClient
+
 from clinicai.app import app
 
 

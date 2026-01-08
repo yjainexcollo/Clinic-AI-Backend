@@ -2,33 +2,31 @@
 FastAPI application factory and main app configuration.
 """
 
+import asyncio
+import logging
+import os
+import sys
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-import logging
-import os
+from fastapi.responses import FileResponse, JSONResponse
 
-from .api.routers import health, patients, notes, workflow
+from clinicai.api.errors import APIError, NotFoundError, ValidationError
+from clinicai.api.schemas.common import ErrorResponse
+from clinicai.middleware.request_id_middleware import RequestIDMiddleware
+
 from .api.routers import doctor as doctor_router
+from .api.routers import health, notes, patients, workflow
 from .core.config import get_settings
-from .domain.errors import DomainError
 from .core.hipaa_audit import get_audit_logger
+from .domain.errors import DomainError
 from .middleware.auth_middleware import AuthenticationMiddleware
 from .middleware.doctor_middleware import DoctorMiddleware
 from .middleware.hipaa_middleware import HIPAAAuditMiddleware
 from .middleware.performance_middleware import PerformanceMiddleware
-from clinicai.middleware.request_id_middleware import RequestIDMiddleware
-from clinicai.api.errors import APIError, ValidationError, NotFoundError
-from clinicai.api.schemas.common import ErrorResponse
-from fastapi import Request
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-import logging
-import asyncio
-import sys
-import traceback
 
 
 @asynccontextmanager
@@ -57,21 +55,22 @@ async def lifespan(app: FastAPI):
 
         # Initialize database connection (MongoDB + Beanie)
         try:
+            import certifi  # type: ignore
             from beanie import init_beanie  # type: ignore
             from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
-            import certifi  # type: ignore
+
+            from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
+            from .adapters.db.mongo.models.doctor_m import DoctorMongo
 
             # Import models for registration
             from .adapters.db.mongo.models.patient_m import (
+                AudioFileMongo,
+                DoctorPreferencesMongo,
+                LLMInteractionVisit,
+                MedicationImageMongo,
                 PatientMongo,
                 VisitMongo,
-                MedicationImageMongo,
-                DoctorPreferencesMongo,
-                AudioFileMongo,
-                LLMInteractionVisit,
             )
-            from .adapters.db.mongo.models.doctor_m import DoctorMongo
-            from .adapters.db.mongo.models.blob_file_reference import BlobFileReference
             from .adapters.db.mongo.models.prompt_version_m import PromptVersionMongo
 
             # Use configured URI

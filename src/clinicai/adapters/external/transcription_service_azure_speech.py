@@ -3,16 +3,16 @@ Azure Speech Service batch transcription with speaker diarization.
 Uses REST API for batch transcription (more reliable than SDK).
 """
 
-import os
 import asyncio
+import json
 import logging
+import os
+import re
 import time
 import uuid
-from typing import Dict, Any, Optional, List, Tuple, Callable, Coroutine
-from pathlib import Path
-import json
-import re
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 import aiohttp
 

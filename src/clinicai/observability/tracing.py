@@ -5,8 +5,8 @@ Provides custom tracing spans for key operations like AI calls, transcription, a
 """
 
 import logging
-from typing import Optional
 from contextlib import contextmanager
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 

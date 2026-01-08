@@ -1,20 +1,21 @@
 """Workflow-related API endpoints for conditional workflow support."""
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request
 import logging
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, validator
 
 from ...application.use_cases.create_walk_in_visit import (
-    CreateWalkInVisitUseCase,
     CreateWalkInVisitRequest,
     CreateWalkInVisitResponse,
+    CreateWalkInVisitUseCase,
 )
 from ...domain.enums.workflow import VisitWorkflowType
 from ...domain.errors import PatientNotFoundError, VisitNotFoundError
 from ..deps import PatientRepositoryDep, VisitRepositoryDep
 from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import ok, fail
+from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/workflow")
 logger = logging.getLogger("clinicai")

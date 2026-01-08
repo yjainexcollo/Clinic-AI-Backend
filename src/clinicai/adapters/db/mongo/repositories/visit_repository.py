@@ -3,27 +3,27 @@ MongoDB implementation of VisitRepository.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from clinicai.application.ports.repositories.visit_repo import VisitRepository
 from clinicai.domain.entities.visit import (
     IntakeSession,
     QuestionAnswer,
-    Visit,
-    TranscriptionSession,
     SoapNote,
+    TranscriptionSession,
+    Visit,
 )
+from clinicai.domain.enums.workflow import VisitWorkflowType
 from clinicai.domain.value_objects.question_id import QuestionId
 from clinicai.domain.value_objects.visit_id import VisitId
-from clinicai.domain.enums.workflow import VisitWorkflowType
 
 from ..models.patient_m import (
     IntakeSessionMongo,
-    VisitMongo,
-    QuestionAnswerMongo,
-    TranscriptionSessionMongo,
-    SoapNoteMongo,
     PatientMongo,
+    QuestionAnswerMongo,
+    SoapNoteMongo,
+    TranscriptionSessionMongo,
+    VisitMongo,
 )
 
 
@@ -61,6 +61,7 @@ class MongoVisitRepository(VisitRepository):
         # Remove revision_id from the document after saving using raw MongoDB operations
         if visit_mongo.id:
             from motor.motor_asyncio import AsyncIOMotorClient
+
             from clinicai.core.config import get_settings
 
             settings = get_settings()
@@ -248,6 +249,7 @@ class MongoVisitRepository(VisitRepository):
         Find patients with aggregated visit information using MongoDB aggregation.
         """
         from motor.motor_asyncio import AsyncIOMotorClient
+
         from clinicai.core.config import get_settings
 
         settings = get_settings()
@@ -723,9 +725,11 @@ class MongoVisitRepository(VisitRepository):
         - worker_id = worker_id
         - error_message = None
         """
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from clinicai.core.config import get_settings
         from datetime import datetime, timedelta
+
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        from clinicai.core.config import get_settings
 
         settings = get_settings()
         client = AsyncIOMotorClient(settings.database.uri)
@@ -794,9 +798,11 @@ class MongoVisitRepository(VisitRepository):
         Returns:
             True if the visit was found and updated (modified_count == 1), False otherwise
         """
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from clinicai.core.config import get_settings
         from datetime import datetime
+
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        from clinicai.core.config import get_settings
 
         settings = get_settings()
         client = AsyncIOMotorClient(settings.database.uri)

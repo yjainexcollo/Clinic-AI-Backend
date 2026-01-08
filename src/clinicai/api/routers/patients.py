@@ -3,79 +3,79 @@
 Formatting-only changes; behavior preserved.
 """
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, Request, Form, File
 import logging
+import os
 import traceback
-from typing import Union, Optional, List
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from beanie import PydanticObjectId
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from ...application.dto.patient_dto import (
     AnswerIntakeRequest,
-    PreVisitSummaryRequest,
+    EditAnswerRequest,
     PostVisitSummaryRequest,
+    PreVisitSummaryRequest,
     RegisterPatientRequest,
 )
-from ...application.dto.patient_dto import EditAnswerRequest
-from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
-from datetime import datetime
 from ...application.use_cases.answer_intake import AnswerIntakeUseCase
-from ...application.use_cases.generate_pre_visit_summary import (
-    GeneratePreVisitSummaryUseCase,
-)
 from ...application.use_cases.generate_post_visit_summary import (
     GeneratePostVisitSummaryUseCase,
 )
-from ...core.utils.crypto import decode_patient_id
+from ...application.use_cases.generate_pre_visit_summary import (
+    GeneratePreVisitSummaryUseCase,
+)
 from ...application.use_cases.register_patient import RegisterPatientUseCase
+from ...core.utils.crypto import decode_patient_id, encode_patient_id
+from ...domain.enums.workflow import VisitWorkflowType
 from ...domain.errors import (
     DuplicatePatientError,
     DuplicateQuestionError,
     IntakeAlreadyCompletedError,
     InvalidDiseaseError,
     InvalidPatientDataError,
+    PatientAlreadyExistsError,
     PatientNotFoundError,
     QuestionLimitExceededError,
     VisitNotFoundError,
-    PatientAlreadyExistsError,
 )
-from ...domain.enums.workflow import VisitWorkflowType
-
 from ..deps import (
     PatientRepositoryDep,
-    VisitRepositoryDep,
     QuestionServiceDep,
     SoapServiceDep,
+    VisitRepositoryDep,
 )
-from ...core.utils.crypto import encode_patient_id, decode_patient_id
+from ..schemas import AnswerIntakeRequest as AnswerIntakeRequestSchema
 from ..schemas import (
     AnswerIntakeResponse,
-    ErrorResponse,
-    AnswerIntakeRequest as AnswerIntakeRequestSchema,
-    PatientSummarySchema,
-    PreVisitSummaryResponse,
-    PostVisitSummaryResponse,
-    RegisterPatientResponse,
-    EditAnswerRequest as EditAnswerRequestSchema,
-    EditAnswerResponse as EditAnswerResponseSchema,
-    RegisterPatientRequest as RegisterPatientRequestSchema,
-    IntakeSummarySchema,
-    PatientWithVisitsSchema,
-    PatientListResponse,
-    LatestVisitInfo,
-    VisitListItemSchema,
-    VisitDetailSchema,
-    VisitListResponse,
-    TranscriptionSessionSchema,
-    SoapNoteSchema,
 )
-from fastapi import UploadFile, File, Form
-from fastapi.responses import Response
-from pathlib import Path
-from datetime import datetime
-import os
-from beanie import PydanticObjectId
+from ..schemas import EditAnswerRequest as EditAnswerRequestSchema
+from ..schemas import EditAnswerResponse as EditAnswerResponseSchema
+from ..schemas import (
+    ErrorResponse,
+    IntakeSummarySchema,
+    LatestVisitInfo,
+    PatientListResponse,
+    PatientSummarySchema,
+    PatientWithVisitsSchema,
+    PostVisitSummaryResponse,
+    PreVisitSummaryResponse,
+)
+from ..schemas import RegisterPatientRequest as RegisterPatientRequestSchema
+from ..schemas import (
+    RegisterPatientResponse,
+    SoapNoteSchema,
+    TranscriptionSessionSchema,
+    VisitDetailSchema,
+    VisitListItemSchema,
+    VisitListResponse,
+)
 from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import ok, fail
+from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/patients")
 logger = logging.getLogger("clinicai")
@@ -708,10 +708,10 @@ async def upload_medication_images(
 
         # Store each image using blob storage
         from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
-        from ...adapters.storage.azure_blob_service import get_azure_blob_service
         from ...adapters.db.mongo.repositories.blob_file_repository import (
             BlobFileRepository,
         )
+        from ...adapters.storage.azure_blob_service import get_azure_blob_service
 
         blob_service = get_azure_blob_service()
         blob_repo = BlobFileRepository()
@@ -1448,12 +1448,12 @@ async def get_pre_visit_summary(
 
             # Try to generate summary on-demand
             try:
-                from ...application.use_cases.generate_pre_visit_summary import (
-                    GeneratePreVisitSummaryUseCase,
-                )
-                from ...application.dto.patient_dto import PreVisitSummaryRequest
                 from ...adapters.external.question_service_openai import (
                     OpenAIQuestionService,
+                )
+                from ...application.dto.patient_dto import PreVisitSummaryRequest
+                from ...application.use_cases.generate_pre_visit_summary import (
+                    GeneratePreVisitSummaryUseCase,
                 )
 
                 # Create question service directly instead of using container
@@ -1478,6 +1478,8 @@ async def get_pre_visit_summary(
                     logger.warning(
                         f"[GetPreVisitSummary] Use case returned no images, querying directly..."
                     )
+                    from beanie.operators import Or
+
                     from ...adapters.db.mongo.models.patient_m import (
                         MedicationImageMongo,
                     )
@@ -1487,7 +1489,6 @@ async def get_pre_visit_summary(
                     from ...adapters.storage.azure_blob_service import (
                         get_azure_blob_service,
                     )
-                    from beanie.operators import Or
                     from ...core.utils.crypto import encode_patient_id
 
                     patient_internal_id = str(patient.patient_id.value)
@@ -1563,12 +1564,13 @@ async def get_pre_visit_summary(
         summary_data = visit.get_pre_visit_summary()
 
         # Attach any uploaded medication images
+        from beanie.operators import Or
+
         from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
         from ...adapters.db.mongo.repositories.blob_file_repository import (
             BlobFileRepository,
         )
         from ...adapters.storage.azure_blob_service import get_azure_blob_service
-        from beanie.operators import Or
         from ...core.utils.crypto import encode_patient_id
 
         # Try both internal ID and encoded ID (in case images were stored with encoded ID)
@@ -2082,8 +2084,9 @@ async def list_patient_visits(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        from ...domain.value_objects.patient_id import PatientId
         import urllib.parse
+
+        from ...domain.value_objects.patient_id import PatientId
 
         # URL decode the patient_id in case it's URL encoded
         decoded_path_param = urllib.parse.unquote(patient_id)
@@ -2245,10 +2248,11 @@ async def get_visit_detail(
     - Associated audio files
     """
     try:
+        import urllib.parse
+
+        from ...adapters.db.mongo.repositories.audio_repository import AudioRepository
         from ...domain.value_objects.patient_id import PatientId
         from ...domain.value_objects.visit_id import VisitId
-        from ...adapters.db.mongo.repositories.audio_repository import AudioRepository
-        import urllib.parse
 
         # URL decode the patient_id in case it's URL encoded
         decoded_path_param = urllib.parse.unquote(patient_id)

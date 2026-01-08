@@ -4,8 +4,8 @@ Peek at the first 5 messages in the Azure Queue without removing them.
 Useful for debugging queue contents and payload structure.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Bootstrap: Add src directory to Python path for src-layout convenience
@@ -18,12 +18,12 @@ _src_dir_str = str(_src_dir)
 if _src_dir_str not in sys.path:
     sys.path.insert(0, _src_dir_str)
 
+import asyncio
 import json
 from datetime import datetime
 
-from clinicai.core.config import get_settings
 from clinicai.adapters.queue.azure_queue_service import get_azure_queue_service
-import asyncio
+from clinicai.core.config import get_settings
 
 
 def truncate_content(content: str, max_chars: int = 500) -> str:

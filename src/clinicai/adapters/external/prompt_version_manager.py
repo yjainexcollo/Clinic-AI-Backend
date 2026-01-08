@@ -17,15 +17,15 @@ import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from clinicai.adapters.external.prompt_registry import (
-    PromptScenario,
-    PROMPT_VERSIONS,
-    MAJOR_VERSIONS,
+from clinicai.adapters.db.mongo.models.prompt_version_m import (
+    PromptVersionEntry,
+    PromptVersionMongo,
 )
 from clinicai.adapters.external.prompt_extractors import extract_template
-from clinicai.adapters.db.mongo.models.prompt_version_m import (
-    PromptVersionMongo,
-    PromptVersionEntry,
+from clinicai.adapters.external.prompt_registry import (
+    MAJOR_VERSIONS,
+    PROMPT_VERSIONS,
+    PromptScenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,8 +173,9 @@ class PromptVersionManager:
     async def _ensure_unique_index(self):
         """Ensure unique index exists on scenario field to prevent duplicates."""
         try:
-            from clinicai.core.config import get_settings
             from motor.motor_asyncio import AsyncIOMotorClient
+
+            from clinicai.core.config import get_settings
 
             settings = get_settings()
             client = AsyncIOMotorClient(settings.database.uri)
