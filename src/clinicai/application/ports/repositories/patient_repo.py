@@ -18,7 +18,9 @@ class PatientRepository(ABC):
         pass
 
     @abstractmethod
-    async def find_by_id(self, patient_id: PatientId, doctor_id: str) -> Optional[Patient]:
+    async def find_by_id(
+        self, patient_id: PatientId, doctor_id: str
+    ) -> Optional[Patient]:
         """Find a patient by ID."""
         pass
 
@@ -35,7 +37,9 @@ class PatientRepository(ABC):
         pass
 
     @abstractmethod
-    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Patient]:
+    async def find_all(
+        self, doctor_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Patient]:
         """Find all patients with pagination."""
         pass
 

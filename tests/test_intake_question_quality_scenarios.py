@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -83,7 +84,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="female",
         chief_complaint="Known asthma, recently more frequent episodes of wheezing",
     ),
-
     # 4–7 Acute high-risk complaints (non-trauma)
     Scenario(
         name="Acute high-risk - Sudden chest pain in 55M",
@@ -113,7 +113,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="female",
         chief_complaint="High fever and neck stiffness since yesterday",
     ),
-
     # 8–11 Acute moderate/low-risk complaints
     Scenario(
         name="Acute low-risk - Sore throat and fever in young adult",
@@ -154,7 +153,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="female",
         chief_complaint="Burning with urination and urinary frequency for 3 days",
     ),
-
     # 12–14 Travel-related scenarios
     Scenario(
         name="Travel-related - Dengue-endemic fever and body aches",
@@ -180,7 +178,6 @@ SCENARIOS: List[Scenario] = [
         chief_complaint="Sprained ankle from missing a step yesterday; just returned from travel but no infection symptoms",
         recently_travelled=True,
     ),
-
     # 15–19 Menstrual / reproductive (including edge cases)
     Scenario(
         name="Menstrual - Irregular periods in 25F",
@@ -231,7 +228,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="female",
         chief_complaint="Lower abdominal discomfort and bloating",
     ),
-
     # 20–22 Pediatric
     Scenario(
         name="Pediatric - 8-year-old with cough and fever",
@@ -254,7 +250,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="male",
         chief_complaint="Right knee pain after soccer game injury",
     ),
-
     # 23–24 Geriatric / multi-morbid
     Scenario(
         name="Geriatric - CKD and fatigue",
@@ -270,7 +265,6 @@ SCENARIOS: List[Scenario] = [
         patient_gender="male",
         chief_complaint="Chronic heart failure with worsening leg swelling and shortness of breath when lying flat",
     ),
-
     # 25–26 Non-medical / mental health / lifestyle (include 1 ES scenario)
     Scenario(
         name="Mental health - Anxiety and panic symptoms",
@@ -367,7 +361,9 @@ async def run_intake_for_scenario(
             if language == "sp":
                 answer_text = "El paciente proporciona una respuesta breve relacionada con la pregunta."
             else:
-                answer_text = "The patient provides a brief answer related to the question."
+                answer_text = (
+                    "The patient provides a brief answer related to the question."
+                )
         previous_answers.append(answer_text)
 
         # Stop if we hit closing question
@@ -488,6 +484,10 @@ async def evaluate_questions_with_llm(
 
 @pytest.mark.slow
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("AZURE_OPENAI_API_KEY"),
+    reason="Azure OpenAI credentials not available in CI",
+)
 async def test_question_quality_across_25_scenarios() -> None:
     """Integration test: run multi-agent intake and LLM evaluator across 25 scenarios."""
     service = OpenAIQuestionService()
@@ -521,10 +521,7 @@ async def test_question_quality_across_25_scenarios() -> None:
         print(f"Summary: {eval_result.summary}\n")
 
     # Print a compact table
-    header = (
-        "Scenario".ljust(55)
-        + " | Lang | Rating | Coverage | Safety | Redundancy"
-    )
+    header = "Scenario".ljust(55) + " | Lang | Rating | Coverage | Safety | Redundancy"
     print("\n" + header)
     print("-" * len(header))
     for scenario, _qa_pairs, ev in results:
@@ -551,5 +548,3 @@ async def test_question_quality_across_25_scenarios() -> None:
             f"Average rating across non-edge scenarios is low ({avg_rating:.2f}); "
             "question quality may have regressed."
         )
-
-

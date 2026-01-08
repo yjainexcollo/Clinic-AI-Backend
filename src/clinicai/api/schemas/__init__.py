@@ -9,7 +9,7 @@ from .common import (
     ContactInfo,
     PersonalInfo,
     QuestionAnswer,
-    BlobFileInfo
+    BlobFileInfo,
 )
 
 # Patient registration schemas
@@ -19,7 +19,7 @@ from .patient_registration import (
     PatientSummarySchema,
     PatientWithVisitsSchema,
     PatientListResponse,
-    LatestVisitInfo
+    LatestVisitInfo,
 )
 
 # Intake schemas
@@ -28,7 +28,7 @@ from .intake import (
     AnswerIntakeResponse,
     EditAnswerRequest,
     EditAnswerResponse,
-    IntakeSummarySchema
+    IntakeSummarySchema,
 )
 
 # Summary schemas
@@ -36,7 +36,7 @@ from .summaries import (
     PreVisitSummaryRequest,
     PreVisitSummaryResponse,
     PostVisitSummaryRequest,
-    PostVisitSummaryResponse
+    PostVisitSummaryResponse,
 )
 
 # Medical schemas
@@ -49,7 +49,7 @@ from .medical import (
     TestOrderInfo,
     MedicalRecommendation,
     ActionPlanRequest,
-    ActionPlanResponse
+    ActionPlanResponse,
 )
 
 # Visit schemas
@@ -58,7 +58,7 @@ from .visits import (
     VisitDetailSchema,
     VisitListResponse,
     TranscriptionSessionSchema,
-    SoapNoteSchema
+    SoapNoteSchema,
 )
 
 # Doctor preferences
@@ -85,7 +85,6 @@ __all__ = [
     "PersonalInfo",
     "QuestionAnswer",
     "BlobFileInfo",
-    
     # Patient registration
     "RegisterPatientRequest",
     "RegisterPatientResponse",
@@ -93,20 +92,17 @@ __all__ = [
     "PatientWithVisitsSchema",
     "PatientListResponse",
     "LatestVisitInfo",
-    
     # Intake
     "AnswerIntakeRequest",
     "AnswerIntakeResponse",
     "EditAnswerRequest",
     "EditAnswerResponse",
     "IntakeSummarySchema",
-    
     # Summaries
     "PreVisitSummaryRequest",
     "PreVisitSummaryResponse",
     "PostVisitSummaryRequest",
     "PostVisitSummaryResponse",
-    
     # Medical
     "VitalsData",
     "PhysicalExam",
@@ -117,21 +113,18 @@ __all__ = [
     "MedicalRecommendation",
     "ActionPlanRequest",
     "ActionPlanResponse",
-    
     # Visits
     "VisitListItemSchema",
     "VisitDetailSchema",
     "VisitListResponse",
     "TranscriptionSessionSchema",
     "SoapNoteSchema",
-
     # Doctor preferences
     "PreVisitSectionConfig",
     "PreVisitAIConfig",
     "SoapAIConfig",
     "DoctorPreferencesResponse",
     "UpsertDoctorPreferencesRequest",
-    
     # Health
     # "HealthResponse",
     # "ReadyResponse",

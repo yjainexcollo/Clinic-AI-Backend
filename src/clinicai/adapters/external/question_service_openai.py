@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import Counter
 from pydantic import BaseModel, Field, ValidationError
-from pydantic import ConfigDict # Pydantic v2
+from pydantic import ConfigDict  # Pydantic v2
 from clinicai.application.ports.services.question_service import QuestionService
 from clinicai.core.config import get_settings
 from clinicai.core.ai_factory import get_ai_client
@@ -25,17 +25,20 @@ from clinicai.adapters.db.mongo.repositories.llm_interaction_repository import (
 from clinicai.adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from clinicai.adapters.external.prompt_registry import PromptScenario, PROMPT_VERSIONS
 from clinicai.adapters.external.llm_gateway import call_llm_with_telemetry
+
 logger = logging.getLogger("clinicai")
+
+
 # =============================================================================
 # SHARED UTILITIES
 # =============================================================================
 def _normalize_language(language: str) -> str:
     """
     Normalize language code for backend LLM prompts.
-    
+
     Frontend uses: 'en' or 'sp'
     Backend normalizes to: 'en' or 'es' (for LLM prompts)
-    
+
     Mapping:
     - 'sp', 'es', 'spanish', 'español', 'es-es', 'es-mx' → 'es'
     - unknown/empty → 'en' (default)
@@ -103,7 +106,9 @@ def _clamp_topics(topics: List[str]) -> List[str]:
     return [t for t in topics if t in allowed]
 
 
-def _ensure_nonempty_topic_plan(priority_topics: List[str], topic_plan: List[str]) -> List[str]:
+def _ensure_nonempty_topic_plan(
+    priority_topics: List[str], topic_plan: List[str]
+) -> List[str]:
     """
     Guarantee topic_plan exists and is valid:
     - If empty → use priority_topics
@@ -131,10 +136,14 @@ def _recompute_gaps_from_plan(
     covered = set(topics_covered or [])
     gaps = [t for t in plan if t not in avoid and t not in covered]
     return gaps
+
+
 # =============================================================================
 # ✅ NEW: CODE-TRUTH TOPIC TRACKING + CHRONIC TAIL
 # =============================================================================
-def _topic_counts_from_asked_categories(asked_categories: Optional[List[str]]) -> Dict[str, int]:
+def _topic_counts_from_asked_categories(
+    asked_categories: Optional[List[str]],
+) -> Dict[str, int]:
     """
     Code-truth topic counts from asked_categories.
     asked_categories MUST be appended with chosen_topic at question-send time.
@@ -149,8 +158,30 @@ def _topic_counts_from_asked_categories(asked_categories: Optional[List[str]]) -
     return out
 
 
-_POSITIVE = {"yes", "y", "yeah", "yep", "sure", "of course", "i do", "i have", "sometimes", "often", "frequently"}
-_NEGATIVE = {"no", "n", "nope", "never", "not really", "i don't", "i do not", "haven't", "have not"}
+_POSITIVE = {
+    "yes",
+    "y",
+    "yeah",
+    "yep",
+    "sure",
+    "of course",
+    "i do",
+    "i have",
+    "sometimes",
+    "often",
+    "frequently",
+}
+_NEGATIVE = {
+    "no",
+    "n",
+    "nope",
+    "never",
+    "not really",
+    "i don't",
+    "i do not",
+    "haven't",
+    "have not",
+}
 
 
 def _is_positive_answer(text: str) -> bool:
@@ -181,9 +212,16 @@ def _duration_implies_chronic(answers: List[str]) -> bool:
         r"(three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months",
     ]
     number_words = {
-        "three": 3, "four": 4, "five": 5, "six": 6,
-        "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-        "eleven": 11, "twelve": 12,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
     }
     for ans in answers:
         a = (ans or "").lower()
@@ -197,9 +235,15 @@ def _duration_implies_chronic(answers: List[str]) -> bool:
                 elif val in number_words and number_words[val] >= 3:
                     return True
         # catch generic phrasing
-        if "over 3 months" in a or "more than 3 months" in a or "more than three months" in a:
+        if (
+            "over 3 months" in a
+            or "more than 3 months" in a
+            or "more than three months" in a
+        ):
             return True
     return False
+
+
 # =============================================================================
 # AGENT 1: Medical Context Analyzer
 # =============================================================================
@@ -208,6 +252,7 @@ class ConditionPropertiesModel(BaseModel):
     IMPORTANT FIX:
     - extra="ignore" so random keys like {"fever": true} DO NOT break validation.
     """
+
     model_config = ConfigDict(extra="ignore")
     is_chronic: Optional[bool] = None
     is_hereditary: Optional[bool] = None
@@ -218,8 +263,12 @@ class ConditionPropertiesModel(BaseModel):
     is_allergy_related: Optional[bool] = None
     requires_lifestyle_assessment: Optional[bool] = None
     is_travel_related: Optional[bool] = None
-    severity_level: Optional[str] = Field(default=None, pattern="^(mild|moderate|severe)$")
-    acuity_level: Optional[str] = Field(default=None, pattern="^(acute|subacute|chronic)$")
+    severity_level: Optional[str] = Field(
+        default=None, pattern="^(mild|moderate|severe)$"
+    )
+    acuity_level: Optional[str] = Field(
+        default=None, pattern="^(acute|subacute|chronic)$"
+    )
     is_new_problem: Optional[bool] = None
     is_followup: Optional[bool] = None
 
@@ -329,7 +378,9 @@ Gender: {patient_gender or "Not specified"}
 Recent Travel Checkbox: {"Yes" if recently_travelled else "No"}
 Return the JSON plan now.
 """
-        logger.info("Agent1: calling LLM for context plan chief_complaint='%s'", chief_complaint)
+        logger.info(
+            "Agent1: calling LLM for context plan chief_complaint='%s'", chief_complaint
+        )
         resp = await call_llm_with_telemetry(
             ai_client=self._client,
             scenario=PromptScenario.RED_FLAG,
@@ -361,7 +412,9 @@ Return the JSON plan now.
                     response_text=response_text,
                     metadata={
                         "chief_complaint": chief_complaint,
-                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        "prompt_version": PROMPT_VERSIONS.get(
+                            PromptScenario.INTAKE, "UNKNOWN"
+                        ),
                     },
                 )
             except Exception as e:
@@ -397,7 +450,7 @@ Return the JSON plan now.
             priority_topics = [t for t in priority_topics if t != "menstrual_cycle"]
             if "menstrual_cycle" not in avoid_topics:
                 avoid_topics.append("menstrual_cycle")
-        
+
         # Explicit logic: For female patients aged 12-60 with stomach/abdominal/pelvic pain symptoms,
         # ensure is_womens_health is set and menstrual_cycle is included
         is_reproductive_age = patient_age is not None and 12 <= patient_age <= 60
@@ -405,32 +458,59 @@ Return the JSON plan now.
             # Check if chief complaint contains women's health related symptoms
             complaint_lower = chief_complaint.lower()
             womens_health_symptoms = [
-                "stomach pain", "stomachache", "abdominal pain", "pelvic pain",
-                "lower abdominal", "belly pain", "tummy pain", "abdominal discomfort",
-                "pelvic discomfort", "stomach ache", "dolor de estómago", "dolor abdominal",
-                "dolor pélvico", "dolor abdominal inferior", "dolor de barriga"
+                "stomach pain",
+                "stomachache",
+                "abdominal pain",
+                "pelvic pain",
+                "lower abdominal",
+                "belly pain",
+                "tummy pain",
+                "abdominal discomfort",
+                "pelvic discomfort",
+                "stomach ache",
+                "dolor de estómago",
+                "dolor abdominal",
+                "dolor pélvico",
+                "dolor abdominal inferior",
+                "dolor de barriga",
             ]
-            
-            has_womens_health_symptom = any(symptom in complaint_lower for symptom in womens_health_symptoms)
-            
+
+            has_womens_health_symptom = any(
+                symptom in complaint_lower for symptom in womens_health_symptoms
+            )
+
             if has_womens_health_symptom:
                 # Set is_womens_health to true
                 condition_props["is_womens_health"] = True
                 # Ensure menstrual_cycle is in priority_topics if not already there and not avoided
-                if "menstrual_cycle" not in priority_topics and "menstrual_cycle" not in avoid_topics:
+                if (
+                    "menstrual_cycle" not in priority_topics
+                    and "menstrual_cycle" not in avoid_topics
+                ):
                     priority_topics.append("menstrual_cycle")
-                    logger.info("Added menstrual_cycle to priority_topics for female patient (age %s) with stomach/abdominal pain: %s", patient_age, chief_complaint)
-        
-        topic_plan = _ensure_nonempty_topic_plan(priority_topics, parsed.topic_plan or [])
+                    logger.info(
+                        "Added menstrual_cycle to priority_topics for female patient (age %s) with stomach/abdominal pain: %s",
+                        patient_age,
+                        chief_complaint,
+                    )
+
+        topic_plan = _ensure_nonempty_topic_plan(
+            priority_topics, parsed.topic_plan or []
+        )
         avoid_set = set(avoid_topics)
         topic_plan = [t for t in topic_plan if t not in avoid_set]
         if not topic_plan:
             topic_plan = [t for t in priority_topics if t not in avoid_set]
         if not priority_topics:
-            raise ValueError("Agent1 returned empty priority_topics; fix prompt or model behavior")
+            raise ValueError(
+                "Agent1 returned empty priority_topics; fix prompt or model behavior"
+            )
         logger.info(
             "Agent1 parsed: priority_topics=%s avoid_topics=%s topic_plan=%s triage=%s",
-            priority_topics, avoid_topics, topic_plan, triage_level
+            priority_topics,
+            avoid_topics,
+            topic_plan,
+            triage_level,
         )
         return MedicalContext(
             chief_complaint=chief_complaint,
@@ -449,6 +529,8 @@ Return the JSON plan now.
             topic_plan=topic_plan,
             recently_travelled=recently_travelled,
         )
+
+
 # =============================================================================
 # AGENT 2: Answer Extractor
 # =============================================================================
@@ -487,10 +569,14 @@ class AnswerExtractor:
         all_qa: List[Dict[str, str]] = []
         for i in range(len(asked_questions or [])):
             if i < len(previous_answers or []):
-                all_qa.append({"question": asked_questions[i], "answer": previous_answers[i]})
+                all_qa.append(
+                    {"question": asked_questions[i], "answer": previous_answers[i]}
+                )
         # HARD RULE: if nothing asked yet => nothing covered
         if not all_qa:
-            gaps = _recompute_gaps_from_plan(medical_context=medical_context, topics_covered=[])
+            gaps = _recompute_gaps_from_plan(
+                medical_context=medical_context, topics_covered=[]
+            )
             return ExtractedInformation(
                 topics_covered=[],
                 information_gaps=gaps,
@@ -560,7 +646,9 @@ Return the JSON now.
             raise ValueError("Agent2 returned no valid JSON")
         topics_covered = _clamp_topics(_safe_str_list(raw.get("topics_covered")))
         information_gaps = _clamp_topics(_safe_str_list(raw.get("information_gaps")))
-        redundant_categories = _clamp_topics(_safe_str_list(raw.get("redundant_categories")))
+        redundant_categories = _clamp_topics(
+            _safe_str_list(raw.get("redundant_categories"))
+        )
         extracted_facts = raw.get("extracted_facts") or {}
         if not isinstance(extracted_facts, dict):
             extracted_facts = {}
@@ -575,10 +663,18 @@ Return the JSON now.
         priority = set(medical_context.priority_topics or [])
         avoid = set(medical_context.avoid_topics or [])
         topics_covered = [t for t in topics_covered if t in priority and t not in avoid]
-        redundant_categories = [t for t in redundant_categories if t in set(ALLOWED_TOPICS)]
+        redundant_categories = [
+            t for t in redundant_categories if t in set(ALLOWED_TOPICS)
+        ]
         covered_set = set(topics_covered)
-        information_gaps = [t for t in information_gaps if t in priority and t not in avoid and t not in covered_set]
-        recomputed_gaps = _recompute_gaps_from_plan(medical_context=medical_context, topics_covered=topics_covered)
+        information_gaps = [
+            t
+            for t in information_gaps
+            if t in priority and t not in avoid and t not in covered_set
+        ]
+        recomputed_gaps = _recompute_gaps_from_plan(
+            medical_context=medical_context, topics_covered=topics_covered
+        )
         if not information_gaps or (set(information_gaps) == set(topics_covered)):
             information_gaps = recomputed_gaps
         topic_counts = raw.get("topic_counts")
@@ -603,7 +699,9 @@ Return the JSON now.
                         "already_mentioned_duration": already_duration,
                         "already_mentioned_medications": already_meds,
                         "topic_counts": topic_counts,
-                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        "prompt_version": PROMPT_VERSIONS.get(
+                            PromptScenario.INTAKE, "UNKNOWN"
+                        ),
                     },
                 )
             except Exception as e:
@@ -617,6 +715,8 @@ Return the JSON now.
             redundant_categories=redundant_categories,
             topic_counts=topic_counts,
         )
+
+
 # =============================================================================
 # AGENT 3: Question Generator (topic-forced) + ✅ TOPIC ENFORCEMENT
 # =============================================================================
@@ -635,7 +735,9 @@ class QuestionGenerator:
         if not question:
             return question
         q = question.strip()
-        if (q.startswith('"') and q.endswith('"')) or (q.startswith("'") and q.endswith("'")):
+        if (q.startswith('"') and q.endswith('"')) or (
+            q.startswith("'") and q.endswith("'")
+        ):
             q = q[1:-1].strip()
         q = re.sub(r"^(q:|\d+\.)\s*", "", q, flags=re.IGNORECASE)
         q = q.replace("\n", " ")
@@ -649,49 +751,308 @@ class QuestionGenerator:
     # ✅ Topic rulebook + validator
     # ----------------------------
     _TOPIC_KEYWORDS_EN: Dict[str, List[str]] = {
-        "duration": ["how long", "when did", "since when", "start", "began", "duration"],
-        "associated_symptoms": [
-            "symptom", "fever", "fatigue", "nausea", "vomit", "cough", "breath",
-            "dizzy", "headache", "urination", "thirst", "blur", "weight loss",
-            "tingling", "numb", "swelling"
+        "duration": [
+            "how long",
+            "when did",
+            "since when",
+            "start",
+            "began",
+            "duration",
         ],
-        "current_medications": ["medication", "medicine", "tablet", "pill", "insulin", "metformin", "dose", "mg", "units", "taking"],
-        "past_medical_history": ["history", "diagnosed", "past", "previous", "surgery", "hospital", "condition"],
-        "triggers": ["trigger", "worse", "better", "after", "before", "food", "exercise", "stress", "sleep"],
+        "associated_symptoms": [
+            "symptom",
+            "fever",
+            "fatigue",
+            "nausea",
+            "vomit",
+            "cough",
+            "breath",
+            "dizzy",
+            "headache",
+            "urination",
+            "thirst",
+            "blur",
+            "weight loss",
+            "tingling",
+            "numb",
+            "swelling",
+        ],
+        "current_medications": [
+            "medication",
+            "medicine",
+            "tablet",
+            "pill",
+            "insulin",
+            "metformin",
+            "dose",
+            "mg",
+            "units",
+            "taking",
+        ],
+        "past_medical_history": [
+            "history",
+            "diagnosed",
+            "past",
+            "previous",
+            "surgery",
+            "hospital",
+            "condition",
+        ],
+        "triggers": [
+            "trigger",
+            "worse",
+            "better",
+            "after",
+            "before",
+            "food",
+            "exercise",
+            "stress",
+            "sleep",
+        ],
         "travel_history": ["travel", "trip", "flight", "abroad", "out of town"],
-        "lifestyle_functional_impact": ["daily life", "work", "sleep", "appetite", "activity", "exercise", "diet", "routine", "impact", "function"],
-        "family_history": ["family", "mother", "father", "siblings", "runs in family", "relative"],
+        "lifestyle_functional_impact": [
+            "daily life",
+            "work",
+            "sleep",
+            "appetite",
+            "activity",
+            "exercise",
+            "diet",
+            "routine",
+            "impact",
+            "function",
+        ],
+        "family_history": [
+            "family",
+            "mother",
+            "father",
+            "siblings",
+            "runs in family",
+            "relative",
+        ],
         "allergies": ["allergy", "allergic", "rash", "hives", "reaction"],
-        "pain_assessment": ["pain", "severity", "0 to 10", "scale", "where", "location", "radiate"],
-        "temporal": ["pattern", "frequency", "how often", "timing", "episodes", "comes and goes", "progress"],
-        "menstrual_cycle": ["period", "menstrual", "cycle", "pregnant", "lmp", "bleeding"],
-        "past_evaluation": ["tests", "scan", "x-ray", "lab", "doctor", "evaluation", "report"],
-        "chronic_monitoring": ["monitor", "check", "readings", "hba1c", "fasting", "logs", "follow up"],
-        "lab_tests": ["lab", "blood test", "results", "hba1c", "cholesterol", "thyroid", "creatinine", "test results"],
-        "screening": ["screening", "eye", "kidney", "feet", "foot", "retina", "complications", "imaging", "stress test"],
+        "pain_assessment": [
+            "pain",
+            "severity",
+            "0 to 10",
+            "scale",
+            "where",
+            "location",
+            "radiate",
+        ],
+        "temporal": [
+            "pattern",
+            "frequency",
+            "how often",
+            "timing",
+            "episodes",
+            "comes and goes",
+            "progress",
+        ],
+        "menstrual_cycle": [
+            "period",
+            "menstrual",
+            "cycle",
+            "pregnant",
+            "lmp",
+            "bleeding",
+        ],
+        "past_evaluation": [
+            "tests",
+            "scan",
+            "x-ray",
+            "lab",
+            "doctor",
+            "evaluation",
+            "report",
+        ],
+        "chronic_monitoring": [
+            "monitor",
+            "check",
+            "readings",
+            "hba1c",
+            "fasting",
+            "logs",
+            "follow up",
+        ],
+        "lab_tests": [
+            "lab",
+            "blood test",
+            "results",
+            "hba1c",
+            "cholesterol",
+            "thyroid",
+            "creatinine",
+            "test results",
+        ],
+        "screening": [
+            "screening",
+            "eye",
+            "kidney",
+            "feet",
+            "foot",
+            "retina",
+            "complications",
+            "imaging",
+            "stress test",
+        ],
     }
 
     _TOPIC_KEYWORDS_ES: Dict[str, List[str]] = {
-        "duration": ["cuánto tiempo", "cuándo", "desde cuándo", "inicio", "comenzó", "duración", "diagnosticaron", "causado", "causa"],
-        "associated_symptoms": [
-            "síntoma", "fiebre", "fatiga", "náusea", "vómito", "tos", "respiración",
-            "mareo", "dolor de cabeza", "micción", "sed", "visión", "pérdida de peso",
-            "hormigueo", "entumecimiento", "hinchazón"
+        "duration": [
+            "cuánto tiempo",
+            "cuándo",
+            "desde cuándo",
+            "inicio",
+            "comenzó",
+            "duración",
+            "diagnosticaron",
+            "causado",
+            "causa",
         ],
-        "current_medications": ["medicamento", "medicina", "tableta", "pastilla", "insulina", "metformina", "dosis", "mg", "unidades", "tomando"],
-        "past_medical_history": ["historial", "diagnosticado", "pasado", "anterior", "cirugía", "hospital", "condición"],
-        "triggers": ["desencadena", "peor", "mejor", "después", "antes", "comida", "ejercicio", "estrés", "sueño"],
-        "travel_history": ["viaje", "viajado", "vuelo", "extranjero", "fuera de la ciudad"],
-        "lifestyle_functional_impact": ["vida diaria", "trabajo", "sueño", "apetito", "actividad", "ejercicio", "dieta", "rutina", "impacto", "función"],
-        "family_history": ["familia", "madre", "padre", "hermanos", "familiar", "pariente"],
+        "associated_symptoms": [
+            "síntoma",
+            "fiebre",
+            "fatiga",
+            "náusea",
+            "vómito",
+            "tos",
+            "respiración",
+            "mareo",
+            "dolor de cabeza",
+            "micción",
+            "sed",
+            "visión",
+            "pérdida de peso",
+            "hormigueo",
+            "entumecimiento",
+            "hinchazón",
+        ],
+        "current_medications": [
+            "medicamento",
+            "medicina",
+            "tableta",
+            "pastilla",
+            "insulina",
+            "metformina",
+            "dosis",
+            "mg",
+            "unidades",
+            "tomando",
+        ],
+        "past_medical_history": [
+            "historial",
+            "diagnosticado",
+            "pasado",
+            "anterior",
+            "cirugía",
+            "hospital",
+            "condición",
+        ],
+        "triggers": [
+            "desencadena",
+            "peor",
+            "mejor",
+            "después",
+            "antes",
+            "comida",
+            "ejercicio",
+            "estrés",
+            "sueño",
+        ],
+        "travel_history": [
+            "viaje",
+            "viajado",
+            "vuelo",
+            "extranjero",
+            "fuera de la ciudad",
+        ],
+        "lifestyle_functional_impact": [
+            "vida diaria",
+            "trabajo",
+            "sueño",
+            "apetito",
+            "actividad",
+            "ejercicio",
+            "dieta",
+            "rutina",
+            "impacto",
+            "función",
+        ],
+        "family_history": [
+            "familia",
+            "madre",
+            "padre",
+            "hermanos",
+            "familiar",
+            "pariente",
+        ],
         "allergies": ["alergia", "alérgico", "erupción", "ronchas", "reacción"],
-        "pain_assessment": ["dolor", "severidad", "0 a 10", "escala", "dónde", "ubicación", "irradia"],
-        "temporal": ["patrón", "frecuencia", "con qué frecuencia", "momento", "episodios", "va y viene", "progreso"],
-        "menstrual_cycle": ["período", "menstrual", "ciclo", "embarazada", "última regla", "sangrado"],
-        "past_evaluation": ["pruebas", "escaneo", "rayos x", "laboratorio", "doctor", "evaluación", "informe"],
-        "chronic_monitoring": ["monitorear", "revisar", "lecturas", "hba1c", "ayunas", "registros", "seguimiento"],
-        "lab_tests": ["laboratorio", "análisis de sangre", "resultados", "hba1c", "colesterol", "tiroides", "creatinina", "resultados de pruebas"],
-        "screening": ["detección", "ojos", "riñones", "pies", "pie", "retina", "complicaciones", "imágenes", "prueba de esfuerzo"],
+        "pain_assessment": [
+            "dolor",
+            "severidad",
+            "0 a 10",
+            "escala",
+            "dónde",
+            "ubicación",
+            "irradia",
+        ],
+        "temporal": [
+            "patrón",
+            "frecuencia",
+            "con qué frecuencia",
+            "momento",
+            "episodios",
+            "va y viene",
+            "progreso",
+        ],
+        "menstrual_cycle": [
+            "período",
+            "menstrual",
+            "ciclo",
+            "embarazada",
+            "última regla",
+            "sangrado",
+        ],
+        "past_evaluation": [
+            "pruebas",
+            "escaneo",
+            "rayos x",
+            "laboratorio",
+            "doctor",
+            "evaluación",
+            "informe",
+        ],
+        "chronic_monitoring": [
+            "monitorear",
+            "revisar",
+            "lecturas",
+            "hba1c",
+            "ayunas",
+            "registros",
+            "seguimiento",
+        ],
+        "lab_tests": [
+            "laboratorio",
+            "análisis de sangre",
+            "resultados",
+            "hba1c",
+            "colesterol",
+            "tiroides",
+            "creatinina",
+            "resultados de pruebas",
+        ],
+        "screening": [
+            "detección",
+            "ojos",
+            "riñones",
+            "pies",
+            "pie",
+            "retina",
+            "complicaciones",
+            "imágenes",
+            "prueba de esfuerzo",
+        ],
     }
     _TOPIC_FALLBACK_Q_EN: Dict[str, str] = {
         "duration": "How long have you had this problem?",
@@ -731,12 +1092,16 @@ class QuestionGenerator:
         "screening": "¿Ha tenido alguna prueba de detección para complicaciones (como exámenes de ojos, corazón o riñones) recientemente?",
     }
 
-    def _question_matches_topic(self, chosen_topic: str, question: str, language: str = "en") -> bool:
+    def _question_matches_topic(
+        self, chosen_topic: str, question: str, language: str = "en"
+    ) -> bool:
         q = (question or "").strip().lower()
         if not q:
             return False
         lang = self._normalize_language(language)
-        keyword_dict = self._TOPIC_KEYWORDS_ES if lang == "es" else self._TOPIC_KEYWORDS_EN
+        keyword_dict = (
+            self._TOPIC_KEYWORDS_ES if lang == "es" else self._TOPIC_KEYWORDS_EN
+        )
         kws = keyword_dict.get(chosen_topic, [])
         if not kws:
             return True  # if no rulebook, don't block
@@ -744,8 +1109,14 @@ class QuestionGenerator:
 
     def _get_fallback_question(self, chosen_topic: str, language: str = "en") -> str:
         lang = self._normalize_language(language)
-        fallback_dict = self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
-        default_q = "¿Podría contarme más sobre eso?" if lang == "es" else "Could you tell me more about that?"
+        fallback_dict = (
+            self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
+        )
+        default_q = (
+            "¿Podría contarme más sobre eso?"
+            if lang == "es"
+            else "Could you tell me more about that?"
+        )
         return fallback_dict.get(chosen_topic, default_q)
 
     async def _llm_generate_once(self, system_prompt: str, user_prompt: str) -> str:
@@ -782,7 +1153,9 @@ class QuestionGenerator:
             all_qa = []
             for i in range(len(asked_questions)):
                 if i < len(previous_answers):
-                    all_qa.append({"question": asked_questions[i], "answer": previous_answers[i]})
+                    all_qa.append(
+                        {"question": asked_questions[i], "answer": previous_answers[i]}
+                    )
             qa_history = self._format_qa_pairs(all_qa) if all_qa else ""
         lang = _normalize_language(language)
         output_language = _get_output_language_name(language)
@@ -819,43 +1192,61 @@ Generate the question now.
         deep_diag_note = ""
         if deep_diagnostic_question_num is not None:
             if lang == "es":
-                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
-                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #1 - MONITOREO EN CASA Y CLÍNICO:\n" \
-                                     "Pregunte sobre cómo el paciente monitorea esta condición crónica TANTO en casa como en entornos clínicos.\n" \
-                                     "Ejemplos: lecturas de azúcar en sangre en casa, controles de presión arterial en casa, y controles con dispositivos o doctores en la clínica.\n" \
-                                     "Formato: Pregunte sobre la frecuencia del monitoreo Y los valores/lecturas típicas (en casa y/o clínica).\n" \
-                                     "Ejemplo: '¿Con qué frecuencia usted o sus doctores revisan sus lecturas para esta condición, y cuáles son sus valores usuales?'"
+                if (
+                    deep_diagnostic_question_num == 1
+                    and chosen_topic == "chronic_monitoring"
+                ):
+                    deep_diag_note = (
+                        "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #1 - MONITOREO EN CASA Y CLÍNICO:\n"
+                        "Pregunte sobre cómo el paciente monitorea esta condición crónica TANTO en casa como en entornos clínicos.\n"
+                        "Ejemplos: lecturas de azúcar en sangre en casa, controles de presión arterial en casa, y controles con dispositivos o doctores en la clínica.\n"
+                        "Formato: Pregunte sobre la frecuencia del monitoreo Y los valores/lecturas típicas (en casa y/o clínica).\n"
+                        "Ejemplo: '¿Con qué frecuencia usted o sus doctores revisan sus lecturas para esta condición, y cuáles son sus valores usuales?'"
+                    )
                 elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
-                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #2 - SOLO RESULTADOS DE PRUEBAS DE LABORATORIO:\n" \
-                        "Pregunte sobre RESULTADOS DE PRUEBAS DE LABORATORIO RECIENTES relevantes para esta condición crónica.\n" \
-                        "Enfóquese en: HbA1c, glucosa en ayunas, pruebas de función renal, paneles de colesterol, pruebas de tiroides, u otras pruebas de laboratorio específicas de la condición.\n" \
-                        "Formato: Pregunte qué pruebas de laboratorio recientes han tenido Y qué recuerdan sobre los resultados.\n" \
+                    deep_diag_note = (
+                        "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #2 - SOLO RESULTADOS DE PRUEBAS DE LABORATORIO:\n"
+                        "Pregunte sobre RESULTADOS DE PRUEBAS DE LABORATORIO RECIENTES relevantes para esta condición crónica.\n"
+                        "Enfóquese en: HbA1c, glucosa en ayunas, pruebas de función renal, paneles de colesterol, pruebas de tiroides, u otras pruebas de laboratorio específicas de la condición.\n"
+                        "Formato: Pregunte qué pruebas de laboratorio recientes han tenido Y qué recuerdan sobre los resultados.\n"
                         "Ejemplo: '¿Ha tenido alguna prueba de laboratorio reciente para esta condición, y qué recuerda sobre los resultados?'"
+                    )
                 elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
-                    deep_diag_note = "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #3 - EXÁMENES DE DETECCIÓN/CHECKS DE COMPLICACIONES (NO PRUEBAS DE LAB):\n" \
-                                     "Pregunte sobre EXÁMENES DE DETECCIÓN FORMALES y CHECKS DE COMPLICACIONES (no pruebas de laboratorio rutinarias) realizados debido a esta condición crónica.\n" \
-                                     "Enfóquese en: exámenes de ojos/pies, imágenes cardíacas o pruebas de esfuerzo, imágenes renales, pruebas de función pulmonar, u otros exámenes de detección.\n" \
-                        "Formato: Pregunte si han tenido exámenes de detección Y cuándo fueron realizados por última vez.\n" \
+                    deep_diag_note = (
+                        "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #3 - EXÁMENES DE DETECCIÓN/CHECKS DE COMPLICACIONES (NO PRUEBAS DE LAB):\n"
+                        "Pregunte sobre EXÁMENES DE DETECCIÓN FORMALES y CHECKS DE COMPLICACIONES (no pruebas de laboratorio rutinarias) realizados debido a esta condición crónica.\n"
+                        "Enfóquese en: exámenes de ojos/pies, imágenes cardíacas o pruebas de esfuerzo, imágenes renales, pruebas de función pulmonar, u otros exámenes de detección.\n"
+                        "Formato: Pregunte si han tenido exámenes de detección Y cuándo fueron realizados por última vez.\n"
                         "Ejemplo: '¿Ha tenido alguna prueba de detección para complicaciones relacionadas con esta condición (como exámenes de ojos, corazón o riñones), y cuándo fueron realizados por última vez?'"
+                    )
             else:
-                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
-                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n" \
-                                     "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n" \
-                                     "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n" \
-                                     "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n" \
-                                     "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
+                if (
+                    deep_diagnostic_question_num == 1
+                    and chosen_topic == "chronic_monitoring"
+                ):
+                    deep_diag_note = (
+                        "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n"
+                        "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n"
+                        "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n"
+                        "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n"
+                        "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
+                    )
                 elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
-                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS ONLY:\n" \
-                        "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n" \
-                        "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n" \
-                        "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n" \
+                    deep_diag_note = (
+                        "\n\nDEEP DIAGNOSTIC QUESTION #2 - LAB TEST RESULTS ONLY:\n"
+                        "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n"
+                        "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n"
+                        "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n"
                         "Example: 'Have you had any recent lab tests for this condition, and what do you remember about the results?'"
+                    )
                 elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
-                    deep_diag_note = "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n" \
-                                     "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n" \
-                                     "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n" \
-                        "Format: Ask if they've had screening exams AND when they were last done.\n" \
+                    deep_diag_note = (
+                        "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n"
+                        "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n"
+                        "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n"
+                        "Format: Ask if they've had screening exams AND when they were last done.\n"
                         "Example: 'Have you had any screening tests for complications related to this condition (like eye, heart, or kidney exams), and when were they last done?'"
+                    )
         user_prompt = f"""
 CHOSEN TOPIC (MUST FOLLOW): {chosen_topic}{deep_diag_note}
 Patient:
@@ -900,11 +1291,15 @@ Generate ONE question now, strictly about {chosen_topic}.
                     metadata={
                         "chosen_topic": chosen_topic,
                         "attempt": 1,
-                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                        "prompt_version": PROMPT_VERSIONS.get(
+                            PromptScenario.INTAKE, "UNKNOWN"
+                        ),
                     },
                 )
             except Exception as e:
-                logger.warning("Agent3: failed to persist interaction (attempt 1): %s", e)
+                logger.warning(
+                    "Agent3: failed to persist interaction (attempt 1): %s", e
+                )
         # If question is empty or doesn't match topic => retry once
         if (not q1) or (not self._question_matches_topic(chosen_topic, q1, language)):
             correction = f"""
@@ -913,7 +1308,9 @@ Please generate a question that is SPECIFICALLY about {chosen_topic}.
 Make it clear, concise, and directly relevant to this topic.
 Return ONE question ONLY.
 """
-            response_text_2 = await self._llm_generate_once(system_prompt, user_prompt + "\n\n" + correction)
+            response_text_2 = await self._llm_generate_once(
+                system_prompt, user_prompt + "\n\n" + correction
+            )
             q2 = self._postprocess_question_text(response_text_2)
             log_msg2 = (
                 "[Agent3-QuestionGenerator] Raw LLM response received (retry)\n"
@@ -928,23 +1325,38 @@ Return ONE question ONLY.
                         visit_id=visit_id,
                         patient_id=patient_id,
                         question_number=question_number,
-                        question_text=q2 if q2 and self._question_matches_topic(chosen_topic, q2, language) else None,
+                        question_text=(
+                            q2
+                            if q2
+                            and self._question_matches_topic(chosen_topic, q2, language)
+                            else None
+                        ),
                         agent_name="agent3_question_generator",
-                        user_prompt=user_prompt + "\n\n" + correction,  # Only user_prompt, NO system_prompt
+                        user_prompt=user_prompt
+                        + "\n\n"
+                        + correction,  # Only user_prompt, NO system_prompt
                         response_text=response_text_2,
                         metadata={
                             "chosen_topic": chosen_topic,
                             "attempt": 2,
-                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
+                            "prompt_version": PROMPT_VERSIONS.get(
+                                PromptScenario.INTAKE, "UNKNOWN"
+                            ),
                         },
                     )
                 except Exception as e:
-                    logger.warning("Agent3: failed to persist interaction (attempt 2): %s", e)
+                    logger.warning(
+                        "Agent3: failed to persist interaction (attempt 2): %s", e
+                    )
             if q2 and self._question_matches_topic(chosen_topic, q2, language):
                 return q2
             # deterministic fallback
-            return self._postprocess_question_text(self._get_fallback_question(chosen_topic, language))
+            return self._postprocess_question_text(
+                self._get_fallback_question(chosen_topic, language)
+            )
         return q1
+
+
 # =============================================================================
 # OPTIONAL: Safety Validator
 # =============================================================================
@@ -974,7 +1386,9 @@ class SafetyValidator:
         issues: List[str] = []
         q = (question or "").strip()
         ql = q.lower()
-        prev_norm = {(x or "").strip().lower().rstrip("?.") for x in (asked_questions or [])}
+        prev_norm = {
+            (x or "").strip().lower().rstrip("?.") for x in (asked_questions or [])
+        }
         if q.lower().rstrip("?.") in prev_norm:
             issues.append("CRITICAL VIOLATION: exact duplicate question")
         if medical_context.patient_gender:
@@ -982,17 +1396,29 @@ class SafetyValidator:
             if g in ["male", "m", "masculino", "hombre"]:
                 if any(k in ql for k in MENSTRUAL_KEYWORDS):
                     issues.append("CRITICAL VIOLATION: menstrual asked to male")
-        if medical_context.patient_age is not None and (medical_context.patient_age < 12 or medical_context.patient_age > 60):
+        if medical_context.patient_age is not None and (
+            medical_context.patient_age < 12 or medical_context.patient_age > 60
+        ):
             if any(k in ql for k in MENSTRUAL_KEYWORDS):
                 issues.append("CRITICAL VIOLATION: menstrual asked outside age window")
-        is_travel_related = bool((medical_context.condition_properties or {}).get("is_travel_related", False))
-        if (not recently_travelled or not is_travel_related) and any(k in ql for k in TRAVEL_KEYWORDS):
+        is_travel_related = bool(
+            (medical_context.condition_properties or {}).get("is_travel_related", False)
+        )
+        if (not recently_travelled or not is_travel_related) and any(
+            k in ql for k in TRAVEL_KEYWORDS
+        ):
             issues.append("CRITICAL VIOLATION: travel asked when not allowed")
         corrected = q
         if not corrected.endswith("?"):
             corrected = corrected.rstrip(".") + "?"
         is_valid = not any("CRITICAL VIOLATION" in x for x in issues)
-        return ValidationResult(is_valid=is_valid, issues=issues, corrected_question=(corrected if is_valid else None))
+        return ValidationResult(
+            is_valid=is_valid,
+            issues=issues,
+            corrected_question=(corrected if is_valid else None),
+        )
+
+
 # =============================================================================
 # OPTION A: LLM decides next topic each turn (with guardrails)
 # =============================================================================
@@ -1068,6 +1494,8 @@ Decide the NEXT topic now.
             raise ValueError("Planner returned no JSON")
         decision = PlannerDecision.model_validate(raw)
         return decision
+
+
 class OpenAIQuestionService(QuestionService):
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -1084,8 +1512,11 @@ class OpenAIQuestionService(QuestionService):
 
     def _closing(self, language: str) -> str:
         lang = self._normalize_language(language)
-        return "¿Hay algo más que le gustaría compartir sobre su condición?" if lang == "es" else \
-            "Is there anything else you'd like to share about your condition?"
+        return (
+            "¿Hay algo más que le gustaría compartir sobre su condición?"
+            if lang == "es"
+            else "Is there anything else you'd like to share about your condition?"
+        )
 
     async def generate_first_question(
         self,
@@ -1096,8 +1527,11 @@ class OpenAIQuestionService(QuestionService):
         question_number: Optional[int] = None,
     ) -> str:
         lang = self._normalize_language(language)
-        return "¿Qué problema o preocupación está aquí para discutir hoy?" if lang == "es" else \
-            "What problem or concern are you here to discuss today?"
+        return (
+            "¿Qué problema o preocupación está aquí para discutir hoy?"
+            if lang == "es"
+            else "What problem or concern are you here to discuss today?"
+        )
 
     async def generate_next_question(
         self,
@@ -1177,16 +1611,45 @@ class OpenAIQuestionService(QuestionService):
         if asked_questions and previous_answers:
             for idx, q in enumerate(asked_questions):
                 q_low = q.lower()
-                if "detailed diagnostic questions" in q_low or "preguntas diagnósticas detalladas" in q_low:
+                if (
+                    "detailed diagnostic questions" in q_low
+                    or "preguntas diagnósticas detalladas" in q_low
+                ):
                     consent_index = idx
             if consent_index is not None and consent_index < len(previous_answers):
                 consent_answer = previous_answers[consent_index].lower().strip()
-                consent_answer = re.sub(r'[?!.;,\s]+', ' ', consent_answer)
-                consent_answer = ' '.join(consent_answer.split())
-                positive_kw = ["yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
-                               "sí", "si", "claro", "por supuesto", "vale", "de acuerdo"]
-                negative_kw = ["no", "n", "nope", "nah", "not really", "no thanks", "no thank you",
-                               "no gracias", "no quiero", "no deseo", "prefiero no"]
+                consent_answer = re.sub(r"[?!.;,\s]+", " ", consent_answer)
+                consent_answer = " ".join(consent_answer.split())
+                positive_kw = [
+                    "yes",
+                    "y",
+                    "yeah",
+                    "yep",
+                    "sure",
+                    "ok",
+                    "okay",
+                    "of course",
+                    "absolutely",
+                    "sí",
+                    "si",
+                    "claro",
+                    "por supuesto",
+                    "vale",
+                    "de acuerdo",
+                ]
+                negative_kw = [
+                    "no",
+                    "n",
+                    "nope",
+                    "nah",
+                    "not really",
+                    "no thanks",
+                    "no thank you",
+                    "no gracias",
+                    "no quiero",
+                    "no deseo",
+                    "prefiero no",
+                ]
                 if any(k in consent_answer for k in positive_kw):
                     has_positive_consent = True
                 elif any(k in consent_answer for k in negative_kw):
@@ -1206,7 +1669,9 @@ class OpenAIQuestionService(QuestionService):
                 # Chronic/hereditary + negative consent OR no consent yet: max 10 questions (step 10 is closing)
                 max_count = min(max_count, 10)
         # =============================================================================
-        step_number = current_count + 1  # 1-based (step 1 = chief complaint, handled separately)
+        step_number = (
+            current_count + 1
+        )  # 1-based (step 1 = chief complaint, handled separately)
         next_topic: Optional[str] = None
         # Step 2: duration (include cause)
         if step_number == 2:
@@ -1257,7 +1722,9 @@ class OpenAIQuestionService(QuestionService):
             # If negative consent OR no consent yet, return closing question at step 10
             if has_negative_consent or not has_positive_consent:
                 if step_number == 10:
-                    logger.info("Chronic/hereditary condition with negative/no consent - returning closing question at step 10")
+                    logger.info(
+                        "Chronic/hereditary condition with negative/no consent - returning closing question at step 10"
+                    )
                     return self._closing(language)
                 else:
                     # Should not reach here, but safety check
@@ -1276,7 +1743,9 @@ class OpenAIQuestionService(QuestionService):
                     next_topic = "screening"
                 elif deep_question_num == 4:
                     # Step 13: Closing question (mandatory for chronic/hereditary + positive consent)
-                    logger.info("Step 13 reached (chronic/hereditary + positive consent) - returning mandatory closing question")
+                    logger.info(
+                        "Step 13 reached (chronic/hereditary + positive consent) - returning mandatory closing question"
+                    )
                     return self._closing(language)
                 else:
                     # Beyond step 13, return closing
@@ -1284,30 +1753,49 @@ class OpenAIQuestionService(QuestionService):
         # Step 10: Non-chronic/non-hereditary OR chronic/hereditary with negative consent gets closing question
         elif step_number == 10:
             if not is_chronic and not is_hereditary:
-                logger.info("Step 10 reached (non-chronic, non-hereditary) - returning closing question")
-            elif (is_chronic or is_hereditary) and (has_negative_consent or not has_positive_consent):
-                logger.info("Step 10 reached (chronic/hereditary + negative/no consent) - returning closing question")
+                logger.info(
+                    "Step 10 reached (non-chronic, non-hereditary) - returning closing question"
+                )
+            elif (is_chronic or is_hereditary) and (
+                has_negative_consent or not has_positive_consent
+            ):
+                logger.info(
+                    "Step 10 reached (chronic/hereditary + negative/no consent) - returning closing question"
+                )
             return self._closing(language)
         # Safety check: beyond max_count (should not reach here normally due to step-based logic)
         elif current_count >= max_count:
-            logger.info("Max count reached (current_count=%d, max_count=%d) - returning closing question", current_count, max_count)
+            logger.info(
+                "Max count reached (current_count=%d, max_count=%d) - returning closing question",
+                current_count,
+                max_count,
+            )
             return self._closing(language)
         # Safety check: beyond step 13 (should not reach here normally)
         elif step_number > 13:
-            logger.warning("Step number %d exceeds maximum - returning closing question", step_number)
+            logger.warning(
+                "Step number %d exceeds maximum - returning closing question",
+                step_number,
+            )
             return self._closing(language)
         # If no topic determined, fallback to closing
         if not next_topic:
-            logger.warning("Strict sequence: no topic for step %d -> closing", step_number)
+            logger.warning(
+                "Strict sequence: no topic for step %d -> closing", step_number
+            )
             return self._closing(language)
         # Validate topic is allowed and not in avoid list
         allowed = set(ALLOWED_TOPICS)
         avoid = set(medical_context.avoid_topics or [])
         if next_topic not in allowed:
-            logger.warning("Strict sequence: topic '%s' not in allowed list -> closing", next_topic)
+            logger.warning(
+                "Strict sequence: topic '%s' not in allowed list -> closing", next_topic
+            )
             return self._closing(language)
         if next_topic in avoid:
-            logger.warning("Strict sequence: topic '%s' in avoid list -> closing", next_topic)
+            logger.warning(
+                "Strict sequence: topic '%s' in avoid list -> closing", next_topic
+            )
             return self._closing(language)
         # =============================================================================
         # =============================================================================
@@ -1325,19 +1813,42 @@ class OpenAIQuestionService(QuestionService):
             if asked_questions and previous_answers:
                 for idx, q in enumerate(asked_questions):
                     q_low = q.lower()
-                    if "detailed diagnostic questions" in q_low or "preguntas diagnósticas detalladas" in q_low:
+                    if (
+                        "detailed diagnostic questions" in q_low
+                        or "preguntas diagnósticas detalladas" in q_low
+                    ):
                         consent_index = idx
             if consent_index is not None and consent_index < len(previous_answers):
                 consent_answer = previous_answers[consent_index].lower().strip()
-                consent_answer = re.sub(r'[?!.;,\s]+', ' ', consent_answer)
-                consent_answer = ' '.join(consent_answer.split())
-                positive_kw = ["yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
-                               "sí", "si", "claro", "por supuesto", "vale", "de acuerdo"]
+                consent_answer = re.sub(r"[?!.;,\s]+", " ", consent_answer)
+                consent_answer = " ".join(consent_answer.split())
+                positive_kw = [
+                    "yes",
+                    "y",
+                    "yeah",
+                    "yep",
+                    "sure",
+                    "ok",
+                    "okay",
+                    "of course",
+                    "absolutely",
+                    "sí",
+                    "si",
+                    "claro",
+                    "por supuesto",
+                    "vale",
+                    "de acuerdo",
+                ]
                 if any(k in consent_answer for k in positive_kw):
                     has_positive_consent = True
             if has_positive_consent:
                 deep_diag_num = step_number - 9  # 1, 2, or 3
-        logger.info("Strict sequence: step %d, chosen_topic='%s', deep_diag_num=%s", step_number, next_topic, deep_diag_num)
+        logger.info(
+            "Strict sequence: step %d, chosen_topic='%s', deep_diag_num=%s",
+            step_number,
+            next_topic,
+            deep_diag_num,
+        )
         q = await self._question_generator.generate_question_for_topic(
             medical_context=medical_context,
             extracted_info=extracted,
@@ -1362,7 +1873,13 @@ class OpenAIQuestionService(QuestionService):
             return self._closing(language)
         return validation.corrected_question or q
 
-    async def should_stop_asking(self, disease: str, previous_answers: List[str], current_count: int, max_count: int = 10) -> bool:
+    async def should_stop_asking(
+        self,
+        disease: str,
+        previous_answers: List[str],
+        current_count: int,
+        max_count: int = 10,
+    ) -> bool:
         return current_count >= max_count
 
     async def assess_completion_percent(
@@ -1373,7 +1890,7 @@ class OpenAIQuestionService(QuestionService):
         current_count: int,
         max_count: int = 10,
         prior_summary: Optional[Any] = None,
-        prior_qas: Optional[List[str]] = None
+        prior_qas: Optional[List[str]] = None,
     ) -> int:
         if max_count <= 0:
             return 0
@@ -1383,27 +1900,33 @@ class OpenAIQuestionService(QuestionService):
         q = (question or "").lower()
         return "medication" in q or "medicine" in q or "medicamentos" in q
 
-
     # ========================================================================
     # PRE-VISIT SUMMARY & RED-FLAG METHODS ARE INTENTIONALLY EXCLUDED HERE
     # ========================================================================
 
-    async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    async def _get_doctor_preferences(
+        self, doctor_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """Fetch doctor preferences with 1s timeout; fail-open on error."""
         if not doctor_id:
             return None
         try:
             prefs = await asyncio.wait_for(
-                DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id),
-                timeout=1.0
+                DoctorPreferencesMongo.find_one(
+                    DoctorPreferencesMongo.doctor_id == doctor_id
+                ),
+                timeout=1.0,
             )
             return prefs.dict() if prefs else None
         except Exception as e:
-            logger.warning(f"[DoctorPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}")
+            logger.warning(
+                f"[DoctorPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}"
+            )
             return None
 
-
-    def _normalize_previsit_section_config(self, raw_sections: list[dict] | list) -> dict[str, dict]:
+    def _normalize_previsit_section_config(
+        self, raw_sections: list[dict] | list
+    ) -> dict[str, dict]:
         """
         Returns a map: section_key -> {"enabled": bool, "selected_fields": list[str]}
         Only recognized section keys are retained.
@@ -1420,11 +1943,23 @@ class OpenAIQuestionService(QuestionService):
             return cfg
 
         for sec in raw_sections:
-            key = sec.get("section_key") if isinstance(sec, dict) else getattr(sec, "section_key", None)
+            key = (
+                sec.get("section_key")
+                if isinstance(sec, dict)
+                else getattr(sec, "section_key", None)
+            )
             if key not in recognized_sections:
                 continue
-            enabled = bool(sec.get("enabled", True) if isinstance(sec, dict) else getattr(sec, "enabled", True))
-            sel_fields = sec.get("selected_fields") if isinstance(sec, dict) else getattr(sec, "selected_fields", None)
+            enabled = bool(
+                sec.get("enabled", True)
+                if isinstance(sec, dict)
+                else getattr(sec, "enabled", True)
+            )
+            sel_fields = (
+                sec.get("selected_fields")
+                if isinstance(sec, dict)
+                else getattr(sec, "selected_fields", None)
+            )
             if sel_fields is None:
                 sel_fields = []
             cfg[key] = {
@@ -1443,22 +1978,34 @@ class OpenAIQuestionService(QuestionService):
         # History: past_medical_history, family_history, lifestyle_functional_impact, travel_history
         # Review of Systems: (usually derived from associated_symptoms and relevant_negatives)
         # Current Medication: current_medications, allergies
-        
+
         hpi_categories = {
-            "duration", "associated_symptoms", "triggers", "temporal", 
-            "pain_assessment", "characterization_quality", "aggravating_factors",
-            "relieving_factors", "radiation", "severity", "relevant_negatives"
+            "duration",
+            "associated_symptoms",
+            "triggers",
+            "temporal",
+            "pain_assessment",
+            "characterization_quality",
+            "aggravating_factors",
+            "relieving_factors",
+            "radiation",
+            "severity",
+            "relevant_negatives",
         }
-        
+
         history_categories = {
-            "past_medical_history", "family_history", "lifestyle_functional_impact",
-            "travel_history", "medical", "surgical", "family", "lifestyle"
+            "past_medical_history",
+            "family_history",
+            "lifestyle_functional_impact",
+            "travel_history",
+            "medical",
+            "surgical",
+            "family",
+            "lifestyle",
         }
-        
-        medication_categories = {
-            "current_medications", "allergies"
-        }
-        
+
+        medication_categories = {"current_medications", "allergies"}
+
         if category in hpi_categories:
             return "hpi"
         elif category in history_categories:
@@ -1469,7 +2016,9 @@ class OpenAIQuestionService(QuestionService):
         # Chief Complaint is Q1 (symptom field)
         return None
 
-    def _filter_intake_answers_by_prefs(self, intake_answers: Dict[str, Any], cfg: dict[str, dict]) -> Dict[str, Any]:
+    def _filter_intake_answers_by_prefs(
+        self, intake_answers: Dict[str, Any], cfg: dict[str, dict]
+    ) -> Dict[str, Any]:
         """
         Filters intake_answers Q/A pairs based on enabled sections.
         Removes Q/A pairs that belong to disabled sections to prevent data leakage.
@@ -1492,20 +2041,24 @@ class OpenAIQuestionService(QuestionService):
             filtered_qa = []
             asked_categories = intake_answers.get("asked_categories", [])
             questions_asked = intake_answers.get("questions_asked", [])
-            
+
             if not questions_asked:
                 return intake_answers
-            
+
             # Q1 is always Chief Complaint (symptom)
             q1 = questions_asked[0]
             if "chief_complaint" in enabled_sections:
                 filtered_qa.append(q1)
-            
+
             # Filter remaining questions based on their category
             for idx, qa in enumerate(questions_asked[1:], start=1):  # Skip Q1
-                category = asked_categories[idx - 1] if idx - 1 < len(asked_categories) else None
+                category = (
+                    asked_categories[idx - 1]
+                    if idx - 1 < len(asked_categories)
+                    else None
+                )
                 section = self._map_category_to_section(category) if category else None
-                
+
                 # Include if:
                 # 1. Section is enabled, OR
                 # 2. Category doesn't map to any section (include by default), OR
@@ -1516,24 +2069,24 @@ class OpenAIQuestionService(QuestionService):
                 elif section in enabled_sections:
                     filtered_qa.append(qa)
                 # else: exclude (section is disabled)
-            
+
             # Build filtered intake_answers
             filtered = dict(intake_answers)
             filtered["questions_asked"] = filtered_qa
             # Rebuild asked_categories to match filtered questions
             if asked_categories and len(questions_asked) > 1:
                 filtered["asked_categories"] = [
-                    asked_categories[i] 
-                    for i in range(len(asked_categories)) 
-                    if i + 1 < len(questions_asked) and questions_asked[i + 1] in filtered_qa
+                    asked_categories[i]
+                    for i in range(len(asked_categories))
+                    if i + 1 < len(questions_asked)
+                    and questions_asked[i + 1] in filtered_qa
                 ]
             else:
                 filtered["asked_categories"] = []
-            
-            return filtered
-        
-        return intake_answers
 
+            return filtered
+
+        return intake_answers
 
     async def generate_pre_visit_summary(
         self,
@@ -1569,7 +2122,9 @@ class OpenAIQuestionService(QuestionService):
         # Section configuration from doctor preferences (pre_visit_config)
         raw_sections = (prefs or {}).get("pre_visit_config") or []
         section_cfg = self._normalize_previsit_section_config(raw_sections)
-        filtered_intake_answers = self._filter_intake_answers_by_prefs(intake_answers, section_cfg)
+        filtered_intake_answers = self._filter_intake_answers_by_prefs(
+            intake_answers, section_cfg
+        )
         # Default behavior:
         # - If NO config present at all -> all sections enabled (fail-open, legacy behavior).
         # - If ANY config present       -> sections are opt-in and must be explicitly enabled.
@@ -1592,12 +2147,22 @@ class OpenAIQuestionService(QuestionService):
         enabled_sections = default_section_state.copy()
         try:
             for sec in raw_sections:
-                key = sec.get("section_key") if isinstance(sec, dict) else getattr(sec, "section_key", None)
+                key = (
+                    sec.get("section_key")
+                    if isinstance(sec, dict)
+                    else getattr(sec, "section_key", None)
+                )
                 if key in enabled_sections:
-                    enabled_sections[key] = bool(sec.get("enabled", True) if isinstance(sec, dict) else getattr(sec, "enabled", True))
+                    enabled_sections[key] = bool(
+                        sec.get("enabled", True)
+                        if isinstance(sec, dict)
+                        else getattr(sec, "enabled", True)
+                    )
         except Exception as e:
             # Fail-open: if malformed, keep defaults and log at debug level
-            logger.debug(f"[DoctorPrefs] Failed to parse pre_visit_config for doctor_id={doctor_id}: {e}")
+            logger.debug(
+                f"[DoctorPrefs] Failed to parse pre_visit_config for doctor_id={doctor_id}: {e}"
+            )
 
         enable_cc = enabled_sections.get("chief_complaint", True)
         enable_hpi = enabled_sections.get("hpi", True)
@@ -1619,12 +2184,16 @@ class OpenAIQuestionService(QuestionService):
             headings_lines.append("Review of Systems:")
         if enable_meds:
             headings_lines.append("Current Medication:")
-            headings_text = "\n".join(headings_lines) + ("\n\n" if headings_lines else "\n\n")
+            headings_text = "\n".join(headings_lines) + (
+                "\n\n" if headings_lines else "\n\n"
+            )
 
             # Dynamic example block based on enabled sections
             example_lines: list[str] = []
             if enable_cc:
-                example_lines.append("Chief Complaint: Patient reports severe headache for 3 days.")
+                example_lines.append(
+                    "Chief Complaint: Patient reports severe headache for 3 days."
+                )
             if enable_hpi:
                 example_lines.append(
                     "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through "
@@ -1639,7 +2208,9 @@ class OpenAIQuestionService(QuestionService):
                     "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if "
                     "the patient explicitly stated them."
                 )
-            example_block = "\n".join(example_lines) + ("\n\n" if example_lines else "\n\n")
+            example_block = "\n".join(example_lines) + (
+                "\n\n" if example_lines else "\n\n"
+            )
 
             # Dynamic guidelines text based on enabled sections
             guidelines_lines: list[str] = []
@@ -1665,11 +2236,13 @@ class OpenAIQuestionService(QuestionService):
                     "- Current Medication: One narrative line with meds/supplements actually stated by the patient or "
                     "mention of medication images (only if Current Medication is listed)."
                 )
-            guidelines_text = "\n".join(guidelines_lines) + ("\n\n" if guidelines_lines else "\n\n")
+            guidelines_text = "\n".join(guidelines_lines) + (
+                "\n\n" if guidelines_lines else "\n\n"
+            )
 
             # Build comprehensive section definitions
             section_definitions: list[str] = []
-            
+
             if enable_cc:
                 section_definitions.append(
                     "CHIEF COMPLAINT:\n"
@@ -1677,14 +2250,14 @@ class OpenAIQuestionService(QuestionService):
                     "- Does NOT contain: Details about duration, severity, medications, history, or other sections\n"
                     "- Format: One line, patient's exact words or close paraphrase\n"
                 )
-            
+
             if enable_hpi:
                 hpi_fields_note = ""
                 hpi_config = section_cfg.get("hpi", {})
                 hpi_selected = hpi_config.get("selected_fields", [])
                 if hpi_selected:
                     hpi_fields_note = f"\n- Focus ONLY on these aspects: {', '.join(hpi_selected)}\n- Omit other HPI details not in this list."
-                
+
                 section_definitions.append(
                     "HPI (History of Present Illness):\n"
                     "- Contains: Onset, location, duration, characterization/quality, aggravating/relieving factors, "
@@ -1693,21 +2266,21 @@ class OpenAIQuestionService(QuestionService):
                     "allergies, or review of systems information\n"
                     f"- Format: ONE readable paragraph weaving OLDCARTS into prose{hpi_fields_note}\n"
                 )
-            
+
             if enable_history:
                 history_fields_note = ""
                 history_config = section_cfg.get("history", {})
                 history_selected = history_config.get("selected_fields", [])
                 if history_selected:
                     history_fields_note = f"\n- Focus ONLY on these types: {', '.join(history_selected)}\n- Omit other history types not in this list."
-                
+
                 section_definitions.append(
                     "HISTORY:\n"
                     "- Contains: Past medical conditions, surgical history, family history, lifestyle factors, travel history\n"
                     "- Does NOT contain: Current medications, current symptoms (HPI), chief complaint, or review of systems\n"
                     f"- Format: One line combining medical/surgical/family/lifestyle elements{history_fields_note}\n"
                 )
-            
+
             if enable_ros:
                 section_definitions.append(
                     "REVIEW OF SYSTEMS:\n"
@@ -1715,7 +2288,7 @@ class OpenAIQuestionService(QuestionService):
                     "- Does NOT contain: Chief complaint details, HPI details, medications, or specific history\n"
                     "- Format: One narrative line summarizing system-based findings\n"
                 )
-            
+
             if enable_meds:
                 section_definitions.append(
                     "CURRENT MEDICATION:\n"
@@ -1723,12 +2296,14 @@ class OpenAIQuestionService(QuestionService):
                     "- Does NOT contain: Past medications, medical history, or information that belongs in other sections\n"
                     "- Format: One narrative line with meds/supplements actually stated by the patient\n"
                 )
-            
-            section_definitions_text = "\n".join(section_definitions) + "\n\n" if section_definitions else ""
-            
+
+            section_definitions_text = (
+                "\n".join(section_definitions) + "\n\n" if section_definitions else ""
+            )
+
             # Build explicit exclusion rules for disabled sections
             exclusion_rules: list[str] = []
-            
+
             if not enable_cc:
                 exclusion_rules.append(
                     "❌ CHIEF COMPLAINT is DISABLED:\n"
@@ -1736,7 +2311,7 @@ class OpenAIQuestionService(QuestionService):
                     "- Do NOT mention the chief complaint or primary symptom in any other section\n"
                     "- The symptom information should be completely excluded from the summary\n\n"
                 )
-            
+
             if not enable_hpi:
                 exclusion_rules.append(
                     "❌ HPI is DISABLED:\n"
@@ -1744,7 +2319,7 @@ class OpenAIQuestionService(QuestionService):
                     "- Do NOT include onset, location, duration, severity, associated symptoms, "
                     "aggravating/relieving factors, or any HPI-related information in any section\n\n"
                 )
-            
+
             if not enable_history:
                 exclusion_rules.append(
                     "❌ HISTORY is DISABLED:\n"
@@ -1752,14 +2327,14 @@ class OpenAIQuestionService(QuestionService):
                     "- Do NOT mention past medical conditions, surgical history, family history, "
                     "lifestyle factors, or travel history in ANY section (including HPI)\n\n"
                 )
-            
+
             if not enable_ros:
                 exclusion_rules.append(
                     "❌ REVIEW OF SYSTEMS is DISABLED:\n"
                     "- Do NOT create a 'Review of Systems:' section\n"
                     "- Do NOT include system-based review information in any section\n\n"
                 )
-            
+
             if not enable_meds:
                 exclusion_rules.append(
                     "❌ CURRENT MEDICATION is DISABLED:\n"
@@ -1768,10 +2343,10 @@ class OpenAIQuestionService(QuestionService):
                     "ANYWHERE in the summary, including within HPI, History, or any other section\n"
                     "- If medication information appears in the intake responses, completely exclude it from all sections\n\n"
                 )
-            
+
             exclusion_rules_text = "\n".join(exclusion_rules) if exclusion_rules else ""
 
-        # Use unified English prompt with dynamic language instructions for all languages
+            # Use unified English prompt with dynamic language instructions for all languages
             prompt = (
                 "Role & Task\n"
                 "You are a Clinical Intake Assistant.\n"
@@ -1793,14 +2368,14 @@ class OpenAIQuestionService(QuestionService):
                 "- No bullets, numbering, or markdown formatting.\n"
                 "- Write in a clinical handover tone: short, factual, deduplicated, and neutral.\n"
                 "- Include a section ONLY if it contains actual content from the patient's responses.\n"
-                "- Do not use placeholders like \"N/A\", \"Not provided\", \"not reported\", or \"denies\".\n"
+                '- Do not use placeholders like "N/A", "Not provided", "not reported", or "denies".\n'
                 "- Do not include sections for topics that were not asked about or discussed.\n"
                 "- Do NOT include sections that are not present in the headings list below (for example, omit 'History' if it is not listed).\n"
-                "- Use patient-facing phrasing: \"Patient reports …\", \"Denies …\", \"On meds: …\".\n"
+                '- Use patient-facing phrasing: "Patient reports …", "Denies …", "On meds: …".\n'
                 "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings "
                 "(previsit is patient-reported only).\n"
-                "- Normalize obvious medical mispronunciations to correct terms (e.g., \"diabities\" -> \"diabetes\") "
-                 "without adding new information.\n"
+                '- Normalize obvious medical mispronunciations to correct terms (e.g., "diabities" -> "diabetes") '
+                "without adding new information.\n"
                 "- Each section must contain ONLY information that belongs to that section (see SECTION DEFINITIONS above).\n"
                 "- Do NOT allow information from disabled sections to leak into enabled sections.\n"
                 "Headings (use EXACT casing; include only if you have actual data from patient responses)\n"
@@ -1819,7 +2394,9 @@ class OpenAIQuestionService(QuestionService):
             try:
                 red_flags = await self._detect_red_flags(filtered_intake_answers, lang)
             except Exception as e:
-                logger.warning(f"Red flag detection failed, continuing without flags: {e}")
+                logger.warning(
+                    f"Red flag detection failed, continuing without flags: {e}"
+                )
                 red_flags = []
 
             resp = await call_llm_with_telemetry(
@@ -1878,7 +2455,10 @@ class OpenAIQuestionService(QuestionService):
 
         red_flags: List[Dict[str, str]] = []
 
-        if not isinstance(intake_answers, dict) or "questions_asked" not in intake_answers:
+        if (
+            not isinstance(intake_answers, dict)
+            or "questions_asked" not in intake_answers
+        ):
             logger.warning("Invalid intake_answers format for red flag detection")
             return red_flags
 
@@ -1887,7 +2467,9 @@ class OpenAIQuestionService(QuestionService):
             logger.warning("No questions found in intake_answers")
             return red_flags
 
-        logger.info(f"Starting hybrid abusive language detection for {len(questions_asked)} questions")
+        logger.info(
+            f"Starting hybrid abusive language detection for {len(questions_asked)} questions"
+        )
 
         # Step 1: Fast hardcoded detection for obvious cases
         obvious_flags = self._detect_obvious_abusive_language(questions_asked, lang)
@@ -1895,7 +2477,9 @@ class OpenAIQuestionService(QuestionService):
         logger.info(f"Obvious abusive language flags detected: {len(obvious_flags)}")
 
         # Step 2: LLM analysis for subtle/contextual abusive language
-        complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, lang)
+        complex_flags = await self._detect_subtle_abusive_language_with_llm(
+            questions_asked, lang
+        )
         red_flags.extend(complex_flags)
         logger.info(f"Subtle abusive language flags detected: {len(complex_flags)}")
 
@@ -2092,7 +2676,9 @@ Responses to analyze:
             formatted.append(f"{i}. Q: {question}\n   A: {answer}")
         return "\n\n".join(formatted)
 
-    def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
+    def _get_llm_abusive_language_message(
+        self, reason: str, language: str = "en"
+    ) -> str:
         """Get message for LLM-detected abusive language."""
         lang = self._normalize_language(language)
         if lang == "es":
@@ -2161,9 +2747,7 @@ Responses to analyze:
         """Get message for abusive language red flag."""
         lang = self._normalize_language(language)
         if lang == "es":
-            return (
-                "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
-            )
+            return "⚠️ BANDERA ROJA: El paciente utilizó lenguaje inapropiado o abusivo en sus respuestas."
         else:
             return "⚠️ RED FLAG: Patient used inappropriate or abusive language in their responses."
 
@@ -2255,8 +2839,18 @@ Responses to analyze:
         if not isinstance(result, dict):
             return await self._generate_fallback_summary({}, {})
 
-        summary = result.get("summary") or result.get("markdown") or result.get("content") or ""
-        structured = result.get("structured_data") or result.get("structuredData") or result.get("data") or {}
+        summary = (
+            result.get("summary")
+            or result.get("markdown")
+            or result.get("content")
+            or ""
+        )
+        structured = (
+            result.get("structured_data")
+            or result.get("structuredData")
+            or result.get("data")
+            or {}
+        )
 
         if not isinstance(summary, str):
             summary = str(summary)
@@ -2299,11 +2893,15 @@ Responses to analyze:
                 data["chief_complaint"] = ", ".join(chief_bullets)
             return data
 
-        if structured.get("key_findings") == ["See summary"] or not structured.get("key_findings"):
+        if structured.get("key_findings") == ["See summary"] or not structured.get(
+            "key_findings"
+        ):
             extracted = _extract_from_markdown(summary)
             if extracted.get("key_findings"):
                 structured["key_findings"] = extracted["key_findings"]
-            if extracted.get("chief_complaint") and structured.get("chief_complaint") in (
+            if extracted.get("chief_complaint") and structured.get(
+                "chief_complaint"
+            ) in (
                 None,
                 "See summary",
                 "N/A",

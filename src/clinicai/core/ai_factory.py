@@ -24,5 +24,3 @@ def get_ai_client() -> AzureAIClient:
 
 
 __all__ = ["get_ai_client", "AzureAIClient"]
-
-

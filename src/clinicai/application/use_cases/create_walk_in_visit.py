@@ -13,7 +13,15 @@ from clinicai.domain.errors import DuplicatePatientError, PatientNotFoundError
 
 class CreateWalkInVisitRequest:
     """Request for creating a walk-in visit."""
-    def __init__(self, name: str, mobile: str, age: int = None, gender: str = None, language: str = "en"):
+
+    def __init__(
+        self,
+        name: str,
+        mobile: str,
+        age: int = None,
+        gender: str = None,
+        language: str = "en",
+    ):
         self.name = name
         self.mobile = mobile
         self.age = age
@@ -23,7 +31,15 @@ class CreateWalkInVisitRequest:
 
 class CreateWalkInVisitResponse:
     """Response for creating a walk-in visit."""
-    def __init__(self, patient_id: str, visit_id: str, workflow_type: str, status: str, message: str):
+
+    def __init__(
+        self,
+        patient_id: str,
+        visit_id: str,
+        workflow_type: str,
+        status: str,
+        message: str,
+    ):
         self.patient_id = patient_id
         self.visit_id = visit_id
         self.workflow_type = workflow_type
@@ -34,18 +50,22 @@ class CreateWalkInVisitResponse:
 class CreateWalkInVisitUseCase:
     """Use case for creating walk-in visits."""
 
-    def __init__(self, patient_repository: PatientRepository, visit_repository: VisitRepository):
+    def __init__(
+        self, patient_repository: PatientRepository, visit_repository: VisitRepository
+    ):
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
 
-    async def execute(self, request: CreateWalkInVisitRequest, doctor_id: str) -> CreateWalkInVisitResponse:
+    async def execute(
+        self, request: CreateWalkInVisitRequest, doctor_id: str
+    ) -> CreateWalkInVisitResponse:
         """Execute the create walk-in visit use case."""
-        
+
         # Check if patient already exists
         existing_patient = await self._patient_repository.find_by_name_and_mobile(
             request.name, request.mobile, doctor_id
         )
-        
+
         if existing_patient:
             # Use existing patient for walk-in visit
             # Update patient's language preference for this visit
@@ -55,7 +75,7 @@ class CreateWalkInVisitUseCase:
         else:
             # Create new patient
             patient_id = PatientId.generate(request.name.split(" ")[0], request.mobile)
-            
+
             patient = Patient(
                 patient_id=patient_id,
                 doctor_id=doctor_id,
@@ -66,7 +86,7 @@ class CreateWalkInVisitUseCase:
                 # recently_travelled removed from Patient - now stored on Visit
                 language=request.language,
             )
-            
+
             # Save patient
             await self._patient_repository.save(patient)
 
@@ -83,7 +103,7 @@ class CreateWalkInVisitUseCase:
             status="walk_in_patient",
             recently_travelled=False,  # Default to False for walk-in visits
         )
-        
+
         # Initialize max_questions from settings
         settings = get_settings()
         visit.intake_session.max_questions = settings.intake.max_questions
@@ -96,5 +116,5 @@ class CreateWalkInVisitUseCase:
             visit_id=visit_id.value,
             workflow_type=VisitWorkflowType.WALK_IN.value,
             status="walk_in_patient",
-            message="Walk-in visit created successfully. Patient can proceed to transcription."
+            message="Walk-in visit created successfully. Patient can proceed to transcription.",
         )

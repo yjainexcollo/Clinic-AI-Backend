@@ -80,5 +80,3 @@ def encode_patient_id(internal_patient_id: str) -> str:
 def decode_patient_id(opaque_patient_id: str) -> str:
     """Recover internal patient_id from opaque client-facing token."""
     return decrypt_text(opaque_patient_id)
-
-

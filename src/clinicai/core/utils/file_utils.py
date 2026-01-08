@@ -48,18 +48,16 @@ def ensure_file_exists(filepath: str) -> bool:
 
 
 def save_audio_file(
-    temp_file_path: str, 
-    storage_directory: str, 
-    original_filename: Optional[str] = None
+    temp_file_path: str, storage_directory: str, original_filename: Optional[str] = None
 ) -> Optional[str]:
     """
     Save audio file from temporary location to permanent storage.
-    
+
     Args:
         temp_file_path: Path to temporary audio file
         storage_directory: Directory to save the audio file
         original_filename: Original filename (optional)
-    
+
     Returns:
         Path to saved audio file, or None if failed
     """
@@ -67,11 +65,11 @@ def save_audio_file(
         # Ensure storage directory exists
         if not create_directory(storage_directory):
             return None
-        
+
         # Generate unique filename
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
-        
+
         if original_filename:
             # Preserve original extension
             extension = get_file_extension(original_filename)
@@ -80,16 +78,14 @@ def save_audio_file(
             # Use temp file extension
             extension = get_file_extension(temp_file_path)
             filename = f"adhoc_{timestamp}_{unique_id}{extension}"
-        
+
         # Create full path
         permanent_path = os.path.join(storage_directory, filename)
-        
+
         # Copy file from temp to permanent location
         shutil.copy2(temp_file_path, permanent_path)
-        
+
         return permanent_path
-        
+
     except Exception:
         return None
-
-

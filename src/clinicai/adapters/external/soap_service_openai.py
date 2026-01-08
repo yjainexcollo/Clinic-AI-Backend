@@ -20,25 +20,24 @@ class OpenAISoapService(SoapService):
 
     def __init__(self):
         self._settings = get_settings()
-        
+
         # Require Azure OpenAI - no fallback to standard OpenAI
         azure_openai_configured = (
-            self._settings.azure_openai.endpoint and 
-            self._settings.azure_openai.api_key
+            self._settings.azure_openai.endpoint and self._settings.azure_openai.api_key
         )
-        
+
         if not azure_openai_configured:
             raise ValueError(
                 "Azure OpenAI is required. Please configure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
                 "Fallback to standard OpenAI is disabled for data security."
             )
-        
+
         # Verify deployment name is configured
         if not self._settings.azure_openai.deployment_name:
             raise ValueError(
                 "Azure OpenAI deployment name is required. Please set AZURE_OPENAI_DEPLOYMENT_NAME."
             )
-        
+
         # Use Azure AI client (no fallback)
         self._client = get_ai_client()
         # Optional: log initialization
@@ -58,11 +57,11 @@ class OpenAISoapService(SoapService):
         """Translate vitals text from English to Spanish."""
         if not vitals_text:
             return vitals_text
-            
+
         # Translation mappings
         translations = {
             "Blood pressure": "Presión arterial",
-            "Heart rate": "Frecuencia cardíaca", 
+            "Heart rate": "Frecuencia cardíaca",
             "Respiratory rate": "Frecuencia respiratoria",
             "Temperature": "Temperatura",
             "SpO₂": "SpO₂",  # Keep same
@@ -74,7 +73,7 @@ class OpenAISoapService(SoapService):
             "Left": "Izquierdo",
             "Right": "Derecho",
             "Sitting": "Sentado",
-            "Standing": "De pie", 
+            "Standing": "De pie",
             "Lying": "Acostado",
             "Regular": "Regular",
             "Irregular": "Irregular",
@@ -82,22 +81,22 @@ class OpenAISoapService(SoapService):
             "Axillary": "Axilar",
             "Tympanic": "Timpánico",
             "Rectal": "Rectal",
-            "on room air": "en aire ambiente"
+            "on room air": "en aire ambiente",
         }
-        
+
         translated_text = vitals_text
         for english, spanish in translations.items():
             translated_text = translated_text.replace(english, spanish)
-            
+
         return translated_text
 
     def _normalize_language(self, language: str) -> str:
         """
         Normalize language code for backend LLM prompts.
-        
+
         Frontend uses: 'en' or 'sp'
         Backend normalizes to: 'en' or 'es' (for LLM prompts)
-        
+
         Mapping:
         - 'sp', 'es', 'spanish', 'español', 'es-es', 'es-mx' → 'es'
         - unknown/empty → 'en' (default)
@@ -105,29 +104,35 @@ class OpenAISoapService(SoapService):
         if not language:
             return "en"
         normalized = language.lower().strip()
-        if normalized in ['es', 'sp', 'spanish', 'español', 'es-es', 'es-mx']:
-            return 'es'
-        return normalized if normalized in ['en', 'es'] else 'en'
-    
+        if normalized in ["es", "sp", "spanish", "español", "es-es", "es-mx"]:
+            return "es"
+        return normalized if normalized in ["en", "es"] else "en"
+
     def _get_output_language_name(self, language: str) -> str:
         """Get human-readable language name for LLM prompts."""
         lang = self._normalize_language(language)
         return "Spanish" if lang == "es" else "English"
 
-    async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    async def _get_doctor_preferences(
+        self, doctor_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """Fetch doctor preferences with 1s timeout; fail-open on errors."""
         if not doctor_id:
             return None
         try:
             prefs = await asyncio.wait_for(
-                DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id),
-                timeout=1.0
+                DoctorPreferencesMongo.find_one(
+                    DoctorPreferencesMongo.doctor_id == doctor_id
+                ),
+                timeout=1.0,
             )
             return prefs.dict() if prefs else None
         except Exception as e:
-            logging.getLogger("clinicai").warning(f"[SoapPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}")
+            logging.getLogger("clinicai").warning(
+                f"[SoapPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}"
+            )
             return None
-    
+
     async def generate_soap_note(
         self,
         transcript: str,
@@ -159,29 +164,35 @@ class OpenAISoapService(SoapService):
         soap_order: List[str] = [s for s in raw_order if s in default_soap_order]
         if len(soap_order) != len(default_soap_order):
             soap_order = default_soap_order
-        
+
         # Build context from available data
         context_parts = []
-        
+
         if patient_context:
-            context_parts.append(f"Patient: {patient_context.get('name', 'Unknown')}, Age: {patient_context.get('age', 'Unknown')}")
-            context_parts.append(f"Chief Complaint: {patient_context.get('symptom', 'Not specified')}")
-        
+            context_parts.append(
+                f"Patient: {patient_context.get('name', 'Unknown')}, Age: {patient_context.get('age', 'Unknown')}"
+            )
+            context_parts.append(
+                f"Chief Complaint: {patient_context.get('symptom', 'Not specified')}"
+            )
+
         if pre_visit_summary:
-            context_parts.append(f"Pre-visit Summary: {pre_visit_summary.get('summary', 'Not available')}")
-            
+            context_parts.append(
+                f"Pre-visit Summary: {pre_visit_summary.get('summary', 'Not available')}"
+            )
+
             # Add vitals data if available
-            if 'vitals' in pre_visit_summary:
-                vitals_data = pre_visit_summary['vitals']['data']
+            if "vitals" in pre_visit_summary:
+                vitals_data = pre_visit_summary["vitals"]["data"]
                 vitals_text = self._format_vitals_for_soap(vitals_data)
                 # Translate vitals to Spanish if needed
                 if lang == "es":
                     vitals_text = self._translate_vitals_to_spanish(vitals_text)
                 context_parts.append(f"Vitals Data: {vitals_text}")
-        
-        if intake_data and intake_data.get('questions_asked'):
+
+        if intake_data and intake_data.get("questions_asked"):
             intake_responses = []
-            for qa in intake_data['questions_asked']:
+            for qa in intake_data["questions_asked"]:
                 intake_responses.append(f"Q: {qa['question']}\nA: {qa['answer']}")
             context_parts.append(f"Intake Responses:\n" + "\n\n".join(intake_responses))
 
@@ -189,28 +200,37 @@ class OpenAISoapService(SoapService):
         if vitals:
             try:
                 v = vitals or {}
+
                 def _val(k: str) -> Optional[str]:
                     x = v.get(k)
                     if x in (None, ""):
                         return None
                     return str(x)
+
                 vitals_parts: list[str] = []
                 if _val("systolic") and _val("diastolic"):
-                    arm = f" ({v.get('bpArm')} arm)" if v.get('bpArm') else ""
-                    pos = f" ({v.get('bpPosition')})" if v.get('bpPosition') else ""
-                    vitals_parts.append(f"Blood pressure {_val('systolic')}/{_val('diastolic')} mmHg{arm}{pos}")
+                    arm = f" ({v.get('bpArm')} arm)" if v.get("bpArm") else ""
+                    pos = f" ({v.get('bpPosition')})" if v.get("bpPosition") else ""
+                    vitals_parts.append(
+                        f"Blood pressure {_val('systolic')}/{_val('diastolic')} mmHg{arm}{pos}"
+                    )
                 if _val("heartRate"):
-                    rhythm = f" ({v.get('rhythm')})" if v.get('rhythm') else ""
+                    rhythm = f" ({v.get('rhythm')})" if v.get("rhythm") else ""
                     vitals_parts.append(f"Heart rate {_val('heartRate')} bpm{rhythm}")
                 if _val("respiratoryRate"):
-                    vitals_parts.append(f"Respiratory rate {_val('respiratoryRate')} breaths/min")
+                    vitals_parts.append(
+                        f"Respiratory rate {_val('respiratoryRate')} breaths/min"
+                    )
                 if _val("temperature"):
                     unit = (v.get("tempUnit") or "C").replace("°", "")
-                    method = f" ({v.get('tempMethod')})" if v.get('tempMethod') else ""
-                    vitals_parts.append(f"Temperature {_val('temperature')}{unit}{method}")
+                    method = f" ({v.get('tempMethod')})" if v.get("tempMethod") else ""
+                    vitals_parts.append(
+                        f"Temperature {_val('temperature')}{unit}{method}"
+                    )
                 if _val("oxygenSaturation"):
                     vitals_parts.append(f"SpO₂ {_val('oxygenSaturation')}% on room air")
-                h = _val("height"); w = _val("weight")
+                h = _val("height")
+                w = _val("weight")
                 if h or w:
                     h_unit = v.get("heightUnit") or "cm"
                     w_unit = v.get("weightUnit") or "kg"
@@ -226,20 +246,32 @@ class OpenAISoapService(SoapService):
                 if v.get("notes"):
                     vitals_parts.append(f"Observation notes: {v.get('notes')}")
                 if vitals_parts:
-                    context_parts.append("Objective Vitals (from form):\n- " + "\n- ".join(vitals_parts))
+                    context_parts.append(
+                        "Objective Vitals (from form):\n- " + "\n- ".join(vitals_parts)
+                    )
             except Exception:
                 try:
-                    context_parts.append("Objective Vitals (raw JSON):\n" + json.dumps(vitals))
+                    context_parts.append(
+                        "Objective Vitals (raw JSON):\n" + json.dumps(vitals)
+                    )
                 except Exception:
                     pass
-        
-        context = "\n\n".join(context_parts) if context_parts else "No additional context available"
+
+        context = (
+            "\n\n".join(context_parts)
+            if context_parts
+            else "No additional context available"
+        )
 
         # Optional: template instructions (per-visit, not global)
         template_instructions = ""
         if template:
             try:
-                soap_content = (template.get("soap_content") or {}) if isinstance(template, dict) else {}
+                soap_content = (
+                    (template.get("soap_content") or {})
+                    if isinstance(template, dict)
+                    else {}
+                )
                 template_instructions_lines: List[str] = [
                     "The doctor has provided a custom SOAP template for this visit.",
                     "Follow the structure, tone, and ordering indicated by this template.",
@@ -255,7 +287,7 @@ class OpenAISoapService(SoapService):
             except Exception:
                 # Fail-open: ignore bad template structure, fall back to defaults
                 template_instructions = ""
-        
+
         # Build preference snippet
         pref_snippet = (
             f"Doctor Preferences:\n"
@@ -352,40 +384,41 @@ Generate the SOAP note now:
             # Extract patient_id from patient_context if available
             patient_id = None
             if patient_context:
-                patient_id = patient_context.get("id") or patient_context.get("patient_id")
-            
+                patient_id = patient_context.get("id") or patient_context.get(
+                    "patient_id"
+                )
+
             # Use async Azure OpenAI client
             result = await self._generate_soap_async(prompt, patient_id=patient_id)
             # Normalize for structure/consistency
             return self._normalize_soap(result)
-            
+
         except Exception as e:
             raise ValueError(f"SOAP generation failed: {str(e)}")
 
-    async def _generate_soap_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
+    async def _generate_soap_async(
+        self, prompt: str, patient_id: str = None
+    ) -> Dict[str, Any]:
         """Async SOAP generation method."""
         # Get prompt version for telemetry
         prompt_version = PROMPT_VERSIONS.get(PromptScenario.SOAP, "UNKNOWN")
-        
+
         # Include version in prompt (optional but recommended)
         system_message = f"""Prompt version: {prompt_version}
 
 You are a clinical scribe. Generate accurate, structured SOAP notes from medical consultations. Always respond with valid JSON only, no extra text."""
-        
+
         response = await call_llm_with_telemetry(
             ai_client=self._client,
             scenario=PromptScenario.SOAP,
             messages=[
-                {
-                    "role": "system", 
-                    "content": system_message
-                },
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt},
             ],
             temperature=self._settings.soap.temperature,
             max_tokens=self._settings.soap.max_tokens,
         )
-        
+
         # Parse JSON response
         try:
             soap_data = json.loads(response.choices[0].message.content)
@@ -416,39 +449,45 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
     def _normalize_soap(self, soap_data: Dict[str, Any]) -> Dict[str, Any]:
         """Coerce SOAP dict into a valid, minimally complete structure."""
         normalized: Dict[str, Any] = dict(soap_data or {})
-        
+
         # Handle Objective as structured object
         objective = normalized.get("objective", {})
         if isinstance(objective, str):
             # If it's a string, try to parse it as JSON/dict
             try:
-                if objective.strip().startswith('{') and objective.strip().endswith('}'):
+                if objective.strip().startswith("{") and objective.strip().endswith(
+                    "}"
+                ):
                     objective = json.loads(objective)
                 else:
                     # If it's not JSON, create a basic structure
                     objective = {
                         "vital_signs": {},
-                        "physical_exam": {"general_appearance": objective or "Not discussed"}
+                        "physical_exam": {
+                            "general_appearance": objective or "Not discussed"
+                        },
                     }
             except:
                 objective = {
                     "vital_signs": {},
-                    "physical_exam": {"general_appearance": objective or "Not discussed"}
+                    "physical_exam": {
+                        "general_appearance": objective or "Not discussed"
+                    },
                 }
         elif not isinstance(objective, dict):
             objective = {
                 "vital_signs": {},
-                "physical_exam": {"general_appearance": "Not discussed"}
+                "physical_exam": {"general_appearance": "Not discussed"},
             }
-        
+
         # Ensure vital_signs and physical_exam exist
         if "vital_signs" not in objective:
             objective["vital_signs"] = {}
         if "physical_exam" not in objective:
             objective["physical_exam"] = {}
-            
+
         normalized["objective"] = objective
-        
+
         # Handle other required fields as strings
         required = ["subjective", "assessment", "plan"]
         for key in required:
@@ -486,70 +525,76 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
     def _format_vitals_for_soap(self, vitals_data: Dict[str, Any]) -> str:
         """Format vitals data for SOAP note generation."""
         parts = []
-        
+
         # Blood Pressure
-        if vitals_data.get('systolic') and vitals_data.get('diastolic'):
+        if vitals_data.get("systolic") and vitals_data.get("diastolic"):
             bp_text = f"Blood pressure {vitals_data['systolic']}/{vitals_data['diastolic']} mmHg"
-            if vitals_data.get('bpArm'):
+            if vitals_data.get("bpArm"):
                 bp_text += f" ({vitals_data['bpArm']} arm)"
-            if vitals_data.get('bpPosition'):
+            if vitals_data.get("bpPosition"):
                 bp_text += f" ({vitals_data['bpPosition']})"
             parts.append(bp_text)
-        
+
         # Heart Rate
-        if vitals_data.get('heartRate'):
+        if vitals_data.get("heartRate"):
             hr_text = f"Heart rate {vitals_data['heartRate']} bpm"
-            if vitals_data.get('rhythm'):
+            if vitals_data.get("rhythm"):
                 hr_text += f" ({vitals_data['rhythm']})"
             parts.append(hr_text)
-        
+
         # Respiratory Rate
-        if vitals_data.get('respiratoryRate'):
-            parts.append(f"Respiratory rate {vitals_data['respiratoryRate']} breaths/min")
-        
+        if vitals_data.get("respiratoryRate"):
+            parts.append(
+                f"Respiratory rate {vitals_data['respiratoryRate']} breaths/min"
+            )
+
         # Temperature
-        if vitals_data.get('temperature'):
+        if vitals_data.get("temperature"):
             temp_text = f"Temperature {vitals_data['temperature']}{vitals_data.get('tempUnit', '°C')}"
-            if vitals_data.get('tempMethod'):
+            if vitals_data.get("tempMethod"):
                 temp_text += f" ({vitals_data['tempMethod']})"
             parts.append(temp_text)
-        
+
         # Oxygen Saturation
-        if vitals_data.get('oxygenSaturation'):
+        if vitals_data.get("oxygenSaturation"):
             parts.append(f"SpO₂ {vitals_data['oxygenSaturation']}% on room air")
-        
+
         # Height, Weight, BMI
-        if vitals_data.get('height') and vitals_data.get('weight'):
-            height_text = f"{vitals_data['height']} {vitals_data.get('heightUnit', 'cm')}"
-            weight_text = f"{vitals_data['weight']} {vitals_data.get('weightUnit', 'kg')}"
+        if vitals_data.get("height") and vitals_data.get("weight"):
+            height_text = (
+                f"{vitals_data['height']} {vitals_data.get('heightUnit', 'cm')}"
+            )
+            weight_text = (
+                f"{vitals_data['weight']} {vitals_data.get('weightUnit', 'kg')}"
+            )
             parts.append(f"Height {height_text}, Weight {weight_text}")
-            
+
             # Calculate BMI if both height and weight are provided
             try:
-                height_val = float(vitals_data['height'])
-                weight_val = float(vitals_data['weight'])
-                height_unit = vitals_data.get('heightUnit', 'cm')
-                weight_unit = vitals_data.get('weightUnit', 'kg')
-                
+                height_val = float(vitals_data["height"])
+                weight_val = float(vitals_data["weight"])
+                height_unit = vitals_data.get("heightUnit", "cm")
+                weight_unit = vitals_data.get("weightUnit", "kg")
+
                 # Convert to metric if needed
-                if height_unit == 'ft/in':
+                if height_unit == "ft/in":
                     height_val = height_val * 0.3048  # Convert feet to meters
-                elif height_unit == 'cm':
+                elif height_unit == "cm":
                     height_val = height_val / 100  # Convert cm to meters
-                
-                if weight_unit == 'lbs':
+
+                if weight_unit == "lbs":
                     weight_val = weight_val * 0.453592  # Convert lbs to kg
-                
+
                 if height_val > 0 and weight_val > 0:
                     bmi = weight_val / (height_val * height_val)
                     parts.append(f"BMI {bmi:.1f}")
             except (ValueError, ZeroDivisionError):
                 pass  # Skip BMI calculation if conversion fails
-        
+
         # Pain Score
-        if vitals_data.get('painScore'):
+        if vitals_data.get("painScore"):
             parts.append(f"Pain score {vitals_data['painScore']}/10")
-        
+
         return ", ".join(parts) + "." if parts else "No vitals recorded"
 
     async def validate_soap_structure(self, soap_data: Dict[str, Any]) -> bool:
@@ -570,19 +615,19 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
                 content = data[field].strip()
                 if len(content) < 5:  # Extremely short indicates failure
                     return False
-            
+
             # Check objective as structured object
             objective = data.get("objective", {})
             if not isinstance(objective, dict):
                 return False
-            
+
             # Check if objective has at least some content
             has_content = False
             if "vital_signs" in objective and objective["vital_signs"]:
                 has_content = True
             if "physical_exam" in objective and objective["physical_exam"]:
                 has_content = True
-            
+
             if not has_content:
                 return False
 
@@ -593,7 +638,7 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
                 return False
 
             return True
-            
+
         except Exception:
             return False
 
@@ -601,7 +646,7 @@ You are a clinical scribe. Generate accurate, structured SOAP notes from medical
         self,
         patient_data: Dict[str, Any],
         soap_data: Dict[str, Any],
-        language: str = "en"
+        language: str = "en",
     ) -> Dict[str, Any]:
         """Generate post-visit summary for patient sharing."""
         # Normalize language code
@@ -688,46 +733,50 @@ Generate the post-visit summary now:
         try:
             # Extract patient_id from patient_data
             patient_id = patient_data.get("id") or patient_data.get("patient_id")
-            
+
             # Use async Azure OpenAI client
-            result = await self._generate_post_visit_summary_async(prompt, patient_id=patient_id)
+            result = await self._generate_post_visit_summary_async(
+                prompt, patient_id=patient_id
+            )
             # Normalize and return the result
             normalized = self._normalize_post_visit_summary(result)
             return normalized
-            
+
         except Exception as e:
             print(f"ERROR: Post-visit summary generation failed: {str(e)}")
             import traceback
+
             print(f"ERROR: Traceback: {traceback.format_exc()}")
             raise ValueError(f"Post-visit summary generation failed: {str(e)}")
 
-    async def _generate_post_visit_summary_async(self, prompt: str, patient_id: str = None) -> Dict[str, Any]:
+    async def _generate_post_visit_summary_async(
+        self, prompt: str, patient_id: str = None
+    ) -> Dict[str, Any]:
         """Async post-visit summary generation method."""
         # Get prompt version for telemetry
-        prompt_version = PROMPT_VERSIONS.get(PromptScenario.POSTVISIT_SUMMARY, "UNKNOWN")
-        
+        prompt_version = PROMPT_VERSIONS.get(
+            PromptScenario.POSTVISIT_SUMMARY, "UNKNOWN"
+        )
+
         # Include version in prompt (optional but recommended)
         system_message = f"""Prompt version: {prompt_version}
 
 You are a medical assistant generating patient-friendly post-visit summaries. Always respond with valid JSON only, no extra text."""
-        
+
         response = await call_llm_with_telemetry(
             ai_client=self._client,
             scenario=PromptScenario.POSTVISIT_SUMMARY,
             messages=[
-                {
-                    "role": "system", 
-                    "content": system_message
-                },
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt},
             ],
             temperature=self._settings.soap.temperature,
             max_tokens=self._settings.soap.max_tokens,
         )
-        
+
         # Parse JSON response
         content = response.choices[0].message.content
-        
+
         try:
             summary_data = json.loads(content)
             return summary_data
@@ -749,23 +798,37 @@ You are a medical assistant generating patient-friendly post-visit summaries. Al
                 "other_recommendations": ["Follow doctor's instructions carefully"],
                 "tests_ordered": [],
                 "next_appointment": None,
-                "red_flag_symptoms": ["Seek immediate medical attention if symptoms worsen"],
-                "patient_instructions": ["Take medications as prescribed", "Rest and monitor symptoms"],
-                "reassurance_note": "Please contact us if symptoms worsen or if you have questions."
+                "red_flag_symptoms": [
+                    "Seek immediate medical attention if symptoms worsen"
+                ],
+                "patient_instructions": [
+                    "Take medications as prescribed",
+                    "Rest and monitor symptoms",
+                ],
+                "reassurance_note": "Please contact us if symptoms worsen or if you have questions.",
             }
 
-    def _normalize_post_visit_summary(self, summary_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_post_visit_summary(
+        self, summary_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Normalize post-visit summary data structure."""
         normalized: Dict[str, Any] = dict(summary_data or {})
-        
+
         # Ensure required list fields exist and are properly formatted
-        list_fields = ["key_findings", "medications", "other_recommendations", "tests_ordered", "red_flag_symptoms", "patient_instructions"]
+        list_fields = [
+            "key_findings",
+            "medications",
+            "other_recommendations",
+            "tests_ordered",
+            "red_flag_symptoms",
+            "patient_instructions",
+        ]
         for field in list_fields:
             val = normalized.get(field, [])
             if not isinstance(val, list):
                 val = [str(val)] if val not in (None, "") else []
             normalized[field] = val
-        
+
         # Ensure required string fields exist
         string_fields = ["diagnosis", "reassurance_note"]
         for field in string_fields:
@@ -773,9 +836,9 @@ You are a medical assistant generating patient-friendly post-visit summaries. Al
             if not isinstance(val, str):
                 val = str(val) if val is not None else ""
             normalized[field] = val.strip()
-        
+
         # Ensure optional fields exist
         if not normalized.get("next_appointment"):
             normalized["next_appointment"] = None
-        
+
         return normalized

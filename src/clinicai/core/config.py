@@ -19,9 +19,7 @@ class DatabaseSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MONGO_")
 
-    uri: str = Field(
-        default="", description="MongoDB connection URI"
-    )
+    uri: str = Field(default="", description="MongoDB connection URI")
     db_name: str = Field(default="clinicai", description="MongoDB database name")
     collection: str = Field(default="clinicAi", description="MongoDB collection name")
 
@@ -29,7 +27,9 @@ class DatabaseSettings(BaseSettings):
     def validate_mongo_uri(cls, v: str) -> str:
         """Validate MongoDB URI format."""
         if not v:
-            raise ValueError("MongoDB URI is required. Please set MONGO_URI environment variable.")
+            raise ValueError(
+                "MongoDB URI is required. Please set MONGO_URI environment variable."
+            )
         if not v.startswith(("mongodb://", "mongodb+srv://")):
             raise ValueError(
                 "MongoDB URI must start with 'mongodb://' or 'mongodb+srv://'"
@@ -42,8 +42,14 @@ class OpenAISettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="OPENAI_")
 
-    api_key: str = Field(default="", description="OpenAI API key (not used when Azure OpenAI is configured)")
-    model: str = Field(default="gpt-4o-mini", description="Model name for token calculations (defaults to match Azure OpenAI deployment)")
+    api_key: str = Field(
+        default="",
+        description="OpenAI API key (not used when Azure OpenAI is configured)",
+    )
+    model: str = Field(
+        default="gpt-4o-mini",
+        description="Model name for token calculations (defaults to match Azure OpenAI deployment)",
+    )
     max_tokens: int = Field(default=4000, description="Maximum tokens for responses")
     temperature: float = Field(
         default=0.3, description="Temperature for model responses"
@@ -139,10 +145,12 @@ class AudioSettings(BaseSettings):
 
     max_size_mb: int = Field(default=50, description="Maximum audio file size in MB")
     allowed_formats: List[str] = Field(
-        default=["mp3", "wav", "m4a", "flac", "ogg", "mpeg", "mpg"], 
-        description="Allowed audio formats"
+        default=["mp3", "wav", "m4a", "flac", "ogg", "mpeg", "mpg"],
+        description="Allowed audio formats",
     )
-    temp_dir: str = Field(default="/tmp/clinicai_audio", description="Temporary directory for audio files")
+    temp_dir: str = Field(
+        default="/tmp/clinicai_audio", description="Temporary directory for audio files"
+    )
 
     @validator("max_size_mb")
     def validate_max_size(cls, v: int) -> int:
@@ -158,10 +166,18 @@ class SoapSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SOAP_")
 
     model: str = Field(default="gpt-4o-mini", description="Model for SOAP generation")
-    max_tokens: int = Field(default=4000, description="Maximum tokens for SOAP generation")
-    temperature: float = Field(default=0.3, description="Temperature for SOAP generation")
-    include_highlights: bool = Field(default=True, description="Include highlights in SOAP")
-    include_red_flags: bool = Field(default=True, description="Include red flags in SOAP")
+    max_tokens: int = Field(
+        default=4000, description="Maximum tokens for SOAP generation"
+    )
+    temperature: float = Field(
+        default=0.3, description="Temperature for SOAP generation"
+    )
+    include_highlights: bool = Field(
+        default=True, description="Include highlights in SOAP"
+    )
+    include_red_flags: bool = Field(
+        default=True, description="Include red flags in SOAP"
+    )
 
     @validator("temperature")
     def validate_temperature(cls, v: float) -> float:
@@ -176,11 +192,20 @@ class FileStorageSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="FILE_")
 
-    storage_type: str = Field(default="local", description="Storage type (local, s3, azure)")
+    storage_type: str = Field(
+        default="local", description="Storage type (local, s3, azure)"
+    )
     storage_path: str = Field(default="./storage", description="Local storage path")
-    audio_storage_path: str = Field(default="./storage/audio", description="Audio files storage path")
-    cleanup_after_hours: int = Field(default=24, description="Cleanup files after hours")
-    save_audio_files: bool = Field(default=False, description="Whether to save original audio files (deprecated - use database storage)")
+    audio_storage_path: str = Field(
+        default="./storage/audio", description="Audio files storage path"
+    )
+    cleanup_after_hours: int = Field(
+        default=24, description="Cleanup files after hours"
+    )
+    save_audio_files: bool = Field(
+        default=False,
+        description="Whether to save original audio files (deprecated - use database storage)",
+    )
 
     @validator("storage_type")
     def validate_storage_type(cls, v: str) -> str:
@@ -198,13 +223,19 @@ class AzureBlobSettings(BaseSettings):
 
     account_name: str = Field(default="", description="Azure Storage Account Name")
     account_key: str = Field(default="", description="Azure Storage Account Key")
-    connection_string: str = Field(default="", description="Azure Storage Connection String")
-    container_name: str = Field(default="clinicaiblobstorage", description="Blob container name")
+    connection_string: str = Field(
+        default="", description="Azure Storage Connection String"
+    )
+    container_name: str = Field(
+        default="clinicaiblobstorage", description="Blob container name"
+    )
     enable_cdn: bool = Field(default=False, description="Enable CDN for faster access")
     cdn_endpoint: Optional[str] = Field(None, description="CDN endpoint URL")
-    default_expiry_hours: int = Field(default=24, description="Default expiry for signed URLs in hours")
+    default_expiry_hours: int = Field(
+        default=24, description="Default expiry for signed URLs in hours"
+    )
     max_file_size_mb: int = Field(default=100, description="Maximum file size in MB")
-    
+
     @validator("connection_string")
     def validate_connection_string(cls, v: str) -> str:
         """Validate Azure Storage connection string."""
@@ -215,14 +246,18 @@ class AzureBlobSettings(BaseSettings):
 
 class AzureOpenAISettings(BaseSettings):
     """Azure OpenAI configuration settings."""
-    
+
     model_config = SettingsConfigDict(env_prefix="AZURE_OPENAI_")
-    
+
     endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
     api_key: str = Field(default="", description="Azure OpenAI API key")
-    api_version: str = Field(default="2024-12-01-preview", description="Azure OpenAI API version")
-    deployment_name: str = Field(default="gpt-4o-mini", description="Azure OpenAI chat deployment name")
-    
+    api_version: str = Field(
+        default="2024-12-01-preview", description="Azure OpenAI API version"
+    )
+    deployment_name: str = Field(
+        default="gpt-4o-mini", description="Azure OpenAI chat deployment name"
+    )
+
     @validator("endpoint")
     def validate_endpoint(cls, v: str) -> str:
         """Validate Azure OpenAI endpoint format."""
@@ -230,23 +265,39 @@ class AzureOpenAISettings(BaseSettings):
             # Allow empty string for optional use
             if v == "":
                 return v
-            raise ValueError("Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com/")
+            raise ValueError(
+                "Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com/"
+            )
         return v
 
 
 class AzureQueueSettings(BaseSettings):
     """Azure Queue Storage configuration settings with backward-compatible fallbacks."""
-    
+
     model_config = SettingsConfigDict(env_prefix="AZURE_QUEUE_")
-    
-    connection_string: str = Field(default="", description="Azure Storage Connection String (same as Blob Storage)")
-    queue_name: str = Field(default="transcription-queue", description="Queue name for transcription jobs")
-    visibility_timeout: int = Field(default=3600, description="Message visibility timeout in seconds (60 min default, aligned with stale threshold)")
-    max_retry_attempts: int = Field(default=3, description="Maximum retry attempts for failed jobs")
-    max_dequeue_count: int = Field(default=5, description="Maximum dequeue count before moving to poison queue")
-    processing_stale_seconds: int = Field(default=4000, description="Seconds before a processing job is considered stale and can be claimed (must be >= visibility_timeout)")
+
+    connection_string: str = Field(
+        default="", description="Azure Storage Connection String (same as Blob Storage)"
+    )
+    queue_name: str = Field(
+        default="transcription-queue", description="Queue name for transcription jobs"
+    )
+    visibility_timeout: int = Field(
+        default=3600,
+        description="Message visibility timeout in seconds (60 min default, aligned with stale threshold)",
+    )
+    max_retry_attempts: int = Field(
+        default=3, description="Maximum retry attempts for failed jobs"
+    )
+    max_dequeue_count: int = Field(
+        default=5, description="Maximum dequeue count before moving to poison queue"
+    )
+    processing_stale_seconds: int = Field(
+        default=4000,
+        description="Seconds before a processing job is considered stale and can be claimed (must be >= visibility_timeout)",
+    )
     poll_interval: int = Field(default=5, description="Worker poll interval in seconds")
-    
+
     @classmethod
     def _get_connection_string_fallback(cls) -> str:
         """Get connection string with backward-compatible fallbacks."""
@@ -263,7 +314,7 @@ class AzureQueueSettings(BaseSettings):
         if conn_str:
             return conn_str
         return ""
-    
+
     @classmethod
     def _get_queue_name_fallback(cls) -> str:
         """Get queue name with backward-compatible fallback."""
@@ -277,8 +328,8 @@ class AzureQueueSettings(BaseSettings):
             return queue_name
         # Default fallback
         return "transcription-queue"
-    
-    @model_validator(mode='before')
+
+    @model_validator(mode="before")
     @classmethod
     def apply_fallbacks(cls, data: any) -> any:
         """Apply fallbacks before validation."""
@@ -288,16 +339,16 @@ class AzureQueueSettings(BaseSettings):
                 fallback = cls._get_connection_string_fallback()
                 if fallback:
                     data["connection_string"] = fallback
-            
+
             # Apply queue_name fallback if default
             if data.get("queue_name") == "transcription-queue":
                 fallback = cls._get_queue_name_fallback()
                 if fallback and fallback != "transcription-queue":
                     data["queue_name"] = fallback
-        
+
         return data
-    
-    @field_validator("connection_string", mode='before')
+
+    @field_validator("connection_string", mode="before")
     @classmethod
     def validate_connection_string(cls, v: str) -> str:
         """Validate Azure Storage connection string format."""
@@ -305,9 +356,11 @@ class AzureQueueSettings(BaseSettings):
         if not v:
             return v
         if not v.startswith("DefaultEndpointsProtocol="):
-            raise ValueError("Invalid Azure Storage connection string format. Must start with 'DefaultEndpointsProtocol='")
+            raise ValueError(
+                "Invalid Azure Storage connection string format. Must start with 'DefaultEndpointsProtocol='"
+            )
         return v
-    
+
     def model_post_init(self, __context) -> None:
         """Apply fallbacks after model initialization if values are still empty."""
         # Apply connection_string fallback if still empty
@@ -316,48 +369,79 @@ class AzureQueueSettings(BaseSettings):
             if fallback:
                 # Validate the fallback
                 if not fallback.startswith("DefaultEndpointsProtocol="):
-                    raise ValueError("Fallback Azure Storage connection string has invalid format")
+                    raise ValueError(
+                        "Fallback Azure Storage connection string has invalid format"
+                    )
                 object.__setattr__(self, "connection_string", fallback)
-        
+
         # Apply queue_name fallback if still default
         if self.queue_name == "transcription-queue":
             fallback = self._get_queue_name_fallback()
             if fallback and fallback != "transcription-queue":
                 object.__setattr__(self, "queue_name", fallback)
-        
+
         # Validate stale_seconds >= visibility_timeout to prevent churn
         if self.processing_stale_seconds < self.visibility_timeout:
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"⚠️  PROCESSING_STALE_SECONDS ({self.processing_stale_seconds}s) < VISIBILITY_TIMEOUT ({self.visibility_timeout}s). "
                 f"This can cause message churn. Setting stale_seconds to {self.visibility_timeout + 400}s"
             )
-            object.__setattr__(self, "processing_stale_seconds", self.visibility_timeout + 400)
+            object.__setattr__(
+                self, "processing_stale_seconds", self.visibility_timeout + 400
+            )
 
 
 class AzureSpeechSettings(BaseSettings):
     """Azure Speech Service configuration settings."""
-    
+
     model_config = SettingsConfigDict(env_prefix="AZURE_SPEECH_")
-    
-    subscription_key: str = Field(default="", description="Azure Speech Service subscription key")
-    region: str = Field(default="", description="Azure Speech Service region (e.g., 'eastus', 'westus2')")
-    endpoint: str = Field(default="", description="Azure Speech Service endpoint (optional, auto-generated if not provided)")
-    enable_speaker_diarization: bool = Field(default=True, description="Enable speaker diarization (identifies different speakers)")
-    enable_word_level_timestamps: bool = Field(default=False, description="Enable word-level timestamps (slower, disable for faster transcription)")
-    max_speakers: int = Field(default=2, description="Maximum number of speakers to identify (default: 2 for Doctor/Patient)")
-    transcription_mode: str = Field(default="batch", description="Transcription mode: 'batch' (recommended) or 'realtime'")
-    batch_polling_interval: int = Field(default=5, description="Polling interval in seconds for batch transcription status")
-    batch_max_wait_time: int = Field(default=1800, description="Maximum wait time in seconds for batch transcription (30 min)")
-    
+
+    subscription_key: str = Field(
+        default="", description="Azure Speech Service subscription key"
+    )
+    region: str = Field(
+        default="",
+        description="Azure Speech Service region (e.g., 'eastus', 'westus2')",
+    )
+    endpoint: str = Field(
+        default="",
+        description="Azure Speech Service endpoint (optional, auto-generated if not provided)",
+    )
+    enable_speaker_diarization: bool = Field(
+        default=True,
+        description="Enable speaker diarization (identifies different speakers)",
+    )
+    enable_word_level_timestamps: bool = Field(
+        default=False,
+        description="Enable word-level timestamps (slower, disable for faster transcription)",
+    )
+    max_speakers: int = Field(
+        default=2,
+        description="Maximum number of speakers to identify (default: 2 for Doctor/Patient)",
+    )
+    transcription_mode: str = Field(
+        default="batch",
+        description="Transcription mode: 'batch' (recommended) or 'realtime'",
+    )
+    batch_polling_interval: int = Field(
+        default=5,
+        description="Polling interval in seconds for batch transcription status",
+    )
+    batch_max_wait_time: int = Field(
+        default=1800,
+        description="Maximum wait time in seconds for batch transcription (30 min)",
+    )
+
     @validator("region")
     def validate_region(cls, v: str) -> str:
         """Validate Azure region format."""
         if v and not v.replace("-", "").replace("_", "").isalnum():
             raise ValueError("Invalid Azure region format")
         return v
-    
+
     @validator("transcription_mode")
     def validate_transcription_mode(cls, v: str) -> str:
         """Validate transcription mode."""
@@ -368,14 +452,13 @@ class AzureSpeechSettings(BaseSettings):
 
 class IntakeSettings(BaseSettings):
     """Intake session configuration settings."""
-    
+
     model_config = SettingsConfigDict(env_prefix="INTAKE_")
-    
+
     max_questions: int = Field(
-        default=12,
-        description="Maximum intake questions allowed (default: 12)"
+        default=12, description="Maximum intake questions allowed (default: 12)"
     )
-    
+
     @validator("max_questions")
     def validate_max_questions(cls, v: int) -> int:
         """Validate max questions is reasonable."""
@@ -386,30 +469,29 @@ class IntakeSettings(BaseSettings):
 
 class LLMInteractionSettings(BaseSettings):
     """LLM interaction logging configuration settings."""
-    
+
     model_config = SettingsConfigDict(env_prefix="LLM_INTERACTION_")
-    
+
     enabled: bool = Field(
         default=True,
-        description="Enable LLM interaction logging to database (default: True)"
+        description="Enable LLM interaction logging to database (default: True)",
     )
     log_system_prompts: bool = Field(
         default=False,
-        description="Include system prompts in logs (default: False for privacy/optimization)"
+        description="Include system prompts in logs (default: False for privacy/optimization)",
     )
     batch_mode: bool = Field(
         default=False,
-        description="Use batch mode for logging (reduces database writes, default: False)"
+        description="Use batch mode for logging (reduces database writes, default: False)",
     )
     batch_size: int = Field(
-        default=10,
-        description="Batch size for batch mode (default: 10)"
+        default=10, description="Batch size for batch mode (default: 10)"
     )
     enable_debug_logging: bool = Field(
         default=False,
-        description="Enable debug logging for LLM interaction tracking (default: False)"
+        description="Enable debug logging for LLM interaction tracking (default: False)",
     )
-    
+
     @validator("batch_size")
     def validate_batch_size(cls, v: int) -> int:
         """Validate batch size."""
@@ -423,9 +505,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=(".env.local"),
-        env_file_encoding="utf-8", 
-        case_sensitive=False, 
-        extra="ignore"
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
     )
 
     # Application settings
@@ -473,18 +555,21 @@ class Settings(BaseSettings):
     azure_queue: AzureQueueSettings = Field(default_factory=AzureQueueSettings)
     azure_speech: AzureSpeechSettings = Field(default_factory=AzureSpeechSettings)
     intake: IntakeSettings = Field(default_factory=IntakeSettings)
-    llm_interaction: LLMInteractionSettings = Field(default_factory=LLMInteractionSettings)
+    llm_interaction: LLMInteractionSettings = Field(
+        default_factory=LLMInteractionSettings
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        
+
         # Try to load secrets from Azure Key Vault if available
         # This allows secure secret management in production
         key_vault_secrets = {}
         try:
             from .key_vault import get_key_vault_service
+
             key_vault = get_key_vault_service()
-            
+
             if key_vault and key_vault.is_available:
                 # Load secrets from Key Vault (with fallback to env vars)
                 # Secret names in Key Vault should match these patterns
@@ -493,28 +578,46 @@ class Settings(BaseSettings):
                     "MONGO_URI": key_vault.get_secret("MONGO-URI"),
                     "ENCRYPTION_KEY": key_vault.get_secret("ENCRYPTION-KEY"),
                     "SECURITY_SECRET_KEY": key_vault.get_secret("SECURITY-SECRET-KEY"),
-                    "AZURE_BLOB_CONNECTION_STRING": key_vault.get_secret("AZURE-BLOB-CONNECTION-STRING"),
-                    "AZURE_BLOB_ACCOUNT_NAME": key_vault.get_secret("AZURE-BLOB-ACCOUNT-NAME"),
-                    "AZURE_BLOB_ACCOUNT_KEY": key_vault.get_secret("AZURE-BLOB-ACCOUNT-KEY"),
+                    "AZURE_BLOB_CONNECTION_STRING": key_vault.get_secret(
+                        "AZURE-BLOB-CONNECTION-STRING"
+                    ),
+                    "AZURE_BLOB_ACCOUNT_NAME": key_vault.get_secret(
+                        "AZURE-BLOB-ACCOUNT-NAME"
+                    ),
+                    "AZURE_BLOB_ACCOUNT_KEY": key_vault.get_secret(
+                        "AZURE-BLOB-ACCOUNT-KEY"
+                    ),
                     # Azure OpenAI secrets
-                    "AZURE_OPENAI_ENDPOINT": key_vault.get_secret("AZURE-OPENAI-ENDPOINT"),
-                    "AZURE_OPENAI_API_KEY": key_vault.get_secret("AZURE-OPENAI-API-KEY"),
-                    "AZURE_OPENAI_API_VERSION": key_vault.get_secret("AZURE-OPENAI-API-VERSION"),
-                    "AZURE_OPENAI_DEPLOYMENT_NAME": key_vault.get_secret("AZURE-OPENAI-DEPLOYMENT-NAME"),
+                    "AZURE_OPENAI_ENDPOINT": key_vault.get_secret(
+                        "AZURE-OPENAI-ENDPOINT"
+                    ),
+                    "AZURE_OPENAI_API_KEY": key_vault.get_secret(
+                        "AZURE-OPENAI-API-KEY"
+                    ),
+                    "AZURE_OPENAI_API_VERSION": key_vault.get_secret(
+                        "AZURE-OPENAI-API-VERSION"
+                    ),
+                    "AZURE_OPENAI_DEPLOYMENT_NAME": key_vault.get_secret(
+                        "AZURE-OPENAI-DEPLOYMENT-NAME"
+                    ),
                 }
                 # Only use Key Vault values if they exist (don't override env vars that are already set)
                 for key, value in key_vault_secrets.items():
                     if value and not os.getenv(key):
                         os.environ[key] = value
-                
+
                 import logging
+
                 logger = logging.getLogger("clinicai")
                 logger.info("✅ Loaded secrets from Azure Key Vault")
         except Exception as e:
             import logging
+
             logger = logging.getLogger("clinicai")
-            logger.debug(f"Key Vault integration skipped (using environment variables): {e}")
-        
+            logger.debug(
+                f"Key Vault integration skipped (using environment variables): {e}"
+            )
+
         # Override sub-settings with environment variables
         self.database = DatabaseSettings()
         self.openai = OpenAISettings()
@@ -567,11 +670,11 @@ _settings: Optional[Settings] = None
 
 def _load_env_file_if_available() -> None:
     """Best-effort load of .env.local or .env by searching current and parent directories.
-    
+
     Prefers .env.local over .env when both exist (local development best practice).
     This helps in environments where the working directory isn't the backend folder
     and pydantic's env_file doesn't get resolved as expected.
-    
+
     Precedence (first wins):
     1. Already-set environment variables (Azure App Service, CI, etc.)
     2. .env.local (if found in current or parent directories)
@@ -587,8 +690,9 @@ def _load_env_file_if_available() -> None:
         return
 
     import logging
+
     logger = logging.getLogger(__name__)
-    
+
     cwd = Path(os.getcwd()).resolve()
     for parent in [cwd, *cwd.parents]:
         # Check .env.local first (preferred for local development)
@@ -598,7 +702,7 @@ def _load_env_file_if_available() -> None:
             load_dotenv(dotenv_path=str(env_local), override=False)
             logger.debug(f"Loaded environment from: {env_local}")
             return
-        
+
         # Fall back to .env if .env.local not found
         env_file = parent / ".env"
         if env_file.exists():

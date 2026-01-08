@@ -18,15 +18,16 @@ class GenerateSoapNoteUseCase:
     def __init__(
         self,
         patient_repository: PatientRepository,
-        visit_repository: VisitRepository, 
-        soap_service: SoapService
-    
+        visit_repository: VisitRepository,
+        soap_service: SoapService,
     ):
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
         self._soap_service = soap_service
 
-    async def execute(self, request: SoapGenerationRequest, doctor_id: str) -> SoapGenerationResponse:
+    async def execute(
+        self, request: SoapGenerationRequest, doctor_id: str
+    ) -> SoapGenerationResponse:
         """Execute the SOAP note generation use case."""
         # Find patient
         patient_id = PatientId(request.patient_id)
@@ -45,29 +46,48 @@ class GenerateSoapNoteUseCase:
         # Check if visit is ready for SOAP generation
         has_transcript = visit.is_transcription_complete()
         can_generate = visit.can_generate_soap()
-        
+
         # Get more detailed info for debugging
         transcript_text = visit.get_transcript()
         has_transcript_text = bool(transcript_text)
-        transcription_status = visit.transcription_session.transcription_status if visit.transcription_session else "None"
-        
+        transcription_status = (
+            visit.transcription_session.transcription_status
+            if visit.transcription_session
+            else "None"
+        )
+
         # Log detailed information for debugging
         import logging
+
         logger = logging.getLogger("clinicai")
-        logger.info(f"[GenerateSOAP] Visit check - workflow_type: {visit.workflow_type.value}, status: {visit.status}")
-        logger.info(f"[GenerateSOAP] Transcription - status: {transcription_status}, has_transcript_check: {has_transcript}, has_transcript_text: {has_transcript_text}, transcript_length: {len(transcript_text) if transcript_text else 0}")
-        logger.info(f"[GenerateSOAP] Vitals - exists: {bool(visit.vitals)}, can_generate: {can_generate}")
-        
+        logger.info(
+            f"[GenerateSOAP] Visit check - workflow_type: {visit.workflow_type.value}, status: {visit.status}"
+        )
+        logger.info(
+            f"[GenerateSOAP] Transcription - status: {transcription_status}, has_transcript_check: {has_transcript}, has_transcript_text: {has_transcript_text}, transcript_length: {len(transcript_text) if transcript_text else 0}"
+        )
+        logger.info(
+            f"[GenerateSOAP] Vitals - exists: {bool(visit.vitals)}, can_generate: {can_generate}"
+        )
+
         if not can_generate:
             # More detailed error message
             error_details = []
             if not has_transcript:
-                error_details.append(f"Transcript not complete (transcription_status: {transcription_status})")
+                error_details.append(
+                    f"Transcript not complete (transcription_status: {transcription_status})"
+                )
             if not visit.vitals:
                 error_details.append("Vitals not stored")
-            if visit.workflow_type.value == "scheduled" and has_transcript and visit.vitals:
-                error_details.append(f"Status issue: current_status='{visit.status}', expected one of ['soap_generation', 'transcription_completed', 'transcription']")
-            
+            if (
+                visit.workflow_type.value == "scheduled"
+                and has_transcript
+                and visit.vitals
+            ):
+                error_details.append(
+                    f"Status issue: current_status='{visit.status}', expected one of ['soap_generation', 'transcription_completed', 'transcription']"
+                )
+
             error_msg = (
                 f"Visit not ready for SOAP generation. "
                 f"Workflow: {visit.workflow_type.value}, "
@@ -92,7 +112,7 @@ class GenerateSoapNoteUseCase:
             "name": patient.name,
             "age": patient.age,
             "mobile": patient.mobile,
-            "symptom": visit.symptom
+            "symptom": visit.symptom,
         }
 
         # Get intake data and pre-visit summary
@@ -100,15 +120,17 @@ class GenerateSoapNoteUseCase:
         pre_visit_summary = visit.get_pre_visit_summary()
         vitals = visit.get_vitals()
         # Optional per-visit SOAP template (may come from request or already stored on visit)
-        template = request.template or getattr(visit, "get_soap_template", lambda: None)()
+        template = (
+            request.template or getattr(visit, "get_soap_template", lambda: None)()
+        )
 
         try:
             # Get patient language for SOAP generation
-            patient_language = getattr(patient, 'language', 'en') or 'en'
+            patient_language = getattr(patient, "language", "en") or "en"
             # Normalize language code (handle both 'sp' and 'es' for backward compatibility)
-            if patient_language in ['es', 'sp']:
-                patient_language = 'sp'
-            
+            if patient_language in ["es", "sp"]:
+                patient_language = "sp"
+
             # If a template was provided, persist it on the visit for this generation
             if template is not None and hasattr(visit, "store_soap_template"):
                 visit.store_soap_template(template)
@@ -173,7 +195,7 @@ class GenerateSoapNoteUseCase:
                 visit_id=visit.visit_id.value,
                 soap_note=soap_result,
                 generated_at=visit.soap_note.generated_at.isoformat(),
-                message="SOAP note generated successfully"
+                message="SOAP note generated successfully",
             )
 
         except Exception as e:

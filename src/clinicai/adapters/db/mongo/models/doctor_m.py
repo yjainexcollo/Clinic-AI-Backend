@@ -24,5 +24,3 @@ class DoctorMongo(Document):
             "status",
             "created_at",
         ]
-
-

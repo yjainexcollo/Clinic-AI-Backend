@@ -27,21 +27,22 @@ class MongoPatientRepository(PatientRepository):
         if patient_mongo.id:
             from motor.motor_asyncio import AsyncIOMotorClient
             from clinicai.core.config import get_settings
-            
+
             settings = get_settings()
             client = AsyncIOMotorClient(settings.database.uri)
             db = client[settings.database.db_name]
             collection = db["patients"]
-            
+
             await collection.update_one(
-                {"_id": patient_mongo.id},
-                {"$unset": {"revision_id": ""}}
+                {"_id": patient_mongo.id}, {"$unset": {"revision_id": ""}}
             )
 
         # Return the domain entity
         return await self._mongo_to_domain(patient_mongo)
 
-    async def find_by_id(self, patient_id: PatientId, doctor_id: str) -> Optional[Patient]:
+    async def find_by_id(
+        self, patient_id: PatientId, doctor_id: str
+    ) -> Optional[Patient]:
         """Find a patient by ID."""
         patient_mongo = await PatientMongo.find_one(
             {"patient_id": patient_id.value, "doctor_id": doctor_id}
@@ -49,7 +50,7 @@ class MongoPatientRepository(PatientRepository):
 
         if not patient_mongo:
             return None
-        
+
         return await self._mongo_to_domain(patient_mongo)
 
     async def find_by_name_and_mobile(
@@ -62,7 +63,7 @@ class MongoPatientRepository(PatientRepository):
 
         if not patient_mongo:
             return None
-        
+
         return await self._mongo_to_domain(patient_mongo)
 
     async def exists_by_id(self, patient_id: PatientId, doctor_id: str) -> bool:
@@ -73,14 +74,21 @@ class MongoPatientRepository(PatientRepository):
 
         return count > 0
 
-    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Patient]:
+    async def find_all(
+        self, doctor_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Patient]:
         """Find all patients with pagination."""
-        patients_mongo = await PatientMongo.find({"doctor_id": doctor_id}).skip(offset).limit(limit).to_list()
+        patients_mongo = (
+            await PatientMongo.find({"doctor_id": doctor_id})
+            .skip(offset)
+            .limit(limit)
+            .to_list()
+        )
 
         result = []
         for patient_mongo in patients_mongo:
             result.append(await self._mongo_to_domain(patient_mongo))
-        
+
         return result
 
     async def find_by_mobile(self, mobile: str, doctor_id: str) -> List[Patient]:
@@ -92,7 +100,7 @@ class MongoPatientRepository(PatientRepository):
         result = []
         for patient_mongo in patients_mongo:
             result.append(await self._mongo_to_domain(patient_mongo))
-        
+
         return result
 
     async def delete(self, patient_id: PatientId, doctor_id: str) -> bool:
@@ -105,14 +113,7 @@ class MongoPatientRepository(PatientRepository):
 
     async def cleanup_revision_ids(self) -> int:
         """Remove revision_id from all patient documents."""
-        result = await PatientMongo.update_many(
-            {},
-            {
-                "$unset": {
-                    "revision_id": ""
-                }
-            }
-        )
+        result = await PatientMongo.update_many({}, {"$unset": {"revision_id": ""}})
         return result.modified_count
 
     async def _domain_to_mongo(self, patient: Patient) -> PatientMongo:

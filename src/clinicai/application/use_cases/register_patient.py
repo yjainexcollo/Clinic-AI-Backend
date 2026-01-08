@@ -22,13 +22,18 @@ class RegisterPatientUseCase:
     """Use case for registering a new patient and starting intake."""
 
     def __init__(
-        self, patient_repository: PatientRepository, visit_repository: VisitRepository, question_service: QuestionService
+        self,
+        patient_repository: PatientRepository,
+        visit_repository: VisitRepository,
+        question_service: QuestionService,
     ):
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(self, request: RegisterPatientRequest, doctor_id: str) -> RegisterPatientResponse:
+    async def execute(
+        self, request: RegisterPatientRequest, doctor_id: str
+    ) -> RegisterPatientResponse:
         """Execute the register patient use case."""
         # Enforce consent gating
         if not getattr(request, "consent", False):
@@ -56,14 +61,14 @@ class RegisterPatientUseCase:
             existing_patient.language = request.language
             first_question = await self._question_service.generate_first_question(
                 disease=visit.symptom or "general consultation",
-                language=request.language
+                language=request.language,
             )
             visit.set_pending_question(first_question)
-            
+
             # Save patient and visit separately
             await self._patient_repository.save(existing_patient)
             await self._visit_repository.save(visit)
-            
+
             return RegisterPatientResponse(
                 patient_id=existing_patient.patient_id.value,
                 visit_id=visit_id.value,
@@ -75,7 +80,9 @@ class RegisterPatientUseCase:
         patient_id = PatientId.generate(request.first_name, request.mobile)
 
         # Check for family members (mobile-only match) for analytics
-        family_members = await self._patient_repository.find_by_mobile(request.mobile, doctor_id)  # noqa: F841
+        family_members = await self._patient_repository.find_by_mobile(
+            request.mobile, doctor_id
+        )  # noqa: F841
         # Note: We don't prevent registration here, just log for analytics
         # The frontend should handle family member detection via resolve endpoint
 
@@ -107,8 +114,7 @@ class RegisterPatientUseCase:
 
         # Generate first question via QuestionService for consistency
         first_question = await self._question_service.generate_first_question(
-            disease=visit.symptom or "general consultation",
-            language=patient.language
+            disease=visit.symptom or "general consultation", language=patient.language
         )
 
         # Set pending question on visit

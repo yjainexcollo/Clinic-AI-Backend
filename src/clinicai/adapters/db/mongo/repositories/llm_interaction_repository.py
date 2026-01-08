@@ -45,20 +45,20 @@ async def append_intake_agent_log(
     settings = get_settings()
     if not settings.llm_interaction.enabled:
         return
-    
+
     # Skip logging if visit_id or patient_id are empty
     if not visit_id or not patient_id:
         if settings.llm_interaction.enable_debug_logging:
             logger.debug(f"[{agent_name}] Skipping log: empty visit_id or patient_id")
         return
-    
+
     # Debug logging if enabled
     if settings.llm_interaction.enable_debug_logging:
         logger.debug(
             f"[{agent_name}] Logging: visit_id={visit_id}, patient_id={patient_id}, "
             f"question_number={question_number}"
         )
-    
+
     doc = await _get_or_create(visit_id, patient_id)
 
     # find or create the question entry
@@ -107,31 +107,32 @@ async def append_phase_call(
     """
     Set an LLM call for phases other than intake (only one per visit per phase).
     phase: one of ["pre_visit_summary", "soap", "post_visit_summary"]
-    
+
     Note: user_prompt will be converted to string if it's a dict.
     """
     # Check if LLM interaction logging is enabled
     settings = get_settings()
     if not settings.llm_interaction.enabled:
         return
-    
+
     # Skip logging if visit_id or patient_id are empty
     if not visit_id or not patient_id:
         if settings.llm_interaction.enable_debug_logging:
             logger.debug(f"[{agent_name}] Skipping log: empty visit_id or patient_id")
         return
-    
+
     # Debug logging if enabled
     if settings.llm_interaction.enable_debug_logging:
         logger.debug(
             f"[{agent_name}] Logging phase call: visit_id={visit_id}, patient_id={patient_id}, phase={phase}"
         )
-    
+
     doc = await _get_or_create(visit_id, patient_id)
 
     # Convert user_prompt to string if it's a dict
     if isinstance(user_prompt, dict):
         import json
+
         user_prompt_str = json.dumps(user_prompt, indent=2, ensure_ascii=False)
     else:
         user_prompt_str = str(user_prompt) if user_prompt is not None else ""
@@ -155,4 +156,3 @@ async def append_phase_call(
 
     doc.updated_at = datetime.utcnow()
     await doc.save()
-

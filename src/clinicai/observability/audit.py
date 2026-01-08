@@ -39,5 +39,3 @@ async def audit_log_event(
     except Exception:
         # Fallback
         logger.info("AUDIT %s", record)
-
-

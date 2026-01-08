@@ -16,14 +16,14 @@ try:
     if os.path.isdir(venv_site):
         # Remove /agents/python from sys.path if present (Azure's old typing_extensions)
         # This prevents conflicts with the venv's newer typing_extensions
-        agents_python_paths = [p for p in sys.path if '/agents/python' in p]
+        agents_python_paths = [p for p in sys.path if "/agents/python" in p]
         for path in agents_python_paths:
             try:
                 sys.path.remove(path)
                 print(f"Removed Azure global path from sys.path: {path}", flush=True)
             except ValueError:
                 pass  # Already removed
-        
+
         # Insert venv site-packages at the front so it takes precedence
         if venv_site not in sys.path:
             sys.path.insert(0, venv_site)
@@ -32,41 +32,52 @@ try:
             sys.path.remove(venv_site)
             sys.path.insert(0, venv_site)
         print(f"Using venv site-packages first: {venv_site}", flush=True)
-        
+
         # Pre-import and cache typing_extensions from venv BEFORE pydantic tries to import it
         # This ensures Python uses the correct version even if /agents/python was in sys.path earlier
         try:
             # Clear any existing typing_extensions from sys.modules if it came from /agents/python
-            if 'typing_extensions' in sys.modules:
-                old_mod = sys.modules['typing_extensions']
-                old_file = getattr(old_mod, '__file__', '')
-                if '/agents/python' in str(old_file):
-                    del sys.modules['typing_extensions']
-                    print(f"Cleared old typing_extensions from sys.modules (was: {old_file})", flush=True)
-            
+            if "typing_extensions" in sys.modules:
+                old_mod = sys.modules["typing_extensions"]
+                old_file = getattr(old_mod, "__file__", "")
+                if "/agents/python" in str(old_file):
+                    del sys.modules["typing_extensions"]
+                    print(
+                        f"Cleared old typing_extensions from sys.modules (was: {old_file})",
+                        flush=True,
+                    )
+
             # Now import typing_extensions - Python will find it in venv_site first
             import typing_extensions
-            typing_ext_file = getattr(typing_extensions, '__file__', 'unknown')
+
+            typing_ext_file = getattr(typing_extensions, "__file__", "unknown")
             print(f"typing_extensions loaded from: {typing_ext_file}", flush=True)
-            if hasattr(typing_extensions, 'Sentinel'):
+            if hasattr(typing_extensions, "Sentinel"):
                 print("✅ typing_extensions.Sentinel is available", flush=True)
             else:
-                print("⚠️  typing_extensions.Sentinel NOT found - this may cause issues", flush=True)
+                print(
+                    "⚠️  typing_extensions.Sentinel NOT found - this may cause issues",
+                    flush=True,
+                )
         except Exception as import_err:
-            print(f"⚠️  Failed to pre-import typing_extensions: {import_err}", flush=True)
+            print(
+                f"⚠️  Failed to pre-import typing_extensions: {import_err}", flush=True
+            )
             import traceback
+
             print(traceback.format_exc(), flush=True)
 except Exception as e:
     # Don't fail startup if this detection ever breaks; just log a warning
     print(f"Warning: failed to adjust sys.path for venv site-packages: {e}", flush=True)
     import traceback
+
     print(traceback.format_exc(), flush=True)
 
 # Configure logging to stdout (Azure App Service reads from here)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
@@ -75,7 +86,7 @@ logger = logging.getLogger(__name__)
 
 # Add the src directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-src_path = os.path.join(current_dir, 'src')
+src_path = os.path.join(current_dir, "src")
 sys.path.insert(0, src_path)
 
 # Use print with flush to ensure logs appear immediately in Azure
@@ -98,47 +109,49 @@ logger.info(f"Source path: {src_path}")
 # Log critical environment variables (without exposing full secrets)
 print("\nEnvironment Configuration:", flush=True)
 logger.info("\nEnvironment Configuration:")
-port_val = os.environ.get('PORT', '8000')
+port_val = os.environ.get("PORT", "8000")
 print(f"  PORT: {port_val}", flush=True)
 logger.info(f"  PORT: {port_val}")
-py_ver = os.environ.get('PYTHON_VERSION', 'not set')
+py_ver = os.environ.get("PYTHON_VERSION", "not set")
 print(f"  PYTHON_VERSION: {py_ver}", flush=True)
 logger.info(f"  PYTHON_VERSION: {py_ver}")
-py_path = os.environ.get('PYTHONPATH', 'not set')
+py_path = os.environ.get("PYTHONPATH", "not set")
 print(f"  PYTHONPATH: {py_path}", flush=True)
 logger.info(f"  PYTHONPATH: {py_path}")
-app_env = os.environ.get('APP_ENV', 'not set')
+app_env = os.environ.get("APP_ENV", "not set")
 print(f"  APP_ENV: {app_env}", flush=True)
 logger.info(f"  APP_ENV: {app_env}")
-kv_name = os.environ.get('AZURE_KEY_VAULT_NAME', 'not set')
+kv_name = os.environ.get("AZURE_KEY_VAULT_NAME", "not set")
 print(f"  AZURE_KEY_VAULT_NAME: {kv_name}", flush=True)
 logger.info(f"  AZURE_KEY_VAULT_NAME: {kv_name}")
-trans_serv = os.environ.get('TRANSCRIPTION_SERVICE', 'azure_speech')
+trans_serv = os.environ.get("TRANSCRIPTION_SERVICE", "azure_speech")
 print(f"  TRANSCRIPTION_SERVICE: {trans_serv}", flush=True)
 logger.info(f"  TRANSCRIPTION_SERVICE: {trans_serv}")
-openai_endpoint = '✅ set' if os.environ.get('AZURE_OPENAI_ENDPOINT') else '❌ not set'
+openai_endpoint = "✅ set" if os.environ.get("AZURE_OPENAI_ENDPOINT") else "❌ not set"
 print(f"  AZURE_OPENAI_ENDPOINT: {openai_endpoint}", flush=True)
 logger.info(f"  AZURE_OPENAI_ENDPOINT: {openai_endpoint}")
-openai_key = '✅ set' if os.environ.get('AZURE_OPENAI_API_KEY') else '❌ not set'
+openai_key = "✅ set" if os.environ.get("AZURE_OPENAI_API_KEY") else "❌ not set"
 print(f"  AZURE_OPENAI_API_KEY: {openai_key}", flush=True)
 logger.info(f"  AZURE_OPENAI_API_KEY: {openai_key}")
-openai_deploy = os.environ.get('AZURE_OPENAI_DEPLOYMENT_NAME', '❌ not set')
+openai_deploy = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "❌ not set")
 print(f"  AZURE_OPENAI_DEPLOYMENT_NAME: {openai_deploy}", flush=True)
 logger.info(f"  AZURE_OPENAI_DEPLOYMENT_NAME: {openai_deploy}")
-openai_ver = os.environ.get('AZURE_OPENAI_API_VERSION', 'not set')
+openai_ver = os.environ.get("AZURE_OPENAI_API_VERSION", "not set")
 print(f"  AZURE_OPENAI_API_VERSION: {openai_ver}", flush=True)
 logger.info(f"  AZURE_OPENAI_API_VERSION: {openai_ver}")
-mongo_uri = '✅ set' if os.environ.get('MONGO_URI') else '❌ not set'
+mongo_uri = "✅ set" if os.environ.get("MONGO_URI") else "❌ not set"
 print(f"  MONGO_URI: {mongo_uri}", flush=True)
 logger.info(f"  MONGO_URI: {mongo_uri}")
-mongo_db = os.environ.get('MONGO_DB_NAME', 'not set')
+mongo_db = os.environ.get("MONGO_DB_NAME", "not set")
 print(f"  MONGO_DB_NAME: {mongo_db}", flush=True)
 logger.info(f"  MONGO_DB_NAME: {mongo_db}")
-secret_key = '✅ set' if os.environ.get('SECURITY_SECRET_KEY') else '⚠️  not set (using default)'
+secret_key = (
+    "✅ set" if os.environ.get("SECURITY_SECRET_KEY") else "⚠️  not set (using default)"
+)
 print(f"  SECURITY_SECRET_KEY: {secret_key}", flush=True)
 logger.info(f"  SECURITY_SECRET_KEY: {secret_key}")
-if os.environ.get('SECURITY_SECRET_KEY'):
-    key_len = len(os.environ.get('SECURITY_SECRET_KEY', ''))
+if os.environ.get("SECURITY_SECRET_KEY"):
+    key_len = len(os.environ.get("SECURITY_SECRET_KEY", ""))
     key_status = f"  SECURITY_SECRET_KEY length: {key_len} chars {'✅' if key_len >= 32 else '❌ (must be >= 32)'}"
     print(key_status, flush=True)
     logger.info(key_status)
@@ -146,6 +159,7 @@ if os.environ.get('SECURITY_SECRET_KEY'):
 if __name__ == "__main__":
     try:
         from clinicai.core.config import get_settings
+
         settings = get_settings()
         port = int(os.environ.get("PORT", settings.port))
         host = os.environ.get("HOST", settings.host)
@@ -157,12 +171,13 @@ if __name__ == "__main__":
         logger.info(f"\n{sep}")
         logger.info(f"Starting application on {host}:{port}")
         logger.info(f"{sep}\n")
-        
+
         # Test import before starting
         print("Step 1: Importing clinicai.app...", flush=True)
         logger.info("Step 1: Importing clinicai.app...")
         try:
             from clinicai.app import app
+
             print("✅ Successfully imported clinicai.app", flush=True)
             logger.info("✅ Successfully imported clinicai.app")
         except Exception as import_error:
@@ -175,7 +190,7 @@ if __name__ == "__main__":
             print(tb, flush=True)
             logger.error(tb)
             sys.exit(1)
-        
+
         # Test settings loading (this will catch config validation errors early)
         print("Step 2: Loading application settings...", flush=True)
         logger.info("Step 2: Loading application settings...")
@@ -205,8 +220,13 @@ if __name__ == "__main__":
             logger.error("  1. SECURITY_SECRET_KEY must be >= 32 characters")
             print("  2. MONGO_URI must be set and valid", flush=True)
             logger.error("  2. MONGO_URI must be set and valid")
-            print("  3. AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set", flush=True)
-            logger.error("  3. AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set")
+            print(
+                "  3. AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set",
+                flush=True,
+            )
+            logger.error(
+                "  3. AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set"
+            )
             sys.exit(1)
         except Exception as settings_error:
             error_msg = f"❌ Failed to load settings: {settings_error}"
@@ -218,7 +238,7 @@ if __name__ == "__main__":
             print(tb, flush=True)
             logger.error(tb)
             sys.exit(1)
-        
+
         # Start uvicorn with better error handling
         sep = "=" * 60
         print(f"\n{sep}", flush=True)
@@ -255,12 +275,18 @@ if __name__ == "__main__":
         print(tb, flush=True)
         print(f"\n{sep}", flush=True)
         print("Troubleshooting steps:", flush=True)
-        print("1. Check Azure App Service logs (Log stream) for detailed errors", flush=True)
+        print(
+            "1. Check Azure App Service logs (Log stream) for detailed errors",
+            flush=True,
+        )
         print("2. Verify all Key Vault secrets are present and accessible", flush=True)
         print("3. Verify SECURITY_SECRET_KEY is >= 32 characters", flush=True)
         print("4. Verify Azure OpenAI deployment exists and is accessible", flush=True)
         print("5. Verify MongoDB connection string is correct", flush=True)
-        print("6. Check if the app is binding to the correct port (should be 0.0.0.0:8000)", flush=True)
+        print(
+            "6. Check if the app is binding to the correct port (should be 0.0.0.0:8000)",
+            flush=True,
+        )
         print(f"{sep}\n", flush=True)
         logger.error(f"\n{sep}")
         logger.error(f"❌ CRITICAL: Failed to start application")
@@ -276,6 +302,8 @@ if __name__ == "__main__":
         logger.error("3. Verify SECURITY_SECRET_KEY is >= 32 characters")
         logger.error("4. Verify Azure OpenAI deployment exists and is accessible")
         logger.error("5. Verify MongoDB connection string is correct")
-        logger.error("6. Check if the app is binding to the correct port (should be 0.0.0.0:8000)")
+        logger.error(
+            "6. Check if the app is binding to the correct port (should be 0.0.0.0:8000)"
+        )
         logger.error(f"{sep}\n")
         sys.exit(1)

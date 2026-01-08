@@ -1,6 +1,7 @@
 """
 Free tier optimizations for Azure App Service
 """
+
 import os
 from typing import Dict, Any
 
@@ -25,9 +26,9 @@ def is_free_tier() -> bool:
     """Check if running on free tier"""
     # Check for Azure App Service free tier indicators
     return (
-        os.environ.get("WEBSITE_SKU", "").upper() == "FREE" or
-        os.environ.get("WEBSITE_INSTANCE_ID", "").startswith("Free") or
-        os.environ.get("APP_SERVICE_PLAN_TIER", "").upper() == "FREE"
+        os.environ.get("WEBSITE_SKU", "").upper() == "FREE"
+        or os.environ.get("WEBSITE_INSTANCE_ID", "").startswith("Free")
+        or os.environ.get("APP_SERVICE_PLAN_TIER", "").upper() == "FREE"
     )
 
 

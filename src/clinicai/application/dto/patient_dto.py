@@ -186,11 +186,12 @@ class PreVisitSummaryResponse:
     summary: str
     generated_at: str
 
+
 # Step-03: Audio Transcription & SOAP Generation DTOs
 @dataclass
 class AudioTranscriptionRequest:
     """Request DTO for audio transcription."""
-    
+
     patient_id: str
     visit_id: str
     audio_file_path: Optional[str] = None  # Optional when sas_url provided
@@ -221,11 +222,10 @@ class PostVisitSummaryResponse:
     generated_at: str
 
 
-
 @dataclass
 class AudioTranscriptionResponse:
     """Response DTO for audio transcription."""
-    
+
     patient_id: str
     visit_id: str
     transcript: str
@@ -238,7 +238,7 @@ class AudioTranscriptionResponse:
 @dataclass
 class SoapGenerationRequest:
     """Request DTO for SOAP generation."""
-    
+
     patient_id: str
     visit_id: str
     transcript: Optional[str] = None  # If not provided, will use stored transcript
@@ -250,7 +250,7 @@ class SoapGenerationRequest:
 @dataclass
 class SoapGenerationResponse:
     """Response DTO for SOAP generation."""
-    
+
     patient_id: str
     visit_id: str
     soap_note: Dict[str, Any]
@@ -267,7 +267,7 @@ class SoapNoteDTO:
     Frontend can use this to render sections in the desired order
     without relying on JSON key order.
     """
-    
+
     subjective: str
     objective: Dict[str, Any]
     assessment: str
@@ -283,7 +283,7 @@ class SoapNoteDTO:
 @dataclass
 class TranscriptionSessionDTO:
     """DTO for transcription session data."""
-    
+
     audio_file_path: Optional[str]
     transcript: Optional[str]
     transcription_status: str

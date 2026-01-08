@@ -1,15 +1,15 @@
 """
 Health endpoint tests.
 """
+
 import pytest
 from fastapi.testclient import TestClient
-from clinicai.app import create_app
+from clinicai.app import app
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    app = create_app()
     return TestClient(app)
 
 
@@ -42,4 +42,3 @@ def test_root_endpoint(client):
     assert "version" in data
     assert "status" in data
     assert data["status"] == "running"
-

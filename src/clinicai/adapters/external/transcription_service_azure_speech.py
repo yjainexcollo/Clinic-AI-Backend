@@ -16,7 +16,9 @@ from datetime import datetime
 
 import aiohttp
 
-from clinicai.application.ports.services.transcription_service import TranscriptionService
+from clinicai.application.ports.services.transcription_service import (
+    TranscriptionService,
+)
 from clinicai.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ ISO_DURATION_RE = re.compile(
 # Custom exception classes for better error handling
 class AzureSpeechTranscriptionError(Exception):
     """Base exception for Azure Speech transcription errors"""
+
     def __init__(self, message: str, error_code: str = None, details: dict = None):
         self.error_code = error_code or "TRANSCRIPTION_ERROR"
         self.details = details or {}
@@ -42,30 +45,35 @@ class AzureSpeechTranscriptionError(Exception):
 
 class AzureSpeechTimeoutError(AzureSpeechTranscriptionError):
     """Transcription timeout"""
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, error_code="TRANSCRIPTION_TIMEOUT", details=kwargs)
 
 
 class AzureSpeechInvalidAudioError(AzureSpeechTranscriptionError):
     """Invalid audio format or corrupted file"""
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, error_code="INVALID_AUDIO", details=kwargs)
 
 
 class AzureSpeechEmptyTranscriptError(AzureSpeechTranscriptionError):
     """Transcription returned empty result"""
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, error_code="EMPTY_TRANSCRIPT", details=kwargs)
 
 
 class AzureSpeechBlobUploadError(AzureSpeechTranscriptionError):
     """Failed to upload audio to blob storage"""
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, error_code="BLOB_UPLOAD_FAILED", details=kwargs)
 
 
 class AzureSpeechAPIError(AzureSpeechTranscriptionError):
     """Azure Speech API returned an error"""
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, error_code="API_ERROR", details=kwargs)
 
@@ -75,48 +83,55 @@ class AzureSpeechTranscriptionService(TranscriptionService):
     Azure Speech Service transcription with speaker diarization.
     Uses batch transcription REST API for better accuracy and cost efficiency.
     """
-    
+
     def __init__(self) -> None:
         self._settings = get_settings()
-        
+
         # Validate Azure Speech Service configuration
         if not self._settings.azure_speech.subscription_key:
             raise ValueError(
                 "Azure Speech Service subscription key is required. "
                 "Please set AZURE_SPEECH_SUBSCRIPTION_KEY environment variable."
             )
-        
-        if not self._settings.azure_speech.region and not self._settings.azure_speech.endpoint:
+
+        if (
+            not self._settings.azure_speech.region
+            and not self._settings.azure_speech.endpoint
+        ):
             raise ValueError(
                 "Azure Speech Service region is required unless AZURE_SPEECH_ENDPOINT is provided. "
                 "Please set AZURE_SPEECH_REGION environment variable (e.g., 'eastus', 'westus2')."
             )
-        
+
         # Build endpoint (use explicit override if provided)
         self._endpoint = (
             self._settings.azure_speech.endpoint
             or f"https://{self._settings.azure_speech.region}.api.cognitive.microsoft.com"
         )
         self._subscription_key = self._settings.azure_speech.subscription_key
-        
+
         logger.info(
             "✅ Azure Speech Service initialized (endpoint: %s, mode: %s)",
             self._endpoint,
             self._settings.azure_speech.transcription_mode,
         )
-    
+
     async def transcribe_audio(
         self,
         audio_file_path: str,
         language: str = "en",
         medical_context: bool = True,
         sas_url: Optional[str] = None,
-        status_update_callback: Optional[Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]] = None,
-        enable_diarization: Optional[bool] = None,  # P1-5: Optional per-job diarization toggle
+        status_update_callback: Optional[
+            Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
+        ] = None,
+        enable_diarization: Optional[
+            bool
+        ] = None,  # P1-5: Optional per-job diarization toggle
     ) -> Dict[str, Any]:
         """
         Transcribe audio using Azure Speech Service batch transcription with speaker diarization.
-        
+
         Args:
             audio_file_path: Path to audio file
             language: Language code (default: "en")
@@ -127,7 +142,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 - last_poll_status: str (during polling, e.g., "Running", "Succeeded", "Failed")
                 - last_poll_at: datetime (during polling)
             enable_diarization: Optional bool to enable/disable diarization per job (defaults to service config)
-        
+
         Returns:
             Dict containing:
             - transcript: Full transcript text
@@ -141,26 +156,32 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         """
         if self._settings.azure_speech.transcription_mode == "batch":
             return await self._transcribe_batch(
-                audio_file_path, language, medical_context, 
-                sas_url=sas_url, 
+                audio_file_path,
+                language,
+                medical_context,
+                sas_url=sas_url,
                 status_update_callback=status_update_callback,
-                enable_diarization=enable_diarization  # P1-5: Pass diarization toggle
+                enable_diarization=enable_diarization,  # P1-5: Pass diarization toggle
             )
         else:
             raise ValueError("Real-time transcription not supported. Use batch mode.")
-    
+
     async def _transcribe_batch(
         self,
         audio_file_path: str,
         language: str,
         medical_context: bool,
         sas_url: Optional[str] = None,
-        status_update_callback: Optional[Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]] = None,
-        enable_diarization: Optional[bool] = None,  # P1-5: Optional per-job diarization toggle
+        status_update_callback: Optional[
+            Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
+        ] = None,
+        enable_diarization: Optional[
+            bool
+        ] = None,  # P1-5: Optional per-job diarization toggle
     ) -> Dict[str, Any]:
         """Batch transcription with speaker diarization using REST API."""
         from ...core.utils.timing import TimingContext
-        
+
         transcription_id = None
         try:
             # Map language codes
@@ -170,166 +191,204 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "es": "es-ES",
             }
             speech_language = language_map.get(language, "en-US")
-            
+
             # Determine blob URL for Azure Speech Service
             with TimingContext("AzureSpeech_BlobURL", logger) as timing_ctx:
                 if sas_url:
                     blob_url = sas_url
-                    logger.debug("Using provided SAS URL for Azure Speech transcription (skipping file validation)")
+                    logger.debug(
+                        "Using provided SAS URL for Azure Speech transcription (skipping file validation)"
+                    )
                     timing_ctx.add_metadata(method="sas_url_provided")
                 else:
                     if not audio_file_path:
                         raise AzureSpeechInvalidAudioError(
                             "Either audio_file_path or sas_url must be provided",
                             file_path=None,
-                            file_size=0
+                            file_size=0,
                         )
-                    
-                    logger.info(f"Starting Azure Speech Service batch transcription: {audio_file_path}, language: {speech_language}")
+
+                    logger.info(
+                        f"Starting Azure Speech Service batch transcription: {audio_file_path}, language: {speech_language}"
+                    )
                     with open(audio_file_path, "rb") as audio_file:
                         audio_data = audio_file.read()
-                    
+
                     if not audio_data or len(audio_data) == 0:
                         raise AzureSpeechInvalidAudioError(
                             "Audio file is empty or could not be read",
                             file_path=audio_file_path,
-                            file_size=0
+                            file_size=0,
                         )
-                    
+
                     timing_ctx.set_input_size(len(audio_data))
                     try:
-                        blob_url = await self._upload_audio_to_blob(audio_file_path, audio_data)
+                        blob_url = await self._upload_audio_to_blob(
+                            audio_file_path, audio_data
+                        )
                         timing_ctx.add_metadata(method="blob_upload")
                     except Exception as e:
                         raise AzureSpeechBlobUploadError(
                             f"Failed to upload audio to blob storage: {str(e)}",
                             file_path=audio_file_path,
                             file_size=len(audio_data),
-                            original_error=str(e)
+                            original_error=str(e),
                         )
-            
+
             # P1-4: Track job creation timestamp exactly when job is created
             with TimingContext("AzureSpeech_JobCreation", logger) as timing_ctx:
                 try:
                     # Set timestamp right before job creation
                     azure_job_created_at = datetime.utcnow()
                     # P1-5: Pass enable_diarization to job creation
-                    transcription_id = await self._create_transcription_job(blob_url, speech_language, enable_diarization=enable_diarization)
+                    transcription_id = await self._create_transcription_job(
+                        blob_url, speech_language, enable_diarization=enable_diarization
+                    )
                     timing_ctx.add_metadata(transcription_id=transcription_id)
-                    logger.info(f"Batch transcription job created: {transcription_id}, created_at={azure_job_created_at.isoformat()}, diarization={enable_diarization if enable_diarization is not None else self._settings.azure_speech.enable_speaker_diarization}")
-                    
+                    logger.info(
+                        f"Batch transcription job created: {transcription_id}, created_at={azure_job_created_at.isoformat()}, diarization={enable_diarization if enable_diarization is not None else self._settings.azure_speech.enable_speaker_diarization}"
+                    )
+
                     # P1-4: Persist transcription_id and azure_job_created_at immediately via callback
                     if status_update_callback:
                         try:
-                            await status_update_callback({
-                                "transcription_id": transcription_id,
-                                "azure_job_created_at": azure_job_created_at,
-                            })
+                            await status_update_callback(
+                                {
+                                    "transcription_id": transcription_id,
+                                    "azure_job_created_at": azure_job_created_at,
+                                }
+                            )
                         except Exception as callback_error:
-                            logger.warning(f"Failed to persist transcription_id via callback: {callback_error}")
+                            logger.warning(
+                                f"Failed to persist transcription_id via callback: {callback_error}"
+                            )
                 except Exception as e:
                     raise AzureSpeechAPIError(
                         f"Failed to create transcription job: {str(e)}",
                         file_path=audio_file_path,
                         language=speech_language,
-                        original_error=str(e)
+                        original_error=str(e),
                     )
-            
+
             try:
-                transcription_status = await self._poll_transcription_status(transcription_id, status_update_callback=status_update_callback)
+                transcription_status = await self._poll_transcription_status(
+                    transcription_id, status_update_callback=status_update_callback
+                )
             except TimeoutError as e:
                 raise AzureSpeechTimeoutError(
-                    str(e),
-                    transcription_id=transcription_id,
-                    file_path=audio_file_path
+                    str(e), transcription_id=transcription_id, file_path=audio_file_path
                 )
-            
+
             if transcription_status["status"] != "Succeeded":
                 error_details = transcription_status.get("error", {})
-                error_message = error_details.get("message", "Unknown error") if isinstance(error_details, dict) else str(error_details)
-                
+                error_message = (
+                    error_details.get("message", "Unknown error")
+                    if isinstance(error_details, dict)
+                    else str(error_details)
+                )
+
                 # Persist failure status via callback
                 if status_update_callback:
                     try:
-                        await status_update_callback({
-                            "last_poll_status": transcription_status["status"],
-                            "last_poll_at": datetime.utcnow(),
-                        })
+                        await status_update_callback(
+                            {
+                                "last_poll_status": transcription_status["status"],
+                                "last_poll_at": datetime.utcnow(),
+                            }
+                        )
                     except Exception as callback_error:
-                        logger.warning(f"Failed to persist failure status via callback: {callback_error}")
-                
+                        logger.warning(
+                            f"Failed to persist failure status via callback: {callback_error}"
+                        )
+
                 raise AzureSpeechAPIError(
                     f"Transcription failed with status: {transcription_status['status']} - {error_message}",
                     transcription_id=transcription_id,
                     status=transcription_status["status"],
-                    error_details=error_details
+                    error_details=error_details,
                 )
-            
+
             # P1-4: Track results download timestamp exactly when results are fetched
             with TimingContext("AzureSpeech_GetResults", logger) as timing_ctx:
                 # Set timestamp right before fetching results
                 results_downloaded_at = datetime.utcnow()
                 results = await self._get_transcription_results(transcription_id)
                 timing_ctx.add_metadata(result_count=len(results))
-                logger.info(f"Retrieved {len(results)} result files from transcription job, downloaded_at={results_downloaded_at.isoformat()}")
-                
+                logger.info(
+                    f"Retrieved {len(results)} result files from transcription job, downloaded_at={results_downloaded_at.isoformat()}"
+                )
+
                 # P1-4: Persist results_downloaded_at via callback
                 if status_update_callback:
                     try:
-                        await status_update_callback({
-                            "results_downloaded_at": results_downloaded_at,
-                        })
+                        await status_update_callback(
+                            {
+                                "results_downloaded_at": results_downloaded_at,
+                            }
+                        )
                     except Exception as callback_error:
-                        logger.warning(f"Failed to persist results_downloaded_at via callback: {callback_error}")
-            
+                        logger.warning(
+                            f"Failed to persist results_downloaded_at via callback: {callback_error}"
+                        )
+
             if not results:
                 raise AzureSpeechEmptyTranscriptError(
                     "No transcription results returned from Azure Speech Service",
                     transcription_id=transcription_id,
-                    file_path=audio_file_path
+                    file_path=audio_file_path,
                 )
-            
+
             logger.debug("🔵 === Azure Speech Service Results Debug ===")
             logger.debug(f"🔵 Number of result files: {len(results)}")
             if results:
                 logger.debug(f"🔵 First result keys: {list(results[0].keys())}")
                 if "recognizedPhrases" in results[0]:
-                    logger.debug(f"🔵 Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result")
+                    logger.debug(
+                        f"🔵 Found {len(results[0]['recognizedPhrases'])} recognized phrases in first result"
+                    )
                 if "combinedRecognizedPhrases" in results[0]:
-                    logger.debug(f"🔵 Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases")
-            
+                    logger.debug(
+                        f"🔵 Found {len(results[0]['combinedRecognizedPhrases'])} combined recognized phrases"
+                    )
+
             with TimingContext("AzureSpeech_ProcessResults", logger) as timing_ctx:
-                transcript_text, structured_dialogue, speaker_info = self._process_transcription_results(results)
+                transcript_text, structured_dialogue, speaker_info = (
+                    self._process_transcription_results(results)
+                )
                 timing_ctx.set_input_size(len(str(results)))
                 timing_ctx.set_output_size(len(transcript_text))
                 timing_ctx.add_metadata(
                     dialogue_turns=len(structured_dialogue),
-                    speakers=len(speaker_info.get("speakers", []))
+                    speakers=len(speaker_info.get("speakers", [])),
                 )
-                logger.info(f"Processed transcript: {len(transcript_text)} characters, {len(structured_dialogue)} dialogue turns")
-            
+                logger.info(
+                    f"Processed transcript: {len(transcript_text)} characters, {len(structured_dialogue)} dialogue turns"
+                )
+
             if "\x00" in transcript_text or "\0" in transcript_text:
                 raise AzureSpeechInvalidAudioError(
                     "Transcription contains null characters - audio file may be corrupted",
                     file_path=audio_file_path,
                     transcript_preview=transcript_text[:100],
-                    transcription_id=transcription_id
+                    transcription_id=transcription_id,
                 )
-            
+
             if not transcript_text or transcript_text.strip() == "":
                 raise AzureSpeechEmptyTranscriptError(
                     "Azure Speech Service returned empty transcript",
                     transcription_id=transcription_id,
                     file_path=audio_file_path,
-                    duration=self._extract_duration(results)
+                    duration=self._extract_duration(results),
                 )
-            
+
             try:
                 await self._delete_transcription_job(transcription_id)
                 logger.info(f"Cleaned up transcription job: {transcription_id}")
             except Exception as e:
-                logger.warning(f"Failed to delete transcription job {transcription_id}: {e}")
-            
+                logger.warning(
+                    f"Failed to delete transcription job {transcription_id}: {e}"
+                )
+
             return {
                 "transcript": transcript_text,
                 "structured_dialogue": structured_dialogue,
@@ -340,9 +399,9 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "language": language,
                 "model": "azure-speech-batch",
                 "transcription_id": transcription_id,
-                "error": None
+                "error": None,
             }
-        
+
         except AzureSpeechTranscriptionError as e:
             logger.error(
                 f"Azure Speech transcription failed: {e.error_code}",
@@ -351,7 +410,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     "error_msg": str(e),
                     "details": e.details,
                     "transcription_id": transcription_id,
-                }
+                },
             )
             return {
                 "transcript": "",
@@ -366,11 +425,13 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "error": {
                     "code": e.error_code,
                     "message": str(e),
-                    "details": e.details
-                }
+                    "details": e.details,
+                },
             }
         except Exception as e:
-            logger.error(f"Unexpected error in Azure Speech transcription: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error in Azure Speech transcription: {e}", exc_info=True
+            )
             return {
                 "transcript": "",
                 "structured_dialogue": [],
@@ -384,17 +445,21 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "error": {
                     "code": "UNKNOWN_ERROR",
                     "message": str(e),
-                    "details": {"type": type(e).__name__}
-                }
+                    "details": {"type": type(e).__name__},
+                },
             }
-    
-    async def _upload_audio_to_blob(self, audio_file_path: str, audio_data: bytes) -> str:
+
+    async def _upload_audio_to_blob(
+        self, audio_file_path: str, audio_data: bytes
+    ) -> str:
         """Upload audio file to Azure Blob Storage and return SAS URL."""
         try:
-            from clinicai.adapters.storage.azure_blob_service import get_azure_blob_service
-            
+            from clinicai.adapters.storage.azure_blob_service import (
+                get_azure_blob_service,
+            )
+
             blob_service = get_azure_blob_service()
-            
+
             # Determine content type from file extension
             content_type_map = {
                 ".mp3": "audio/mpeg",
@@ -413,15 +478,15 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             }
             file_ext = Path(audio_file_path).suffix.lower()
             content_type = content_type_map.get(file_ext, "audio/mpeg")
-            
+
             # Upload to blob
             upload_result = await blob_service.upload_file(
                 file_data=audio_data,
                 filename=Path(audio_file_path).name,
                 content_type=content_type,
-                file_type="audio"
+                file_type="audio",
             )
-            
+
             # Generate SAS URL (signed URL) for Azure Speech Service
             # Azure Speech Service needs a publicly accessible URL
             blob_path = upload_result["blob_path"]
@@ -429,21 +494,31 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 blob_path=blob_path,
                 expires_in_hours=24,  # 24 hours should be enough for transcription
             )
-            
-            logger.info(f"Uploaded audio to blob storage for transcription: {blob_path}")
+
+            logger.info(
+                f"Uploaded audio to blob storage for transcription: {blob_path}"
+            )
             return sas_url
-            
+
         except Exception as e:
-            logger.error(f"Failed to upload audio for transcription: {e}", exc_info=True)
+            logger.error(
+                f"Failed to upload audio for transcription: {e}", exc_info=True
+            )
             raise
-    
-    async def _create_transcription_job(self, blob_url: str, language: str, enable_diarization: Optional[bool] = None) -> str:
+
+    async def _create_transcription_job(
+        self, blob_url: str, language: str, enable_diarization: Optional[bool] = None
+    ) -> str:
         """Create Azure Speech transcription job with retry logic."""
         transcription_name = f"clinicai-transcription-{uuid.uuid4()}"
-        
+
         # P1-5: Use per-job diarization toggle if provided, otherwise use service config default
-        diarization_enabled = enable_diarization if enable_diarization is not None else self._settings.azure_speech.enable_speaker_diarization
-        
+        diarization_enabled = (
+            enable_diarization
+            if enable_diarization is not None
+            else self._settings.azure_speech.enable_speaker_diarization
+        )
+
         properties: Dict[str, Any] = {
             "diarizationEnabled": diarization_enabled,
             "wordLevelTimestampsEnabled": self._settings.azure_speech.enable_word_level_timestamps,  # Default False for faster transcription
@@ -467,21 +542,23 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             "displayName": transcription_name,
             "properties": properties,
         }
-        
+
         headers = {
             "Ocp-Apim-Subscription-Key": self._subscription_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        
+
         max_retries = 3
         base_delay = 1.0
-        
+
         for attempt in range(max_retries):
             try:
                 timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
-                    async with session.post(url, json=payload, headers=headers) as response:
+                    async with session.post(
+                        url, json=payload, headers=headers
+                    ) as response:
                         if response.status not in (200, 201, 202):
                             error_text = await response.text()
                             logger.error(
@@ -489,45 +566,57 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                 f"(attempt {attempt + 1}/{max_retries})"
                             )
                             if attempt < max_retries - 1:
-                                delay = base_delay * (2 ** attempt)
+                                delay = base_delay * (2**attempt)
                                 await asyncio.sleep(delay)
                                 continue
-                            raise ValueError(f"Failed to create transcription job: {response.status} {error_text}")
-                        
+                            raise ValueError(
+                                f"Failed to create transcription job: {response.status} {error_text}"
+                            )
+
                         location = response.headers.get("Location")
                         if not location:
-                            raise ValueError("Azure Speech Service did not return transcription location URL")
-                        
+                            raise ValueError(
+                                "Azure Speech Service did not return transcription location URL"
+                            )
+
                         transcription_id = location.rstrip("/").split("/")[-1]
-                        logger.info(f"✅ Created transcription job: {transcription_id} (attempt {attempt + 1})")
+                        logger.info(
+                            f"✅ Created transcription job: {transcription_id} (attempt {attempt + 1})"
+                        )
                         return transcription_id
-                        
+
             except asyncio.TimeoutError:
-                logger.error(f"Timeout creating transcription job (attempt {attempt + 1}/{max_retries})")
+                logger.error(
+                    f"Timeout creating transcription job (attempt {attempt + 1}/{max_retries})"
+                )
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     await asyncio.sleep(delay)
                     continue
-                raise TimeoutError("Failed to create transcription job: timeout after 3 attempts")
-                
+                raise TimeoutError(
+                    "Failed to create transcription job: timeout after 3 attempts"
+                )
+
             except Exception as e:
-                logger.error(f"Error creating transcription job (attempt {attempt + 1}/{max_retries}): {e}")
+                logger.error(
+                    f"Error creating transcription job (attempt {attempt + 1}/{max_retries}): {e}"
+                )
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     await asyncio.sleep(delay)
                     continue
                 raise
-    
+
     def _get_adaptive_poll_interval(self, elapsed_seconds: float) -> float:
         """
         Adaptive polling strategy: faster polling early, slower for long jobs.
-        
+
         Strategy:
         - 0-30s: 1s interval (quick jobs complete fast)
         - 30s-2min: 2s interval (normal jobs)
         - 2min-10min: 5s interval (longer jobs)
         - 10min+: 10s interval (very long jobs)
-        
+
         Benefits:
         - Faster detection of completed jobs (1s vs 2s for quick jobs)
         - Fewer API calls for long jobs (10s vs 2s saves ~80% calls)
@@ -541,12 +630,16 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             return 5.0  # Slower for longer jobs
         else:
             return 10.0  # Very slow for very long jobs
-    
-    async def _poll_transcription_status(self, transcription_id: str, status_update_callback: Optional[callable] = None) -> Dict[str, Any]:
+
+    async def _poll_transcription_status(
+        self, transcription_id: str, status_update_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
         """Poll transcription job status until completion with adaptive polling strategy."""
         from ...core.utils.timing import TimingContext
-        
-        status_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+
+        status_url = (
+            f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        )
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
         timeout_seconds = self._settings.azure_speech.batch_max_wait_time
         start_time = time.time()
@@ -554,50 +647,62 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         last_info_log_time = start_time  # Track last INFO-level log for long jobs
         first_poll_at = None  # P1-4: Track first poll timestamp
         last_persist_at = None  # P1-6: Track last DB persist time for throttling
-        poll_persist_interval = 20  # P1-6: Throttle DB writes to every 20 seconds during polling
-        
+        poll_persist_interval = (
+            20  # P1-6: Throttle DB writes to every 20 seconds during polling
+        )
+
         with TimingContext("AzureSpeech_Polling", logger) as timing_ctx:
             timing_ctx.add_metadata(transcription_id=transcription_id)
-            
-            logger.info(f"Starting adaptive status polling for transcription: {transcription_id}")
-            
+
+            logger.info(
+                f"Starting adaptive status polling for transcription: {transcription_id}"
+            )
+
             timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout per request
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 while True:
                     poll_count += 1
                     elapsed = time.time() - start_time
                     poll_interval = self._get_adaptive_poll_interval(elapsed)
-                    
+
                     # Ensure INFO-level log at least every 60 seconds for long jobs
                     time_since_last_info_log = time.time() - last_info_log_time
                     force_info_log = time_since_last_info_log >= 60.0
-                    
+
                     try:
                         poll_start = time.time()
                         async with session.get(status_url, headers=headers) as response:
                             poll_duration = time.time() - poll_start
-                            
+
                             if response.status != 200:
                                 error_text = await response.text()
-                                logger.error(f"Failed to get transcription status: {response.status} {error_text}")
-                                raise ValueError(f"Failed to get transcription status: {response.status} {error_text}")
-                            
+                                logger.error(
+                                    f"Failed to get transcription status: {response.status} {error_text}"
+                                )
+                                raise ValueError(
+                                    f"Failed to get transcription status: {response.status} {error_text}"
+                                )
+
                             status_data = await response.json()
                             status = status_data.get("status")
-                            
+
                             # P1-4: Track first poll timestamp
                             poll_timestamp = datetime.utcnow()
                             if first_poll_at is None:
                                 first_poll_at = poll_timestamp
                                 # P1-4: Persist first_poll_at immediately
                             if status_update_callback:
-                                    try:
-                                        await status_update_callback({
+                                try:
+                                    await status_update_callback(
+                                        {
                                             "first_poll_at": first_poll_at,
-                                        })
-                                    except Exception as callback_error:
-                                        logger.debug(f"Failed to persist first_poll_at via callback: {callback_error}")
-                            
+                                        }
+                                    )
+                                except Exception as callback_error:
+                                    logger.debug(
+                                        f"Failed to persist first_poll_at via callback: {callback_error}"
+                                    )
+
                             # P1-6: Throttle DB writes during polling (only persist every N seconds or on status change)
                             should_persist = False
                             if status in ("Succeeded", "Failed"):
@@ -608,51 +713,65 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                 should_persist = True
                             else:
                                 # Throttle: only persist if enough time has passed
-                                time_since_last_persist = (poll_timestamp - last_persist_at).total_seconds()
+                                time_since_last_persist = (
+                                    poll_timestamp - last_persist_at
+                                ).total_seconds()
                                 if time_since_last_persist >= poll_persist_interval:
                                     should_persist = True
-                            
+
                             # Persist polling status via callback (throttled)
                             if status_update_callback and should_persist:
                                 try:
-                                    await status_update_callback({
-                                        "last_poll_status": status,
-                                        "last_poll_at": poll_timestamp,
-                                    })
+                                    await status_update_callback(
+                                        {
+                                            "last_poll_status": status,
+                                            "last_poll_at": poll_timestamp,
+                                        }
+                                    )
                                     last_persist_at = poll_timestamp
                                 except Exception as callback_error:
-                                    logger.debug(f"Failed to persist poll status via callback: {callback_error}")
-                            
+                                    logger.debug(
+                                        f"Failed to persist poll status via callback: {callback_error}"
+                                    )
+
                             # Log polling progress: INFO for first poll, every 60s, or when status changes
                             # Otherwise use DEBUG for frequent polls to reduce log noise
-                            should_log_info = poll_count == 1 or force_info_log or status not in ("Running", "NotStarted")
-                            
+                            should_log_info = (
+                                poll_count == 1
+                                or force_info_log
+                                or status not in ("Running", "NotStarted")
+                            )
+
                             log_message = (
                                 f"Poll #{poll_count}: status={status}, elapsed={elapsed:.1f}s/{timeout_seconds}s, "
                                 f"next_interval={poll_interval}s, poll_duration={poll_duration:.3f}s, "
                                 f"poll_at={poll_timestamp.isoformat()}"
                             )
-                            
+
                             if should_log_info:
                                 logger.info(log_message)
                                 last_info_log_time = time.time()
                             else:
                                 logger.debug(log_message)
-                            
+
                             # Heartbeat log for long-running jobs (every 60+ seconds)
                             if force_info_log and status == "Running":
                                 logger.info(
                                     f"💓 Transcription still running: transcription_id={transcription_id}, "
                                     f"elapsed={elapsed:.1f}s/{timeout_seconds}s, status={status}, poll_count={poll_count}"
                                 )
-                            
+
                             if status in ("Succeeded", "Failed"):
                                 total_duration = time.time() - start_time
                                 timing_ctx.duration = total_duration
                                 timing_ctx.add_metadata(
                                     status=status,
                                     poll_count=poll_count,
-                                    avg_poll_interval=total_duration / poll_count if poll_count > 0 else 0
+                                    avg_poll_interval=(
+                                        total_duration / poll_count
+                                        if poll_count > 0
+                                        else 0
+                                    ),
                                 )
                                 logger.info(
                                     f"✅ Transcription job completed: {transcription_id}, "
@@ -660,15 +779,15 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                     f"polls={poll_count}, avg_interval={total_duration/poll_count:.2f}s"
                                 )
                                 return status_data
-                            
+
                             if elapsed > timeout_seconds:
                                 raise TimeoutError(
                                     f"Transcription job timed out after {timeout_seconds} seconds. "
                                     f"Last status: {status}, polls: {poll_count}"
                                 )
-                            
+
                         await asyncio.sleep(poll_interval)
-                        
+
                     except asyncio.TimeoutError:
                         elapsed = time.time() - start_time
                         logger.warning(
@@ -684,41 +803,49 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                         poll_interval = self._get_adaptive_poll_interval(elapsed)
                         await asyncio.sleep(poll_interval)
                         continue
-    
-    async def _get_transcription_results(self, transcription_id: str) -> List[Dict[str, Any]]:
+
+    async def _get_transcription_results(
+        self, transcription_id: str
+    ) -> List[Dict[str, Any]]:
         """Retrieve transcription results."""
         files_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}/files"
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(files_url, headers=headers, timeout=30) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"Failed to get transcription files: {response.status} {error_text}")
-                    raise ValueError(f"Failed to get transcription files: {response.status} {error_text}")
-                
+                    logger.error(
+                        f"Failed to get transcription files: {response.status} {error_text}"
+                    )
+                    raise ValueError(
+                        f"Failed to get transcription files: {response.status} {error_text}"
+                    )
+
                 files_data = await response.json()
                 result_files = files_data.get("values", [])
-                
+
                 transcripts = []
                 for file_info in result_files:
                     if file_info.get("kind") != "Transcription":
                         continue
-                    
+
                     content_url = file_info.get("links", {}).get("contentUrl")
                     if not content_url:
                         continue
-                    
+
                     async with session.get(content_url, timeout=60) as content_response:
                         if content_response.status != 200:
-                            logger.warning(f"Failed to download transcription result: {content_response.status}")
+                            logger.warning(
+                                f"Failed to download transcription result: {content_response.status}"
+                            )
                             continue
-                        
+
                         transcript_json = await content_response.json()
                         transcripts.append(transcript_json)
-                
+
                 return transcripts
-    
+
     def _process_transcription_results(
         self, results: List[Dict[str, Any]]
     ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
@@ -727,31 +854,31 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         structured_dialogue = []
         speaker_info = {"speakers": []}
         seen_speakers = set()
-        
+
         for result in results:
             recognized_phrases = result.get("recognizedPhrases", [])
-            
+
             for phrase in recognized_phrases:
                 nbest = phrase.get("nBest", [])
                 if not nbest:
                     continue
-                
+
                 best_result = nbest[0]
                 text = best_result.get("display") or best_result.get("lexical") or ""
                 if not text.strip():
                     continue
-                
+
                 transcript_text.append(text)
-                
+
                 # Prefer diarization speaker ID; fallback to channel if missing
                 speaker_id = phrase.get("speaker")
                 if speaker_id is None:
                     channel = phrase.get("channel", 0)
                     speaker_id = channel + 1
-                
+
                 speaker_label = f"Speaker {speaker_id}"
                 seen_speakers.add(speaker_label)
-                
+
                 structured_dialogue.append(
                     {
                         "speaker": speaker_label,
@@ -760,14 +887,16 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                         "duration": phrase.get("duration"),
                     }
                 )
-        
+
         if seen_speakers:
-            speaker_info["speakers"] = [{"label": label} for label in sorted(seen_speakers)]
+            speaker_info["speakers"] = [
+                {"label": label} for label in sorted(seen_speakers)
+            ]
         else:
             speaker_info["speakers"] = [{"label": "Speaker 1"}]
-        
+
         return " ".join(transcript_text).strip(), structured_dialogue, speaker_info
-    
+
     def _calculate_average_confidence(self, results: List[Dict[str, Any]]) -> float:
         confidences = []
         for result in results:
@@ -779,11 +908,11 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         if not confidences:
             return 0.0
         return sum(confidences) / len(confidences)
-    
+
     def _parse_iso_duration_seconds(self, value: Optional[str]) -> float:
         """
         Parse ISO8601 duration strings like 'PT19.16S', 'PT5M3.5S', 'PT1H2M3S' into seconds.
-        
+
         Azure Speech returns phrase-level 'offset' and 'duration' values in this format.
         We support hours, minutes, and seconds components.
         """
@@ -800,7 +929,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
     def _extract_duration(self, results: List[Dict[str, Any]]) -> float:
         """
         Estimate total audio duration in seconds from Azure Speech results.
-        
+
         Each recognized phrase includes an 'offset' (start time) and 'duration'.
         We approximate the full audio length as max(offset + duration) across all phrases.
         """
@@ -820,21 +949,27 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     max_end_seconds = end_sec
 
         return max_end_seconds
-    
+
     async def _delete_transcription_job(self, transcription_id: str) -> None:
         """Delete transcription job to clean up resources."""
-        delete_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        delete_url = (
+            f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        )
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
-        
+
         async with aiohttp.ClientSession() as session:
-            async with session.delete(delete_url, headers=headers, timeout=30) as response:
+            async with session.delete(
+                delete_url, headers=headers, timeout=30
+            ) as response:
                 if response.status not in (200, 202, 204):
-                    logger.warning(f"Failed to delete transcription job: {response.status}")
-    
+                    logger.warning(
+                        f"Failed to delete transcription job: {response.status}"
+                    )
+
     async def validate_audio_file(self, audio_file_path: str) -> Dict[str, Any]:
         """
         Validate audio file format and quality for Azure Speech Service.
-        
+
         Azure Speech Service supports the following formats:
         - WAV (PCM, A-law, mu-law)
         - MP3 (MPEG-1/2 Audio Layer 3)
@@ -844,10 +979,10 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         - OPUS (Opus codec)
         - AMR (Adaptive Multi-Rate)
         - WebM (WebM audio)
-        
+
         Args:
             audio_file_path: Path to audio file
-            
+
         Returns:
             Dict containing validation results and metadata:
             - is_valid: bool
@@ -866,7 +1001,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     "duration": 0,
                     "format": None,
                 }
-            
+
             file_size = p.stat().st_size
             if file_size <= 0:
                 return {
@@ -876,16 +1011,17 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     "duration": 0,
                     "format": None,
                 }
-            
+
             # Azure Speech Service supports files up to 1GB, but we'll use a reasonable limit
             # Check against configured max file size if available
             max_size_mb = (
-                self._settings.file_storage.max_file_size_mb 
-                if hasattr(self._settings, 'file_storage') and hasattr(self._settings.file_storage, 'max_file_size_mb')
+                self._settings.file_storage.max_file_size_mb
+                if hasattr(self._settings, "file_storage")
+                and hasattr(self._settings.file_storage, "max_file_size_mb")
                 else 100
             )
             max_size_bytes = max_size_mb * 1024 * 1024
-            
+
             if file_size > max_size_bytes:
                 return {
                     "is_valid": False,
@@ -894,26 +1030,26 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     "duration": 0,
                     "format": p.suffix.lower().lstrip("."),
                 }
-            
+
             # Validate file format - Azure Speech Service supported formats
             # Including MPEG variants and other common formats
             supported_formats = {
-                ".wav",      # WAV (PCM, A-law, mu-law)
-                ".mp3",      # MP3 (MPEG-1/2 Audio Layer 3)
-                ".mpeg",     # MPEG audio
-                ".mpg",      # MPEG audio (alternative extension)
-                ".m4a",      # M4A (MPEG-4 Audio)
-                ".mp4",      # MP4 (can contain audio)
-                ".flac",     # FLAC (Free Lossless Audio Codec)
-                ".ogg",      # OGG (Ogg Vorbis)
-                ".opus",     # OPUS (Opus codec)
-                ".amr",      # AMR (Adaptive Multi-Rate)
-                ".webm",     # WebM audio
-                ".aac",      # AAC (Advanced Audio Coding)
-                ".wma",      # WMA (Windows Media Audio) - if supported
+                ".wav",  # WAV (PCM, A-law, mu-law)
+                ".mp3",  # MP3 (MPEG-1/2 Audio Layer 3)
+                ".mpeg",  # MPEG audio
+                ".mpg",  # MPEG audio (alternative extension)
+                ".m4a",  # M4A (MPEG-4 Audio)
+                ".mp4",  # MP4 (can contain audio)
+                ".flac",  # FLAC (Free Lossless Audio Codec)
+                ".ogg",  # OGG (Ogg Vorbis)
+                ".opus",  # OPUS (Opus codec)
+                ".amr",  # AMR (Adaptive Multi-Rate)
+                ".webm",  # WebM audio
+                ".aac",  # AAC (Advanced Audio Coding)
+                ".wma",  # WMA (Windows Media Audio) - if supported
             }
             file_ext = p.suffix.lower()
-            
+
             if file_ext not in supported_formats:
                 return {
                     "is_valid": False,
@@ -922,7 +1058,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                     "duration": 0,
                     "format": file_ext.lstrip("."),
                 }
-            
+
             return {
                 "is_valid": True,
                 "error": None,
@@ -931,7 +1067,9 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 "format": file_ext.lstrip("."),
             }
         except Exception as e:
-            logger.error(f"Error validating audio file {audio_file_path}: {e}", exc_info=True)
+            logger.error(
+                f"Error validating audio file {audio_file_path}: {e}", exc_info=True
+            )
             return {
                 "is_valid": False,
                 "error": f"Validation error: {e}",

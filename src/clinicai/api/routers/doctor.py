@@ -15,14 +15,26 @@ from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/doctor")
 DEFAULT_GLOBAL_CATEGORIES = [
-    "duration", "triggers", "pain", "temporal", "travel",
-    "allergies", "medications", "hpi", "family", "lifestyle",
-    "gyn", "functional", "other"
+    "duration",
+    "triggers",
+    "pain",
+    "temporal",
+    "travel",
+    "allergies",
+    "medications",
+    "hpi",
+    "family",
+    "lifestyle",
+    "gyn",
+    "functional",
+    "other",
 ]
 
 
 async def _get_or_default(doctor_id: str) -> Optional[DoctorPreferencesMongo]:
-    return await DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id)
+    return await DoctorPreferencesMongo.find_one(
+        DoctorPreferencesMongo.doctor_id == doctor_id
+    )
 
 
 def _defaults_for(doctor_id: str) -> DoctorPreferencesResponse:
@@ -39,26 +51,40 @@ def _defaults_for(doctor_id: str) -> DoctorPreferencesResponse:
     )
 
 
-def _merge_intake_prefs(existing: DoctorPreferencesMongo, payload: UpsertDoctorPreferencesRequest, settings) -> None:
+def _merge_intake_prefs(
+    existing: DoctorPreferencesMongo, payload: UpsertDoctorPreferencesRequest, settings
+) -> None:
     # Normalize incoming legacy intake fields
     incoming_categories = []
     if payload.categories is not None:
-        incoming_categories = [c.strip().lower() for c in payload.categories if c and isinstance(c, str)]
+        incoming_categories = [
+            c.strip().lower() for c in payload.categories if c and isinstance(c, str)
+        ]
         incoming_categories = list(dict.fromkeys(incoming_categories))
 
     if payload.global_categories is not None:
-        incoming_global = [c.strip().lower() for c in payload.global_categories if c and isinstance(c, str)]
+        incoming_global = [
+            c.strip().lower()
+            for c in payload.global_categories
+            if c and isinstance(c, str)
+        ]
         incoming_global = list(dict.fromkeys(incoming_global))
     else:
         incoming_global = None
 
     if payload.max_questions is not None:
         try:
-            max_q = max(1, min(settings.intake.max_questions, int(payload.max_questions)))
+            max_q = max(
+                1, min(settings.intake.max_questions, int(payload.max_questions))
+            )
         except Exception:
             max_q = settings.intake.max_questions
     else:
-        max_q = existing.max_questions if existing and existing.max_questions else settings.intake.max_questions
+        max_q = (
+            existing.max_questions
+            if existing and existing.max_questions
+            else settings.intake.max_questions
+        )
 
     if not existing.global_categories:
         existing.global_categories = DEFAULT_GLOBAL_CATEGORIES.copy()
@@ -66,14 +92,22 @@ def _merge_intake_prefs(existing: DoctorPreferencesMongo, payload: UpsertDoctorP
     if incoming_global is not None:
         merged_global = list(dict.fromkeys(incoming_global))
     else:
-        merged_global = list(dict.fromkeys((existing.global_categories or []) + incoming_categories))
+        merged_global = list(
+            dict.fromkeys((existing.global_categories or []) + incoming_categories)
+        )
 
     existing.global_categories = merged_global
-    existing.selected_categories = [c for c in incoming_categories if c in set(merged_global)] if incoming_categories else (existing.selected_categories or [])
+    existing.selected_categories = (
+        [c for c in incoming_categories if c in set(merged_global)]
+        if incoming_categories
+        else (existing.selected_categories or [])
+    )
     existing.max_questions = max_q
 
 
-def _apply_new_prefs(existing: DoctorPreferencesMongo, payload: UpsertDoctorPreferencesRequest) -> None:
+def _apply_new_prefs(
+    existing: DoctorPreferencesMongo, payload: UpsertDoctorPreferencesRequest
+) -> None:
     # New fields are optional; only set if provided
     if payload.soap_order is not None:
         existing.soap_order = payload.soap_order
@@ -89,11 +123,18 @@ def _apply_new_prefs(existing: DoctorPreferencesMongo, payload: UpsertDoctorPref
 def _build_response(doc: DoctorPreferencesMongo, settings) -> DoctorPreferencesResponse:
     return DoctorPreferencesResponse(
         doctor_id=doc.doctor_id,
-        global_categories=sorted(list(dict.fromkeys([c.lower() for c in (doc.global_categories or [])]))),
-        selected_categories=sorted(list(dict.fromkeys([c.lower() for c in (doc.selected_categories or [])]))),
+        global_categories=sorted(
+            list(dict.fromkeys([c.lower() for c in (doc.global_categories or [])]))
+        ),
+        selected_categories=sorted(
+            list(dict.fromkeys([c.lower() for c in (doc.selected_categories or [])]))
+        ),
         max_questions=int(doc.max_questions or settings.intake.max_questions),
         soap_order=doc.soap_order or [],
-        pre_visit_config=[PreVisitSectionConfig(**cfg) if isinstance(cfg, dict) else cfg for cfg in (doc.pre_visit_config or [])],
+        pre_visit_config=[
+            PreVisitSectionConfig(**cfg) if isinstance(cfg, dict) else cfg
+            for cfg in (doc.pre_visit_config or [])
+        ],
         pre_visit_ai_config=doc.pre_visit_ai_config,
         soap_ai_config=doc.soap_ai_config,
     )
@@ -130,10 +171,20 @@ async def get_doctor_preferences(
             )
         doc = await _get_or_default(doctor_id)
         if not doc:
-            return ok(request, data=_defaults_for(doctor_id), message="Doctor preferences loaded")
-        return ok(request, data=_build_response(doc, get_settings()), message="Doctor preferences loaded")
+            return ok(
+                request,
+                data=_defaults_for(doctor_id),
+                message="Doctor preferences loaded",
+            )
+        return ok(
+            request,
+            data=_build_response(doc, get_settings()),
+            message="Doctor preferences loaded",
+        )
     except Exception:
-        return fail(request, error="INTERNAL_ERROR", message="Failed to load preferences")
+        return fail(
+            request, error="INTERNAL_ERROR", message="Failed to load preferences"
+        )
 
 
 @router.post(
@@ -153,7 +204,9 @@ async def get_doctor_preferences(
         "Backward compatible with legacy intake preference fields."
     ),
 )
-async def set_doctor_preferences(request: Request, payload: UpsertDoctorPreferencesRequest):
+async def set_doctor_preferences(
+    request: Request, payload: UpsertDoctorPreferencesRequest
+):
     """Merge and persist doctor preferences; independent of intake flow."""
     try:
         doctor_id = getattr(request.state, "doctor_id", None)
@@ -185,7 +238,12 @@ async def set_doctor_preferences(request: Request, payload: UpsertDoctorPreferen
         existing.updated_at = datetime.utcnow()
         await existing.save()
 
-        return ok(request, data=_build_response(existing, settings), message="Preferences updated")
+        return ok(
+            request,
+            data=_build_response(existing, settings),
+            message="Preferences updated",
+        )
     except Exception:
-        return fail(request, error="INTERNAL_ERROR", message="Failed to update preferences")
-
+        return fail(
+            request, error="INTERNAL_ERROR", message="Failed to update preferences"
+        )

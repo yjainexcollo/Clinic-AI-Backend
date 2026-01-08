@@ -47,5 +47,3 @@ PROMPT_VERSIONS: dict[PromptScenario, str] = _DEFAULT_VERSIONS.copy()
 
 
 __all__ = ["PromptScenario", "PROMPT_VERSIONS"]
-
-

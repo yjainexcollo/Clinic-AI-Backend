@@ -11,7 +11,7 @@ class TranscriptionService(ABC):
 
     @abstractmethod
     async def transcribe_audio(
-        self, 
+        self,
         audio_file_path: str,
         language: str = "en",
         medical_context: bool = True,
@@ -19,12 +19,12 @@ class TranscriptionService(ABC):
     ) -> Dict[str, Any]:
         """
         Transcribe audio file to text.
-        
+
         Args:
             audio_file_path: Path to audio file
             language: Language code (default: "en")
             medical_context: Whether to optimize for medical terminology
-            
+
         Returns:
             Dict containing transcript, confidence, duration, word_count
         """
@@ -34,10 +34,10 @@ class TranscriptionService(ABC):
     async def validate_audio_file(self, audio_file_path: str) -> Dict[str, Any]:
         """
         Validate audio file format and quality.
-        
+
         Args:
             audio_file_path: Path to audio file
-            
+
         Returns:
             Dict containing validation results and metadata
         """

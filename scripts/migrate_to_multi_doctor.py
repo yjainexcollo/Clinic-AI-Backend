@@ -70,7 +70,9 @@ async def migrate() -> None:
         p.doctor_id = default_doctor_id
         p.updated_at = datetime.utcnow()
         await p.save()
-    print(f"Updated {len(patients_without_doctor)} patients with doctor_id={default_doctor_id}")
+    print(
+        f"Updated {len(patients_without_doctor)} patients with doctor_id={default_doctor_id}"
+    )
 
     # 3) Backfill doctor_id on visits
     visits_without_doctor = await VisitMongo.find(
@@ -81,7 +83,9 @@ async def migrate() -> None:
         v.doctor_id = default_doctor_id
         v.updated_at = datetime.utcnow()
         await v.save()
-    print(f"Updated {len(visits_without_doctor)} visits with doctor_id={default_doctor_id}")
+    print(
+        f"Updated {len(visits_without_doctor)} visits with doctor_id={default_doctor_id}"
+    )
 
     # 4) Ensure default doctor preferences exist
     prefs = await DoctorPreferencesMongo.find_one(
@@ -105,5 +109,3 @@ async def migrate() -> None:
 
 if __name__ == "__main__":
     asyncio.run(migrate())
-
-

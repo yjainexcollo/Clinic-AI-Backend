@@ -51,14 +51,20 @@ class DoctorMiddleware(BaseHTTPMiddleware):
         if self.is_public_endpoint(request.url.path):
             return await call_next(request)
 
-        doctor_id = request.headers.get("X-Doctor-ID") or request.headers.get("x-doctor-id")
+        doctor_id = request.headers.get("X-Doctor-ID") or request.headers.get(
+            "x-doctor-id"
+        )
 
         # In strict mode we require the header. In non-strict mode we fall back to a default doctor ID.
         require_header = os.getenv("REQUIRE_DOCTOR_ID", "false").lower() == "true"
 
         if not doctor_id:
             if require_header:
-                logger.warning("❌ Missing X-Doctor-ID header for %s %s", request.method, request.url.path)
+                logger.warning(
+                    "❌ Missing X-Doctor-ID header for %s %s",
+                    request.method,
+                    request.url.path,
+                )
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -91,7 +97,9 @@ class DoctorMiddleware(BaseHTTPMiddleware):
         try:
             doctor = await DoctorMongo.find_one(DoctorMongo.doctor_id == doctor_id)
             if not doctor:
-                doctor = DoctorMongo(doctor_id=doctor_id, name=f"Doctor {doctor_id}", status="active")
+                doctor = DoctorMongo(
+                    doctor_id=doctor_id, name=f"Doctor {doctor_id}", status="active"
+                )
                 await doctor.save()
                 logger.info("🆕 Created doctor %s", doctor_id)
 
@@ -108,4 +116,3 @@ class DoctorMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
-

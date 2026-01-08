@@ -35,7 +35,9 @@ async def _sweep_once(threshold_seconds: int) -> None:
         visit_id = visit.visit_id
         patient_id = visit.patient_id
         # Extract doctor_id from visit (required for multi-doctor support)
-        doctor_id = getattr(visit, "doctor_id", None) or "D123"  # Fallback for backward compatibility
+        doctor_id = (
+            getattr(visit, "doctor_id", None) or "D123"
+        )  # Fallback for backward compatibility
         ts = visit.transcription_session
         if not ts:
             continue
@@ -51,11 +53,15 @@ async def _sweep_once(threshold_seconds: int) -> None:
 
         # If we already have a queue_message_id and enqueue_state queued, leave it;
         # infra/worker should pick it up once available.
-        if getattr(ts, "enqueue_state", None) == "queued" and getattr(ts, "queue_message_id", None):
+        if getattr(ts, "enqueue_state", None) == "queued" and getattr(
+            ts, "queue_message_id", None
+        ):
             continue
 
         # We need an audio reference to re-enqueue. Use AudioFileMongo by visit_id.
-        from clinicai.adapters.db.mongo.models.audio_m import AudioFileMongo  # lazy import to avoid cycles
+        from clinicai.adapters.db.mongo.models.audio_m import (
+            AudioFileMongo,
+        )  # lazy import to avoid cycles
 
         audio = await AudioFileMongo.find_one(
             AudioFileMongo.visit_id == visit_id, AudioFileMongo.audio_type == "visit"
@@ -154,5 +160,3 @@ async def run_stuck_sweeper_forever() -> None:
         except Exception as e:  # noqa: PERF203
             logger.error("[StuckSweeper] Sweep iteration failed: %s", e, exc_info=True)
         await asyncio.sleep(interval)
-
-

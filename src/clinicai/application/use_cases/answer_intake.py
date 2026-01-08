@@ -1,6 +1,7 @@
 """Answer Intake use case for Step-01 functionality.
 Formatting-only changes; behavior preserved.
 """
+
 import logging
 from typing import Optional, List
 from ...domain.entities.visit import Visit
@@ -15,27 +16,35 @@ from ...domain.value_objects.visit_id import VisitId
 from ...core.config import get_settings
 from ...core.constants import TRAVEL_KEYWORDS
 from ..dto.patient_dto import (
-AnswerIntakeRequest,
-AnswerIntakeResponse,
-EditAnswerRequest,
-EditAnswerResponse,
-PreVisitSummaryRequest,
+    AnswerIntakeRequest,
+    AnswerIntakeResponse,
+    EditAnswerRequest,
+    EditAnswerResponse,
+    PreVisitSummaryRequest,
 )
 from ..ports.repositories.patient_repo import PatientRepository
 from ..ports.repositories.visit_repo import VisitRepository
 from ..ports.services.question_service import QuestionService
+
 logger = logging.getLogger("clinicai")
+
+
 class AnswerIntakeUseCase:
     """Use case for answering intake questions."""
 
     def __init__(
-        self, patient_repository: PatientRepository, visit_repository: VisitRepository, question_service: QuestionService
+        self,
+        patient_repository: PatientRepository,
+        visit_repository: VisitRepository,
+        question_service: QuestionService,
     ):
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(self, request: AnswerIntakeRequest, doctor_id: str) -> AnswerIntakeResponse:
+    async def execute(
+        self, request: AnswerIntakeRequest, doctor_id: str
+    ) -> AnswerIntakeResponse:
         """Execute the answer intake use case."""
         # Find patient
         patient_id = PatientId(request.patient_id)
@@ -45,7 +54,9 @@ class AnswerIntakeUseCase:
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id, doctor_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -55,7 +66,9 @@ class AnswerIntakeUseCase:
         prior_summary: Optional[str] = None
         prior_qas: Optional[List[str]] = None
         try:
-            latest = await self._visit_repository.find_latest_by_patient_id(request.patient_id, doctor_id)
+            latest = await self._visit_repository.find_latest_by_patient_id(
+                request.patient_id, doctor_id
+            )
             if latest and latest.visit_id.value != visit.visit_id.value:
                 if latest.pre_visit_summary and latest.pre_visit_summary.get("summary"):
                     prior_summary = latest.pre_visit_summary.get("summary")
@@ -85,14 +98,25 @@ class AnswerIntakeUseCase:
                     question_number=1,
                 )
             else:
-                previous_answers = [qa.answer for qa in visit.intake_session.questions_asked]
-                asked_questions = [qa.question for qa in visit.intake_session.questions_asked]
+                previous_answers = [
+                    qa.answer for qa in visit.intake_session.questions_asked
+                ]
+                asked_questions = [
+                    qa.question for qa in visit.intake_session.questions_asked
+                ]
 
                 # Initialize asked_categories list for tracking (code-truth)
                 # First, try to use existing asked_categories from session
-                asked_categories: List[str] = list(visit.intake_session.asked_categories) if visit.intake_session.asked_categories else []
+                asked_categories: List[str] = (
+                    list(visit.intake_session.asked_categories)
+                    if visit.intake_session.asked_categories
+                    else []
+                )
                 # If asked_categories is empty or shorter than expected, reconstruct from existing questions
-                if len(asked_categories) < len(visit.intake_session.questions_asked) - 1:  # -1 because Q1 has no category
+                if (
+                    len(asked_categories)
+                    < len(visit.intake_session.questions_asked) - 1
+                ):  # -1 because Q1 has no category
                     asked_categories = []
                     # Reconstruct from existing questions based on strict sequence
                     for i, qa in enumerate(visit.intake_session.questions_asked):
@@ -111,25 +135,40 @@ class AnswerIntakeUseCase:
                             asked_categories.append("triggers")
                         elif q_num == 7:
                             q_lower = qa.question.lower()
-                            if any(kw in q_lower for kw in ["travel", "trip", "abroad", "viaje"]):
+                            if any(
+                                kw in q_lower
+                                for kw in ["travel", "trip", "abroad", "viaje"]
+                            ):
                                 asked_categories.append("travel_history")
                             else:
                                 asked_categories.append("lifestyle_functional_impact")
                         elif q_num == 8:
                             q_lower = qa.question.lower()
-                            if any(kw in q_lower for kw in ["family", "relative", "mother", "father"]):
+                            if any(
+                                kw in q_lower
+                                for kw in ["family", "relative", "mother", "father"]
+                            ):
                                 asked_categories.append("family_history")
                             elif any(kw in q_lower for kw in ["allerg", "reaction"]):
                                 asked_categories.append("allergies")
-                            elif any(kw in q_lower for kw in ["pain", "severity", "0 to 10", "scale"]):
+                            elif any(
+                                kw in q_lower
+                                for kw in ["pain", "severity", "0 to 10", "scale"]
+                            ):
                                 asked_categories.append("pain_assessment")
                             else:
                                 asked_categories.append("temporal")
                         elif q_num == 9:
                             q_lower = qa.question.lower()
-                            if "detailed diagnostic" in q_lower or "preguntas diagnósticas detalladas" in q_lower:
+                            if (
+                                "detailed diagnostic" in q_lower
+                                or "preguntas diagnósticas detalladas" in q_lower
+                            ):
                                 continue  # Consent question - no category
-                            elif any(kw in q_lower for kw in ["menstrual", "period", "cycle", "lmp"]):
+                            elif any(
+                                kw in q_lower
+                                for kw in ["menstrual", "period", "cycle", "lmp"]
+                            ):
                                 asked_categories.append("menstrual_cycle")
                             else:
                                 asked_categories.append("past_evaluation")
@@ -141,8 +180,6 @@ class AnswerIntakeUseCase:
                                 asked_categories.append("screening")
                             elif deep_num == 3:
                                 asked_categories.append("screening")
-
-
 
                 # Robust uniqueness loop: never surface a duplicate question
                 max_attempts = 6
@@ -167,12 +204,19 @@ class AnswerIntakeUseCase:
                             patient_age=patient.age,
                             visit_id=visit.visit_id.value,
                             patient_id=patient.patient_id.value,
-                            question_number=visit.intake_session.current_question_count + 1,
+                            question_number=visit.intake_session.current_question_count
+                            + 1,
                         )
-                        if candidate and candidate.strip() and candidate not in asked_questions:
+                        if (
+                            candidate
+                            and candidate.strip()
+                            and candidate not in asked_questions
+                        ):
                             current_question = candidate
 
-                            visit.intake_session.asked_categories = list(asked_categories)
+                            visit.intake_session.asked_categories = list(
+                                asked_categories
+                            )
                             break
                     except DuplicateQuestionError:
                         # Service signaled a duplicate; try again
@@ -186,9 +230,19 @@ class AnswerIntakeUseCase:
                 if not current_question:
                     # Avoid asking generic medication question if medications were already clearly asked
                     meds_keywords = [
-                        "medication", "medications", "medicine", "medicines",
-                        "drug", "drugs", "tablet", "tablets", "capsule", "capsules",
-                        "insulin", "supplement", "supplements",
+                        "medication",
+                        "medications",
+                        "medicine",
+                        "medicines",
+                        "drug",
+                        "drugs",
+                        "tablet",
+                        "tablets",
+                        "capsule",
+                        "capsules",
+                        "insulin",
+                        "supplement",
+                        "supplements",
                     ]
                     meds_already_asked = any(
                         any(kw in (q or "").lower() for kw in meds_keywords)
@@ -262,15 +316,25 @@ class AnswerIntakeUseCase:
             )
         else:
             # Generate next question for the NEXT round and cache it as pending
-            previous_answers = [qa.answer for qa in visit.intake_session.questions_asked]
-            asked_questions = [qa.question for qa in visit.intake_session.questions_asked]
+            previous_answers = [
+                qa.answer for qa in visit.intake_session.questions_asked
+            ]
+            asked_questions = [
+                qa.question for qa in visit.intake_session.questions_asked
+            ]
             # Robust uniqueness loop: avoid duplicates for the NEXT question
 
             # Initialize asked_categories list for tracking (code-truth)
             # First, try to use existing asked_categories from session
-            asked_categories: List[str] = list(visit.intake_session.asked_categories) if visit.intake_session.asked_categories else []
+            asked_categories: List[str] = (
+                list(visit.intake_session.asked_categories)
+                if visit.intake_session.asked_categories
+                else []
+            )
             # If asked_categories is empty or shorter than expected, reconstruct from existing questions
-            if len(asked_categories) < len(visit.intake_session.questions_asked) - 1:  # -1 because Q1 has no category
+            if (
+                len(asked_categories) < len(visit.intake_session.questions_asked) - 1
+            ):  # -1 because Q1 has no category
                 asked_categories = []
                 # Try to infer categories from existing questions based on strict sequence
                 # This ensures tracking is accurate even if categories weren't stored before
@@ -294,7 +358,10 @@ class AnswerIntakeUseCase:
                         # Could be travel_history or lifestyle_functional_impact
                         # Infer from question content
                         q_lower = qa.question.lower()
-                        if any(kw in q_lower for kw in ["travel", "trip", "abroad", "viaje"]):
+                        if any(
+                            kw in q_lower
+                            for kw in ["travel", "trip", "abroad", "viaje"]
+                        ):
                             asked_categories.append("travel_history")
                         else:
                             asked_categories.append("lifestyle_functional_impact")
@@ -302,21 +369,33 @@ class AnswerIntakeUseCase:
                         # Could be family_history, allergies, pain_assessment, or temporal
                         # Infer from question content
                         q_lower = qa.question.lower()
-                        if any(kw in q_lower for kw in ["family", "relative", "mother", "father"]):
+                        if any(
+                            kw in q_lower
+                            for kw in ["family", "relative", "mother", "father"]
+                        ):
                             asked_categories.append("family_history")
                         elif any(kw in q_lower for kw in ["allerg", "reaction"]):
                             asked_categories.append("allergies")
-                        elif any(kw in q_lower for kw in ["pain", "severity", "0 to 10", "scale"]):
+                        elif any(
+                            kw in q_lower
+                            for kw in ["pain", "severity", "0 to 10", "scale"]
+                        ):
                             asked_categories.append("pain_assessment")
                         else:
                             asked_categories.append("temporal")
                     elif q_num == 9:
                         # Could be consent question (no category), menstrual_cycle, or past_evaluation
                         q_lower = qa.question.lower()
-                        if "detailed diagnostic" in q_lower or "preguntas diagnósticas detalladas" in q_lower:
+                        if (
+                            "detailed diagnostic" in q_lower
+                            or "preguntas diagnósticas detalladas" in q_lower
+                        ):
                             # Consent question - no category
                             continue
-                        elif any(kw in q_lower for kw in ["menstrual", "period", "cycle", "lmp"]):
+                        elif any(
+                            kw in q_lower
+                            for kw in ["menstrual", "period", "cycle", "lmp"]
+                        ):
                             asked_categories.append("menstrual_cycle")
                         else:
                             asked_categories.append("past_evaluation")
@@ -328,9 +407,9 @@ class AnswerIntakeUseCase:
                         elif deep_num == 2:
                             asked_categories.append("screening")  # Lab tests
                         elif deep_num == 3:
-                            asked_categories.append("screening")  # Screening/complications
-
-
+                            asked_categories.append(
+                                "screening"
+                            )  # Screening/complications
 
             max_attempts = 6
             attempt = 0
@@ -356,7 +435,11 @@ class AnswerIntakeUseCase:
                         patient_id=patient.patient_id.value,
                         question_number=visit.intake_session.current_question_count + 1,
                     )
-                    if candidate and candidate.strip() and candidate not in asked_questions:
+                    if (
+                        candidate
+                        and candidate.strip()
+                        and candidate not in asked_questions
+                    ):
                         next_question = candidate
                         visit.intake_session.asked_categories = list(asked_categories)
                         break
@@ -387,7 +470,9 @@ class AnswerIntakeUseCase:
         completion_percent = await self._question_service.assess_completion_percent(
             disease=visit.symptom,
             previous_answers=[qa.answer for qa in visit.intake_session.questions_asked],
-            asked_questions=[qa.question for qa in visit.intake_session.questions_asked],
+            asked_questions=[
+                qa.question for qa in visit.intake_session.questions_asked
+            ],
             current_count=visit.intake_session.current_question_count,
             max_count=visit.intake_session.max_questions,
             prior_summary=prior_summary,
@@ -403,7 +488,9 @@ class AnswerIntakeUseCase:
 
         allows_image_upload = False
         if next_question:
-            allows_image_upload = await self._question_service.is_medication_question(next_question)
+            allows_image_upload = await self._question_service.is_medication_question(
+                next_question
+            )
 
         return AnswerIntakeResponse(
             next_question=next_question,
@@ -415,7 +502,9 @@ class AnswerIntakeUseCase:
             allows_image_upload=allows_image_upload,
         )
 
-    async def edit(self, request: EditAnswerRequest, doctor_id: str) -> EditAnswerResponse:
+    async def edit(
+        self, request: EditAnswerRequest, doctor_id: str
+    ) -> EditAnswerResponse:
         """Edit an existing answer by question number (1-based)."""
         # Find patient
         patient_id = PatientId(request.patient_id)
@@ -425,7 +514,9 @@ class AnswerIntakeUseCase:
 
         # Find visit using VisitRepository
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
+        visit = await self._visit_repository.find_by_patient_and_visit_id(
+            request.patient_id, visit_id, doctor_id
+        )
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -476,7 +567,9 @@ class AnswerIntakeUseCase:
 
         allows_image_upload = False
         if next_question:
-            allows_image_upload = await self._question_service.is_medication_question(next_question)
+            allows_image_upload = await self._question_service.is_medication_question(
+                next_question
+            )
 
         # Persist changes
         await self._visit_repository.save(visit)
@@ -505,12 +598,34 @@ class AnswerIntakeUseCase:
             "¿le gustaría responder algunas preguntas diagnósticas detalladas relacionadas con sus síntomas?",
         }
         positive_responses = {
-            "yes", "y", "yeah", "yep", "sure", "ok", "okay", "of course", "absolutely",
-            "sí", "si", "claro", "por supuesto", "por supuesto que sí", "de acuerdo",
+            "yes",
+            "y",
+            "yeah",
+            "yep",
+            "sure",
+            "ok",
+            "okay",
+            "of course",
+            "absolutely",
+            "sí",
+            "si",
+            "claro",
+            "por supuesto",
+            "por supuesto que sí",
+            "de acuerdo",
         }
         negative_responses = {
-            "no", "n", "nope", "nah", "not really", "don't", "dont",
-            "no gracias", "no quiero", "no, gracias", "no, no quiero",
+            "no",
+            "n",
+            "nope",
+            "nah",
+            "not really",
+            "don't",
+            "dont",
+            "no gracias",
+            "no quiero",
+            "no, gracias",
+            "no, no quiero",
         }
 
         # Base limit starts at 10 (for non-chronic or negative consent)

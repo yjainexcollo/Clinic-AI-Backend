@@ -30,6 +30,7 @@ runs:
         context: ${{ inputs.context-path }}
         file: ${{ inputs.dockerfile-path }}
         push: false
+        load: true
         tags: ${{ inputs.image-name }}:${{ inputs.image-tag }}
         cache-from: type=gha
         cache-to: type=gha,mode=max

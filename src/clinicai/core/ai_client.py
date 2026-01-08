@@ -271,6 +271,5 @@ class AzureAIClient:
             **kwargs,
         )
 
+
 __all__ = ["AzureAIClient"]
-
-

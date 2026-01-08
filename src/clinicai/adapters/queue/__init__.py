@@ -6,4 +6,3 @@ __all__ = [
     "AzureQueueService",
     "get_azure_queue_service",
 ]
-

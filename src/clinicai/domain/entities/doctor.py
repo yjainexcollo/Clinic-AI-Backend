@@ -72,5 +72,3 @@ class Doctor:
                 422,
                 {"field": "email", "value": self.email[:80]},
             )
-
-
