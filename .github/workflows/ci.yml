@@ -13,8 +13,50 @@ on:
       - '.github/workflows/ci.yml'
 
 jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: '3.11'
+          install-editable: 'true'
+
+      - name: Lint code
+        uses: ./.github/actions/lint-code
+        with:
+          mypy-blocking: 'false'
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: '3.11'
+          install-editable: 'false'
+
+      - name: Security scan
+        uses: ./.github/actions/security-scan
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: artifacts/security/**
+          retention-days: 30
+
   test:
-    name: Run backend tests
+    name: Run Tests
     runs-on: ubuntu-latest
 
     services:
@@ -35,22 +77,102 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov
-          # Install the package in editable mode so tests can import 'clinicai'
-          pip install -e .
+          install-editable: 'true'
 
       - name: Run tests
+        uses: ./.github/actions/run-tests
+        with:
+          mongo-uri: 'mongodb://test:test@localhost:27017/test_db'
+          app-env: 'testing'
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: artifacts/coverage/coverage.xml
+          retention-days: 30
+
+  docker-build:
+    name: Build Docker Image & Smoke Test
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
         env:
-          MONGO_URI: mongodb://test:test@localhost:27017/test_db
-          APP_ENV: test
+          MONGO_INITDB_ROOT_USERNAME: test
+          MONGO_INITDB_ROOT_PASSWORD: test
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        uses: ./.github/actions/docker-build
+        with:
+          image-name: 'clinicai-backend'
+          image-tag: 'ci-test'
+
+      - name: Run container smoke test
         run: |
-          pytest tests/ -v
+          echo "🐳 Starting container smoke test..."
+          
+          # Start container in background
+          docker run -d \
+            --name test-container \
+            --network host \
+            -p 8000:8000 \
+            -e APP_ENV=testing \
+            -e MONGO_URI=mongodb://test:test@localhost:27017/test_db \
+            -e DEBUG=true \
+            clinicai-backend:ci-test
+          
+          # Wait for container to start
+          echo "Waiting for container to start..."
+          sleep 10
+          
+          # Check if container is still running
+          if ! docker ps | grep test-container > /dev/null; then
+            echo "❌ Container failed to start"
+            echo "Container logs:"
+            docker logs test-container
+            exit 1
+          fi
+          
+          echo "Container started successfully"
+          
+          # Try to reach health endpoint
+          echo "Testing health endpoint..."
+          MAX_ATTEMPTS=10
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "  Attempt $i/$MAX_ATTEMPTS..."
+            if curl -fsS --max-time 5 http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✅ Health check passed!"
+              docker stop test-container
+              docker rm test-container
+              exit 0
+            fi
+            
+            if [ $i -lt $MAX_ATTEMPTS ]; then
+              sleep 3
+            fi
+          done
+          
+          echo "❌ Health check failed after $MAX_ATTEMPTS attempts"
+          echo "Container logs:"
+          docker logs test-container
+          docker stop test-container
+          docker rm test-container
+          exit 1

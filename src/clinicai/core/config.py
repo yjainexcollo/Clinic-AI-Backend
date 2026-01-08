@@ -422,7 +422,10 @@ class Settings(BaseSettings):
     """Main application settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=(".env.local"),
+        env_file_encoding="utf-8", 
+        case_sensitive=False, 
+        extra="ignore"
     )
 
     # Application settings
@@ -563,10 +566,17 @@ _settings: Optional[Settings] = None
 
 
 def _load_env_file_if_available() -> None:
-    """Best-effort load of .env by searching current and parent directories.
-
+    """Best-effort load of .env.local or .env by searching current and parent directories.
+    
+    Prefers .env.local over .env when both exist (local development best practice).
     This helps in environments where the working directory isn't the backend folder
     and pydantic's env_file doesn't get resolved as expected.
+    
+    Precedence (first wins):
+    1. Already-set environment variables (Azure App Service, CI, etc.)
+    2. .env.local (if found in current or parent directories)
+    3. .env (if found and .env.local not found)
+    4. Defaults from Settings class
     """
     try:
         from dotenv import load_dotenv  # type: ignore
@@ -576,13 +586,26 @@ def _load_env_file_if_available() -> None:
     if load_dotenv is None:
         return
 
+    import logging
+    logger = logging.getLogger(__name__)
+    
     cwd = Path(os.getcwd()).resolve()
     for parent in [cwd, *cwd.parents]:
-        candidate = parent / ".env"
-        if candidate.exists():
+        # Check .env.local first (preferred for local development)
+        env_local = parent / ".env.local"
+        if env_local.exists():
             # Do not override already-set environment variables
-            load_dotenv(dotenv_path=str(candidate), override=False)
-            break
+            load_dotenv(dotenv_path=str(env_local), override=False)
+            logger.debug(f"Loaded environment from: {env_local}")
+            return
+        
+        # Fall back to .env if .env.local not found
+        env_file = parent / ".env"
+        if env_file.exists():
+            # Do not override already-set environment variables
+            load_dotenv(dotenv_path=str(env_file), override=False)
+            logger.debug(f"Loaded environment from: {env_file}")
+            return
 
 
 def get_settings() -> Settings:

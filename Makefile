@@ -89,7 +89,7 @@ docker-build: ## Build Docker image
 
 docker-run: ## Run Docker container
 	@echo "🐳 Running Docker container..."
-	docker run -p 8000:8000 --env-file .env clinicai:latest
+	docker run -p 8000:8000 --env-file .env.local clinicai:latest
 
 docker-stop: ## Stop running Docker containers
 	@echo "🐳 Stopping Docker containers..."
@@ -100,6 +100,22 @@ docker-clean: ## Clean up Docker images and containers
 	docker stop $$(docker ps -aq) 2>/dev/null || true
 	docker rm $$(docker ps -aq) 2>/dev/null || true
 	docker rmi clinicai:latest 2>/dev/null || true
+
+# Docker Compose targets
+docker-up: ## Start all services with docker-compose (backend + mongodb + mongo-express)
+	@echo "🐳 Starting all services with docker-compose..."
+	docker-compose up -d
+	@echo "✅ Services started. Backend: http://localhost:8000, Mongo Express: http://localhost:8081"
+
+docker-down: ## Stop all docker-compose services
+	@echo "🐳 Stopping all docker-compose services..."
+	docker-compose down
+
+docker-logs: ## View logs from docker-compose services
+	@echo "📋 Viewing docker-compose logs..."
+	docker-compose logs -f
+
+docker-restart: docker-down docker-up ## Restart all docker-compose services
 
 # GCR (Google Container Registry) targets
 GCP_PROJECT = clinic-ai-472907

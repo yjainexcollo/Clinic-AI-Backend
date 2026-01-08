@@ -1,0 +1,99 @@
+name: 'Read Environment Config'
+description: 'Read config/environments/<env>.yml and output values'
+
+inputs:
+  environment:
+    description: 'Environment name (dev, sandbox, production)'
+    required: true
+  config-dir:
+    description: 'Directory containing environment configs'
+    required: false
+    default: 'config/environments'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install PyYAML
+      shell: bash
+      run: |
+        pip install pyyaml
+
+    - name: Read config and set outputs
+      id: config
+      shell: bash
+      run: |
+        CONFIG_FILE="${{ inputs.config-dir }}/${{ inputs.environment }}.yml"
+        
+        if [ ! -f "$CONFIG_FILE" ]; then
+          echo "❌ Config file not found: $CONFIG_FILE"
+          exit 1
+        fi
+        
+        # Parse YAML and extract values using Python
+        python3 << EOF > /tmp/config_output.txt
+import yaml
+import sys
+import os
+
+config_file = "${{ inputs.config-dir }}/${{ inputs.environment }}.yml"
+with open(config_file, 'r') as f:
+    config = yaml.safe_load(f)
+
+app_name = config['azure']['app_name']
+resource_group = config['azure']['resource_group']
+health_url = config['azure']['health_url']
+slot_name = config['azure'].get('slot_name', 'production')
+acr_login_server = config['acr']['login_server']
+acr_repository = config['acr']['repository']
+dockerfile = config['docker']['dockerfile']
+
+print(f"app_name={app_name}")
+print(f"resource_group={resource_group}")
+print(f"health_url={health_url}")
+print(f"slot_name={slot_name}")
+print(f"acr_login_server={acr_login_server}")
+print(f"acr_repository={acr_repository}")
+print(f"dockerfile={dockerfile}")
+EOF
+        
+        # Read outputs and set them
+        while IFS='=' read -r key value; do
+          echo "${key}=${value}" >> $GITHUB_OUTPUT
+        done < /tmp/config_output.txt
+        
+        # Display for logs
+        APP_NAME=$(grep "^app_name=" /tmp/config_output.txt | cut -d'=' -f2-)
+        RG=$(grep "^resource_group=" /tmp/config_output.txt | cut -d'=' -f2-)
+        HEALTH_URL=$(grep "^health_url=" /tmp/config_output.txt | cut -d'=' -f2-)
+        ACR_SERVER=$(grep "^acr_login_server=" /tmp/config_output.txt | cut -d'=' -f2-)
+        ACR_REPO=$(grep "^acr_repository=" /tmp/config_output.txt | cut -d'=' -f2-)
+        
+        echo "📋 Config loaded for ${{ inputs.environment }}:"
+        echo "   App Name: $APP_NAME"
+        echo "   Resource Group: $RG"
+        echo "   Health URL: $HEALTH_URL"
+        echo "   ACR: $ACR_SERVER/$ACR_REPO"
+
+outputs:
+  app_name:
+    description: 'Azure App Service name'
+    value: ${{ steps.config.outputs.app_name }}
+  resource_group:
+    description: 'Azure Resource Group name'
+    value: ${{ steps.config.outputs.resource_group }}
+  health_url:
+    description: 'Health check URL'
+    value: ${{ steps.config.outputs.health_url }}
+  slot_name:
+    description: 'Deployment slot name'
+    value: ${{ steps.config.outputs.slot_name }}
+  acr_login_server:
+    description: 'ACR login server'
+    value: ${{ steps.config.outputs.acr_login_server }}
+  acr_repository:
+    description: 'ACR repository name'
+    value: ${{ steps.config.outputs.acr_repository }}
+  dockerfile:
+    description: 'Path to Dockerfile'
+    value: ${{ steps.config.outputs.dockerfile }}
+

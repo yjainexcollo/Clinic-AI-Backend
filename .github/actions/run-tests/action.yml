@@ -1,0 +1,64 @@
+name: 'Run Tests'
+description: 'Run pytest with coverage and export reports'
+
+inputs:
+  working-directory:
+    description: 'Working directory for commands'
+    required: false
+    default: '.'
+  test-path:
+    description: 'Path to test directory or file'
+    required: false
+    default: 'tests/'
+  package-path:
+    description: 'Package path for coverage (e.g., src/clinicai)'
+    required: false
+    default: 'src/clinicai'
+  mongo-uri:
+    description: 'MongoDB connection URI'
+    required: false
+    default: 'mongodb://test:test@localhost:27017/test_db'
+  app-env:
+    description: 'Application environment'
+    required: false
+    default: 'testing'
+  artifacts-dir:
+    description: 'Directory to output coverage reports'
+    required: false
+    default: 'artifacts/coverage'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install test dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        pip install pytest pytest-asyncio pytest-cov
+
+    - name: Create artifacts directory
+      shell: bash
+      run: |
+        mkdir -p ${{ inputs.artifacts-dir }}
+
+    - name: Run tests with coverage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MONGO_URI: ${{ inputs.mongo-uri }}
+        APP_ENV: ${{ inputs.app-env }}
+      run: |
+        pytest ${{ inputs.test-path }} -v \
+          --cov=${{ inputs.package-path }} \
+          --cov-report=xml:${{ inputs.artifacts-dir }}/coverage.xml \
+          --cov-report=term-missing
+
+    - name: Verify coverage file exists
+      shell: bash
+      run: |
+        if [ ! -f "${{ inputs.artifacts-dir }}/coverage.xml" ]; then
+          echo "❌ Coverage file not found!"
+          exit 1
+        fi
+        echo "✅ Coverage report generated: ${{ inputs.artifacts-dir }}/coverage.xml"
+

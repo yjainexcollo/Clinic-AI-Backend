@@ -1,0 +1,53 @@
+name: 'Security Scan'
+description: 'Run security scans (safety, bandit) and output reports'
+
+inputs:
+  working-directory:
+    description: 'Working directory for commands'
+    required: false
+    default: '.'
+  artifacts-dir:
+    description: 'Directory to output security reports'
+    required: false
+    default: 'artifacts/security'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install security tools
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        pip install safety bandit
+        pip install -r requirements.txt
+
+    - name: Create artifacts directory
+      shell: bash
+      run: |
+        mkdir -p ${{ inputs.artifacts-dir }}
+
+    - name: Run safety (dependency vulnerability scan)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Note: Currently non-blocking. Reports issues but does not fail build.
+        # To make blocking, remove '|| true' and update action comments.
+        safety check --json > ${{ inputs.artifacts-dir }}/safety-report.json 2>&1 || true
+        echo "Safety scan completed. Check artifacts for details."
+
+    - name: Run bandit (SAST)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Note: Currently non-blocking. Reports issues but does not fail build.
+        # To make blocking, remove '|| true' and update action comments.
+        bandit -r src/ -f json -o ${{ inputs.artifacts-dir }}/bandit-report.json || true
+        echo "Bandit scan completed. Check artifacts for details."
+
+    - name: Summary
+      shell: bash
+      run: |
+        echo "🔒 Security scans completed. Reports saved to ${{ inputs.artifacts-dir }}/"
+        echo "⚠️  Found issues; see artifacts for details."
+        echo "   To make scans blocking, update security-scan action."
+

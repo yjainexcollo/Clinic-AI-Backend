@@ -1,0 +1,49 @@
+name: 'Health Check'
+description: 'Check application health endpoint with retries'
+
+inputs:
+  url:
+    description: 'Health check URL'
+    required: true
+  retries:
+    description: 'Number of retry attempts'
+    required: false
+    default: '10'
+  delay_seconds:
+    description: 'Delay between retries in seconds'
+    required: false
+    default: '10'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Wait for application to be healthy
+      shell: bash
+      run: |
+        echo "🏥 Health checking: ${{ inputs.url }}"
+        echo "   Retries: ${{ inputs.retries }}"
+        echo "   Delay: ${{ inputs.delay_seconds }}s"
+        echo ""
+        
+        MAX_RETRIES=${{ inputs.retries }}
+        DELAY=${{ inputs.delay_seconds }}
+        
+        for i in $(seq 1 $MAX_RETRIES); do
+          echo "Attempt $i/$MAX_RETRIES..."
+          
+          if curl -fsS --max-time 10 "${{ inputs.url }}" > /dev/null 2>&1; then
+            echo "✅ Health check passed!"
+            exit 0
+          fi
+          
+          if [ $i -lt $MAX_RETRIES ]; then
+            echo "   Not healthy yet, waiting ${DELAY}s..."
+            sleep $DELAY
+          fi
+        done
+        
+        echo ""
+        echo "❌ Health check failed after $MAX_RETRIES attempts"
+        echo "   URL: ${{ inputs.url }}"
+        exit 1
+

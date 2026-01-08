@@ -1,0 +1,57 @@
+name: 'Validate Required Secrets'
+description: 'Check that required secrets exist before deployment'
+
+inputs:
+  required:
+    description: 'Comma-separated list of required secret names'
+    required: true
+  environment:
+    description: 'Environment name for logging'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate secrets exist
+      shell: bash
+      # Note: env vars are passed in by the caller workflow
+      # The caller must set: env: { SECRET_NAME: ${{ secrets.SECRET_NAME }} }
+      run: |
+        echo "🔐 Validating required secrets for ${{ inputs.environment }}..."
+        echo ""
+        
+        # Parse comma-separated list
+        IFS=',' read -ra SECRETS <<< "${{ inputs.required }}"
+        
+        MISSING=()
+        for SECRET in "${SECRETS[@]}"; do
+          # Trim whitespace
+          SECRET=$(echo "$SECRET" | xargs)
+          
+          # Check if env var with this name exists and is non-empty
+          if [ -z "${!SECRET}" ]; then
+            MISSING+=("$SECRET")
+          fi
+        done
+        
+        if [ ${#MISSING[@]} -eq 0 ]; then
+          echo "✅ All required secrets are configured"
+          exit 0
+        else
+          echo "❌ Missing required secrets:"
+          for SECRET in "${MISSING[@]}"; do
+            echo "   - $SECRET"
+          done
+          echo ""
+          echo "⚠️  Azure deployment not enabled yet."
+          echo ""
+          echo "To enable deployment, configure these GitHub Secrets:"
+          for SECRET in "${MISSING[@]}"; do
+            echo "   - $SECRET"
+          done
+          echo ""
+          echo "See docs/devops/CI-CD_SETUP.md for setup instructions."
+          exit 1
+        fi
+

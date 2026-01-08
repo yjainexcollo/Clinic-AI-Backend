@@ -1,0 +1,108 @@
+# Production Deployment Workflow
+# This workflow deploys to the Production environment.
+# ALWAYS workflow_dispatch only with manual confirmation required.
+
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "DEPLOY" to confirm production deployment'
+        required: true
+        type: string
+      image_tag:
+        description: 'Docker image tag (default: sha-<commit>)'
+        required: false
+        type: string
+
+jobs:
+  validate-confirmation:
+    name: Validate Confirmation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployment confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]; then
+            echo "❌ Production deployment not confirmed."
+            echo "   You must type 'DEPLOY' in the confirm input."
+            exit 1
+          fi
+          echo "✅ Production deployment confirmed"
+
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: validate-confirmation
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read environment config
+        id: config
+        uses: ./.github/actions/read-config
+        with:
+          environment: 'production'
+
+      - name: Compute image tag
+        id: image
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+          else
+            IMAGE_TAG="sha-${GITHUB_SHA:0:7}"
+          fi
+          
+          FULL_IMAGE="${{ steps.config.outputs.acr_login_server }}/${{ steps.config.outputs.acr_repository }}:${IMAGE_TAG}"
+          
+          echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+          
+          echo "📦 Docker image: ${FULL_IMAGE}"
+
+      - name: Validate required secrets
+        uses: ./.github/actions/validate-secrets
+        with:
+          required: 'AZURE_CLIENT_ID,AZURE_TENANT_ID,AZURE_SUBSCRIPTION_ID,ACR_LOGIN_SERVER,ACR_USERNAME,ACR_PASSWORD'
+          environment: 'production'
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & Push Docker Image (PLACEHOLDER)
+        run: |
+          echo "⚠️  Azure phase pending - Docker build & push not enabled yet"
+          echo ""
+          echo "When enabled, this step will:"
+          echo "  1. Build Docker image from ${{ steps.config.outputs.dockerfile }}"
+          echo "  2. Tag as ${{ steps.image.outputs.full_image }}"
+          echo "  3. Push to ACR"
+          echo ""
+          echo "To enable: Add real Docker build/push steps after Azure setup"
+          exit 1
+
+      - name: Deploy to Azure App Service (PLACEHOLDER)
+        run: |
+          echo "⚠️  Azure phase pending - App Service deployment not enabled yet"
+          echo ""
+          echo "When enabled, this step will:"
+          echo "  1. Login to Azure"
+          echo "  2. Deploy image to App Service: ${{ steps.config.outputs.app_name }}"
+          echo "  3. Slot: ${{ steps.config.outputs.slot_name }}"
+          echo ""
+          echo "To enable: Add real Azure deployment steps after setup"
+          exit 1
+
+      - name: Health check (PLACEHOLDER)
+        uses: ./.github/actions/health-check
+        with:
+          url: ${{ steps.config.outputs.health_url }}
+          retries: 10
+          delay_seconds: 10

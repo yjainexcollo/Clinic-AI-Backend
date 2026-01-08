@@ -1,0 +1,23 @@
+# Sandbox Environment Configuration
+# REPLACE_ME: Update these placeholders with actual Azure resource names when ready.
+# This file contains NO secrets - only resource names and URLs.
+
+azure:
+  subscription_id: "REPLACE_ME"
+  resource_group: "REPLACE_ME_RG"
+  app_name: "REPLACE_ME_APP"
+  slot_name: "production"
+  health_url: "https://REPLACE_ME.azurewebsites.net/health"
+
+acr:
+  login_server: "REPLACE_ME.azurecr.io"
+  repository: "clinicai-backend"
+
+docker:
+  context: "."
+  dockerfile: "docker/Dockerfile"
+
+deployment:
+  blue_green: false
+  timeout_seconds: 300
+

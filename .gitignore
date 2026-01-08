@@ -31,9 +31,10 @@ ENV/
 
 # Environment variables
 .env
-.env.local
-.env.production
-.env.staging
+.env.*
+# Allow .env.example as template
+!.env.example
+!env.example
 
 # IDE
 .vscode/

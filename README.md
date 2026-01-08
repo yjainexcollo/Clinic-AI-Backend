@@ -2,6 +2,69 @@
 
 A comprehensive medical consultation platform that provides AI-powered patient intake, audio transcription, SOAP note generation, and prescription analysis. Built with FastAPI and following Clean Architecture principles.
 
+## ⚙️ Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Docker and Docker Compose
+- MongoDB (or use Docker Compose)
+
+### Local Development Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd Clinic-AI/backend
+   ```
+
+2. **Create environment file:**
+   ```bash
+   # Copy the example template
+   cp env.example .env.local
+   
+   # Edit with your local values (see env.example for all options)
+   nano .env.local
+   ```
+
+3. **Start services with Docker Compose:**
+   ```bash
+   docker-compose up
+   ```
+   
+   This starts:
+   - Backend API: `http://localhost:8000`
+   - MongoDB: `localhost:27017`
+   - Mongo Express: `http://localhost:8081`
+
+4. **OR run locally without Docker:**
+   ```bash
+   # Install dependencies
+   pip install -e ".[dev]"
+   
+   # Run the server
+   make dev
+   # or
+   PYTHONPATH=./src uvicorn clinicai.app:app --reload
+   ```
+
+### Important Notes About Environment Files
+
+**What's in the repository:**
+- ✅ `env.example` - Template with placeholder values (committed)
+
+**What's NOT in the repository (gitignored):**
+- ❌ `.env` - Not used
+- ❌ `.env.local` - Your local development file (create from `env.example`)
+- ❌ Any file with secrets or credentials
+
+**Never commit files containing:**
+- MongoDB connection strings
+- API keys
+- Encryption keys
+- Security secrets
+
+See `docs/devops/CI-CD_SETUP.md` for complete configuration strategy documentation.
+
 ## 🚀 Features
 
 ### Core Functionality
