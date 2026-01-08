@@ -373,16 +373,22 @@ async def lifespan(app: FastAPI):
                     f"transcription_service=azure_speech"
                 )
             else:
-                # Azure OpenAI is required - fail startup if not configured
-                error_msg = "❌ Azure OpenAI is required but not configured"
-                print(error_msg, flush=True)
-                logger.error(error_msg)
-                sys.stderr.flush()
-                raise ValueError(
-                    "Azure OpenAI is required but not configured. "
-                    "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
-                    "Fallback to standard OpenAI is disabled for data security."
-                )
+                # Azure OpenAI is required in production, but optional in testing
+                if settings.is_testing:
+                    warning_msg = "⚠️  Azure OpenAI not configured (running in testing mode - functionality will be limited)"
+                    print(warning_msg, flush=True)
+                    logger.warning(warning_msg)
+                else:
+                    # Fail startup in non-testing environments
+                    error_msg = "❌ Azure OpenAI is required but not configured"
+                    print(error_msg, flush=True)
+                    logger.error(error_msg)
+                    sys.stderr.flush()
+                    raise ValueError(
+                        "Azure OpenAI is required but not configured. "
+                        "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY. "
+                        "Fallback to standard OpenAI is disabled for data security."
+                    )
         except ValueError as e:
             error_sep = "=" * 60
             print(error_sep, flush=True)
