@@ -21,12 +21,8 @@ class BaseResponse(BaseModel):
 
     success: bool = Field(True, description="Operation success status")
     message: str = Field("", description="Response message")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Response timestamp"
-    )
-    request_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking")
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
@@ -39,9 +35,7 @@ class ApiResponse(GenericModel, Generic[T]):
         default_factory=lambda: datetime.utcnow().isoformat(),
         description="Response timestamp",
     )
-    request_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking"
-    )
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking")
     data: Optional[T] = Field(None, description="Response payload")
 
 
@@ -51,16 +45,12 @@ class ErrorResponse(BaseModel):
     success: bool = Field(False, description="Operation success status")
     error: str = Field(..., description="Error type/code")
     message: str = Field(..., description="Human-readable error message")
-    details: Optional[Dict[str, Any]] = Field(
-        None, description="Additional error details"
-    )
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
     timestamp: str = Field(
         default_factory=lambda: datetime.utcnow().isoformat(),
         description="Error timestamp",
     )
-    request_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking"
-    )
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Request ID for tracking")
 
 
 # ============================================================================
@@ -132,8 +122,6 @@ class BlobFileInfo(BaseModel):
     category: str = Field(default="general", description="File category")
     patient_id: Optional[str] = Field(None, description="Patient ID if linked")
     visit_id: Optional[str] = Field(None, description="Visit ID if linked")
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Additional metadata"
-    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     created_at: datetime = Field(..., description="Creation timestamp")
     expires_at: Optional[datetime] = Field(None, description="File expiry date")

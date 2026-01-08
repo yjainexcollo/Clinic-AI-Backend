@@ -76,10 +76,7 @@ class AzureAIClient:
             )
 
         if not deployment_name:
-            raise ValueError(
-                "Azure OpenAI deployment name is required. "
-                "Set AZURE_OPENAI_DEPLOYMENT_NAME."
-            )
+            raise ValueError("Azure OpenAI deployment name is required. " "Set AZURE_OPENAI_DEPLOYMENT_NAME.")
 
         # Normalize endpoint: Azure SDK does not expect trailing slash
         normalized_endpoint = endpoint.rstrip("/") if endpoint else endpoint
@@ -182,9 +179,7 @@ class AzureAIClient:
                                 error_message=str(exc)[:200],
                             )
                         except Exception:
-                            logger.debug(
-                                "Failed to record AI error metrics", exc_info=True
-                            )
+                            logger.debug("Failed to record AI error metrics", exc_info=True)
 
                     if span:
                         try:

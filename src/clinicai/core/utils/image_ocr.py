@@ -40,15 +40,11 @@ def extract_text_with_quality(image_path: str) -> OCRResult:
 
         # Get text and confidence data
         text: str = pytesseract.image_to_string(img) or ""
-        confidence_data = pytesseract.image_to_data(
-            img, output_type=pytesseract.Output.DICT
-        )
+        confidence_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
 
         # Calculate average confidence
         confidences = [int(conf) for conf in confidence_data["conf"] if int(conf) > 0]
-        avg_confidence = (
-            sum(confidences) / len(confidences) / 100.0 if confidences else 0.0
-        )
+        avg_confidence = sum(confidences) / len(confidences) / 100.0 if confidences else 0.0
 
         # Normalize whitespace
         normalized_text = " ".join(text.split()).strip()
@@ -84,9 +80,7 @@ def extract_text_with_quality(image_path: str) -> OCRResult:
         ]
 
         text_lower = normalized_text.lower()
-        has_medication_keywords = any(
-            keyword in text_lower for keyword in medication_keywords
-        )
+        has_medication_keywords = any(keyword in text_lower for keyword in medication_keywords)
 
         # Extract potential medication names (simple pattern matching)
         extracted_medications = _extract_medication_names(normalized_text)
@@ -191,9 +185,7 @@ def _extract_medication_names(text: str) -> List[str]:
     }
 
     # Filter out short words and common words
-    filtered_medications = [
-        med for med in medications if len(med) > 3 and med.lower() not in exclude_words
-    ]
+    filtered_medications = [med for med in medications if len(med) > 3 and med.lower() not in exclude_words]
 
     return list(set(filtered_medications))  # Remove duplicates
 
@@ -261,9 +253,7 @@ def _assess_ocr_quality(
 
     # Check medication count
     if medication_count == 0 and has_medication_keywords:
-        suggestions.append(
-            "Consider retaking the photo to capture medication names more clearly"
-        )
+        suggestions.append("Consider retaking the photo to capture medication names more clearly")
     elif medication_count > 0:
         suggestions.append(f"Found {medication_count} potential medication(s)")
 

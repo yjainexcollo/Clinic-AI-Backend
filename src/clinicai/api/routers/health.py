@@ -61,9 +61,7 @@ async def readiness_check(request: Request):
         from motor.motor_asyncio import AsyncIOMotorClient
 
         settings = get_settings()
-        client = AsyncIOMotorClient(
-            settings.database.uri, serverSelectionTimeoutMS=5000
-        )
+        client = AsyncIOMotorClient(settings.database.uri, serverSelectionTimeoutMS=5000)
         await client.admin.command("ping")
         checks["database"] = "ok"
     except Exception as e:
@@ -129,9 +127,7 @@ async def readiness_check(request: Request):
 
     # Check Azure OpenAI (required - no fallback)
     settings = get_settings()
-    azure_openai_configured = (
-        settings.azure_openai.endpoint and settings.azure_openai.api_key
-    )
+    azure_openai_configured = settings.azure_openai.endpoint and settings.azure_openai.api_key
 
     if azure_openai_configured:
         # Check Azure OpenAI configuration
@@ -139,9 +135,7 @@ async def readiness_check(request: Request):
             # Verify deployment names are configured
             if settings.azure_openai.deployment_name:
                 checks["azure_openai"] = "configured"
-                checks["azure_openai_chat_deployment"] = (
-                    settings.azure_openai.deployment_name
-                )
+                checks["azure_openai_chat_deployment"] = settings.azure_openai.deployment_name
                 checks["azure_openai_api_version"] = settings.azure_openai.api_version
             else:
                 checks["azure_openai"] = "partially_configured"
@@ -174,9 +168,7 @@ async def liveness_check(request: Request):
 
     Returns whether the service is alive.
     """
-    return ok(
-        request, data={"status": "alive", "timestamp": datetime.utcnow()}, message="OK"
-    )
+    return ok(request, data={"status": "alive", "timestamp": datetime.utcnow()}, message="OK")
 
 
 @router.get("/audit", response_model=ApiResponse[dict])
@@ -223,9 +215,7 @@ async def audit_health_check(request: Request):
         integrity_ok = await audit_logger.verify_audit_integrity(test_audit_id)
 
         # Get audit trail to verify read capability
-        audit_trail = await audit_logger.get_audit_trail(
-            user_id="health_check", limit=1
-        )
+        audit_trail = await audit_logger.get_audit_trail(user_id="health_check", limit=1)
 
         read_ok = len(audit_trail) > 0
 

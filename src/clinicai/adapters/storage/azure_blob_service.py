@@ -84,9 +84,7 @@ class AzureBlobStorageService:
             )
 
             # Create adapter with retry strategy
-            adapter = HTTPAdapter(
-                max_retries=retry_strategy, pool_connections=10, pool_maxsize=10
-            )
+            adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
             session.mount("http://", adapter)
             session.mount("https://", adapter)
 
@@ -129,9 +127,7 @@ class AzureBlobStorageService:
     def container_client(self):
         """Get or create container client."""
         if self._container_client is None:
-            self._container_client = self.client.get_container_client(
-                self.settings.container_name
-            )
+            self._container_client = self.client.get_container_client(self.settings.container_name)
         return self._container_client
 
     async def ensure_container_exists(self) -> bool:
@@ -141,9 +137,7 @@ class AzureBlobStorageService:
             logger.info(f"✅ Created blob container: {self.settings.container_name}")
             return True
         except ResourceExistsError:
-            logger.info(
-                f"📁 Blob container already exists: {self.settings.container_name}"
-            )
+            logger.info(f"📁 Blob container already exists: {self.settings.container_name}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to create blob container: {e}")
@@ -200,30 +194,22 @@ class AzureBlobStorageService:
             f"Starting blob upload from file: {file_path}, filename={filename}, size={file_size} bytes "
             f"({file_size / (1024*1024):.2f}MB), file_type={file_type}"
         )
-        print(
-            f"🔵 [BlobService] Starting upload: {filename}, size={file_size} bytes ({file_size / (1024*1024):.2f}MB)"
-        )
+        print(f"🔵 [BlobService] Starting upload: {filename}, size={file_size} bytes ({file_size / (1024*1024):.2f}MB)")
 
         for attempt in range(max_retries):
             try:
-                print(
-                    f"🔵 [BlobService] Attempt {attempt + 1}/{max_retries}: Generating blob path..."
-                )
+                print(f"🔵 [BlobService] Attempt {attempt + 1}/{max_retries}: Generating blob path...")
                 # Generate unique filename if needed
                 file_ext = Path(filename).suffix
                 unique_filename = f"{uuid.uuid4()}{file_ext}"
 
                 # Generate blob path
-                blob_path = self._generate_blob_path(
-                    file_type, unique_filename, **metadata
-                )
+                blob_path = self._generate_blob_path(file_type, unique_filename, **metadata)
                 print(f"🔵 [BlobService] Blob path: {blob_path}")
 
                 # Upload file with timeout and retry
                 print(f"🔵 [BlobService] Creating blob client...")
-                blob_client = self.client.get_blob_client(
-                    container=self.settings.container_name, blob=blob_path
-                )
+                blob_client = self.client.get_blob_client(container=self.settings.container_name, blob=blob_path)
 
                 # Set content settings
                 print(f"🔵 [BlobService] Setting content settings...")
@@ -234,15 +220,11 @@ class AzureBlobStorageService:
                 print(f"🔵 [BlobService] Starting upload_blob (streaming from file)...")
 
                 def _upload_from_file():
-                    print(
-                        f"🔵 [BlobService] Inside _upload_from_file, opening file: {file_path}"
-                    )
+                    print(f"🔵 [BlobService] Inside _upload_from_file, opening file: {file_path}")
                     upload_start = time.time()
                     with open(file_path, "rb") as f:
                         file_open_time = time.time() - upload_start
-                        print(
-                            f"🔵 [BlobService] File opened in {file_open_time:.3f}s, calling upload_blob..."
-                        )
+                        print(f"🔵 [BlobService] File opened in {file_open_time:.3f}s, calling upload_blob...")
                         # Note: Azure SDK's upload_blob doesn't accept timeout parameter directly
                         # Timeout is configured at the session level (session.timeout = (30, 60))
                         # The asyncio.wait_for wrapper provides additional 300s timeout protection
@@ -275,11 +257,7 @@ class AzureBlobStorageService:
                             )
                             raise TimeoutError(f"Blob upload timed out: {e}") from e
                         except Exception as e:
-                            blob_call_duration = (
-                                time.time() - blob_call_start
-                                if "blob_call_start" in locals()
-                                else 0
-                            )
+                            blob_call_duration = time.time() - blob_call_start if "blob_call_start" in locals() else 0
                             total_duration = time.time() - upload_start
                             print(
                                 f"🔵 [BlobService] upload_blob raised exception after {blob_call_duration:.3f}s (total={total_duration:.3f}s): {type(e).__name__}: {e}"
@@ -292,9 +270,7 @@ class AzureBlobStorageService:
                     run_blocking(_upload_from_file), timeout=300.0  # 300 second timeout
                 )
                 blocking_duration = time.time() - blocking_start
-                print(
-                    f"🔵 [BlobService] Upload completed successfully! run_blocking took {blocking_duration:.3f}s"
-                )
+                print(f"🔵 [BlobService] Upload completed successfully! run_blocking took {blocking_duration:.3f}s")
 
                 upload_duration = time.time() - upload_start_time
                 blob_url = blob_client.url
@@ -328,9 +304,7 @@ class AzureBlobStorageService:
                     logger.info(f"Retrying blob upload in {delay}s...")
                     await asyncio.sleep(delay)
                     continue
-                raise TimeoutError(
-                    f"Blob upload timed out after {max_retries} attempts"
-                )
+                raise TimeoutError(f"Blob upload timed out after {max_retries} attempts")
 
             except AzureError as e:
                 upload_duration = time.time() - upload_start_time
@@ -353,9 +327,7 @@ class AzureBlobStorageService:
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    logger.error(
-                        f"❌ Failed to upload file to blob storage (attempt {attempt + 1}/{max_retries}): {e}"
-                    )
+                    logger.error(f"❌ Failed to upload file to blob storage (attempt {attempt + 1}/{max_retries}): {e}")
                     raise
 
             except Exception as e:
@@ -409,14 +381,10 @@ class AzureBlobStorageService:
                 unique_filename = f"{uuid.uuid4()}{file_ext}"
 
                 # Generate blob path
-                blob_path = self._generate_blob_path(
-                    file_type, unique_filename, **metadata
-                )
+                blob_path = self._generate_blob_path(file_type, unique_filename, **metadata)
 
                 # Upload file with timeout and retry
-                blob_client = self.client.get_blob_client(
-                    container=self.settings.container_name, blob=blob_path
-                )
+                blob_client = self.client.get_blob_client(container=self.settings.container_name, blob=blob_path)
 
                 # Set content settings
                 content_settings = ContentSettings(content_type=content_type)
@@ -471,9 +439,7 @@ class AzureBlobStorageService:
                     logger.info(f"Retrying blob upload in {delay}s...")
                     await asyncio.sleep(delay)
                     continue
-                raise TimeoutError(
-                    f"Blob upload timed out after {max_retries} attempts"
-                )
+                raise TimeoutError(f"Blob upload timed out after {max_retries} attempts")
 
             except AzureError as e:
                 upload_duration = time.time() - upload_start_time
@@ -496,9 +462,7 @@ class AzureBlobStorageService:
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    logger.error(
-                        f"❌ Failed to upload file to blob storage (attempt {attempt + 1}/{max_retries}): {e}"
-                    )
+                    logger.error(f"❌ Failed to upload file to blob storage (attempt {attempt + 1}/{max_retries}): {e}")
                     raise
 
             except Exception as e:
@@ -531,9 +495,7 @@ class AzureBlobStorageService:
 
         for attempt in range(max_retries):
             try:
-                blob_client = self.client.get_blob_client(
-                    container=self.settings.container_name, blob=blob_path
-                )
+                blob_client = self.client.get_blob_client(container=self.settings.container_name, blob=blob_path)
 
                 # Download with timeout (300 seconds for large files)
                 download_stream = await asyncio.wait_for(
@@ -568,9 +530,7 @@ class AzureBlobStorageService:
                     logger.info(f"Retrying blob download in {delay}s...")
                     await asyncio.sleep(delay)
                     continue
-                raise TimeoutError(
-                    f"Blob download timed out after {max_retries} attempts"
-                )
+                raise TimeoutError(f"Blob download timed out after {max_retries} attempts")
 
             except ResourceNotFoundError:
                 logger.error(f"❌ File not found in blob storage: {blob_path}")
@@ -625,9 +585,7 @@ class AzureBlobStorageService:
             True if deleted successfully
         """
         try:
-            blob_client = self.client.get_blob_client(
-                container=self.settings.container_name, blob=blob_path
-            )
+            blob_client = self.client.get_blob_client(container=self.settings.container_name, blob=blob_path)
 
             await run_blocking(blob_client.delete_blob)
             logger.info(f"✅ Deleted file from blob storage: {blob_path}")
@@ -681,7 +639,9 @@ class AzureBlobStorageService:
 
             if not account_key:
                 if shared_access_signature:
-                    blob_url = f"https://{account_name}.blob.core.windows.net/{self.settings.container_name}/{blob_path}"
+                    blob_url = (
+                        f"https://{account_name}.blob.core.windows.net/{self.settings.container_name}/{blob_path}"
+                    )
                     signed_url = f"{blob_url}?{shared_access_signature}"
                     logger.info(
                         "⚠️ Using shared access signature from connection string for blob: %s",
@@ -707,9 +667,7 @@ class AzureBlobStorageService:
                 blob_name=blob_path,
                 account_key=account_key,
                 permission=(
-                    BlobSasPermissions(read=True)
-                    if permissions == "r"
-                    else BlobSasPermissions(read=True, write=True)
+                    BlobSasPermissions(read=True) if permissions == "r" else BlobSasPermissions(read=True, write=True)
                 ),
                 expiry=datetime.utcnow() + timedelta(hours=expires_in_hours),
             )
@@ -725,9 +683,7 @@ class AzureBlobStorageService:
             logger.error(f"❌ Failed to generate signed URL: {e}")
             raise
 
-    async def list_files(
-        self, prefix: str = "", max_results: int = 100
-    ) -> List[Dict[str, Any]]:
+    async def list_files(self, prefix: str = "", max_results: int = 100) -> List[Dict[str, Any]]:
         """
         List files in blob storage (non-blocking).
 
@@ -742,20 +698,14 @@ class AzureBlobStorageService:
             files = []
 
             # list_blobs() returns an iterator, so we need to wrap it
-            blobs = await run_blocking(
-                lambda: list(self.container_client.list_blobs(name_starts_with=prefix))
-            )
+            blobs = await run_blocking(lambda: list(self.container_client.list_blobs(name_starts_with=prefix)))
 
             for blob in blobs:
                 files.append(
                     {
                         "name": blob.name,
                         "size": blob.size,
-                        "content_type": (
-                            blob.content_settings.content_type
-                            if blob.content_settings
-                            else None
-                        ),
+                        "content_type": (blob.content_settings.content_type if blob.content_settings else None),
                         "last_modified": blob.last_modified,
                         "metadata": blob.metadata or {},
                     }
@@ -782,20 +732,14 @@ class AzureBlobStorageService:
             File information or None if not found
         """
         try:
-            blob_client = self.client.get_blob_client(
-                container=self.settings.container_name, blob=blob_path
-            )
+            blob_client = self.client.get_blob_client(container=self.settings.container_name, blob=blob_path)
 
             properties = await run_blocking(blob_client.get_blob_properties)
 
             return {
                 "name": properties.name,
                 "size": properties.size,
-                "content_type": (
-                    properties.content_settings.content_type
-                    if properties.content_settings
-                    else None
-                ),
+                "content_type": (properties.content_settings.content_type if properties.content_settings else None),
                 "last_modified": properties.last_modified,
                 "metadata": properties.metadata or {},
                 "etag": properties.etag,

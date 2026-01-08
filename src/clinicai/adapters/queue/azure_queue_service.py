@@ -75,9 +75,7 @@ class AzureQueueService:
             storage_account = self._extract_storage_account_name(connection_string)
 
             queue_service = QueueServiceClient.from_connection_string(connection_string)
-            self._queue_client = queue_service.get_queue_client(
-                self.settings.queue_name
-            )
+            self._queue_client = queue_service.get_queue_client(self.settings.queue_name)
 
             # Log startup info with masked connection details
             logger.info(
@@ -114,24 +112,18 @@ class AzureQueueService:
                 raise ValueError("Azure Queue Storage connection string is required")
 
             queue_service = QueueServiceClient.from_connection_string(connection_string)
-            self._poison_queue_client = queue_service.get_queue_client(
-                poison_queue_name
-            )
+            self._poison_queue_client = queue_service.get_queue_client(poison_queue_name)
             logger.info(f"✅ Poison queue client initialized: {poison_queue_name}")
 
         return self._poison_queue_client
 
-    async def _move_to_poison_queue(
-        self, message_id: str, pop_receipt: str, content: str, reason: str
-    ) -> bool:
+    async def _move_to_poison_queue(self, message_id: str, pop_receipt: str, content: str, reason: str) -> bool:
         """Move a message to the poison queue and delete from main queue."""
         try:
             # Ensure poison queue exists
             try:
                 await run_blocking(self.poison_queue_client.create_queue)
-                logger.info(
-                    f"✅ Created poison queue: {self.poison_queue_client.queue_name}"
-                )
+                logger.info(f"✅ Created poison queue: {self.poison_queue_client.queue_name}")
             except ResourceExistsError:
                 pass  # Queue already exists, which is fine
 
@@ -144,23 +136,15 @@ class AzureQueueService:
             }
 
             # Send to poison queue
-            await run_blocking(
-                self.poison_queue_client.send_message, json.dumps(poison_message)
-            )
+            await run_blocking(self.poison_queue_client.send_message, json.dumps(poison_message))
 
             # Delete from main queue
-            await run_blocking(
-                self.queue_client.delete_message, message_id, pop_receipt
-            )
+            await run_blocking(self.queue_client.delete_message, message_id, pop_receipt)
 
-            logger.warning(
-                f"⚠️  Moved message to poison queue: message_id={message_id}, reason={reason}"
-            )
+            logger.warning(f"⚠️  Moved message to poison queue: message_id={message_id}, reason={reason}")
             return True
         except Exception as e:
-            logger.error(
-                f"❌ Failed to move message to poison queue: {e}", exc_info=True
-            )
+            logger.error(f"❌ Failed to move message to poison queue: {e}", exc_info=True)
             return False
 
     async def move_to_poison_message(
@@ -175,9 +159,7 @@ class AzureQueueService:
 
         This is used by workers that have already updated the database to mark the job as failed.
         """
-        return await self._move_to_poison_queue(
-            message_id, pop_receipt, content, reason
-        )
+        return await self._move_to_poison_queue(message_id, pop_receipt, content, reason)
 
     async def ensure_queue_exists(self) -> bool:
         """Ensure the queue exists (non-blocking)."""
@@ -262,9 +244,7 @@ class AzureQueueService:
             )
             raise
 
-    async def dequeue_transcription_job(
-        self, max_messages: int = 1
-    ) -> Optional[Dict[str, Any]]:
+    async def dequeue_transcription_job(self, max_messages: int = 1) -> Optional[Dict[str, Any]]:
         """
         Dequeue transcription job(s) (non-blocking).
 
@@ -288,13 +268,8 @@ class AzureQueueService:
             if not messages:
                 # Log empty queue periodically (every ~30s) to avoid log spam
                 current_time = time.time()
-                if (
-                    current_time - self._last_empty_poll_log
-                    >= self._empty_poll_log_interval
-                ):
-                    logger.debug(
-                        f"Queue '{self.settings.queue_name}' is empty (no messages available)"
-                    )
+                if current_time - self._last_empty_poll_log >= self._empty_poll_log_interval:
+                    logger.debug(f"Queue '{self.settings.queue_name}' is empty (no messages available)")
                     self._last_empty_poll_log = current_time
                 return None
 
@@ -337,11 +312,7 @@ class AzureQueueService:
 
                     # Log message details with insertion time if available
                     insertion_time = getattr(message, "insertion_time", None)
-                    insertion_str = (
-                        f", insertion_time={insertion_time.isoformat()}"
-                        if insertion_time
-                        else ""
-                    )
+                    insertion_str = f", insertion_time={insertion_time.isoformat()}" if insertion_time else ""
 
                     logger.info(
                         f"📥 Dequeued transcription job: visit={visit_id}, "
@@ -367,11 +338,7 @@ class AzureQueueService:
 
                 except json.JSONDecodeError as e:
                     # Invalid JSON - log warning with truncated content and handle as poison in dev
-                    content_preview = (
-                        message.content[:200]
-                        if len(message.content) > 200
-                        else message.content
-                    )
+                    content_preview = message.content[:200] if len(message.content) > 200 else message.content
                     logger.warning(
                         f"⚠️  Failed to parse queue message JSON: message_id={message_id}, "
                         f"error={e}, content_preview={content_preview}"
@@ -387,14 +354,10 @@ class AzureQueueService:
 
                     if is_dev:
                         reason = f"INVALID_JSON: {str(e)[:100]}"
-                        await self._move_to_poison_queue(
-                            message_id, pop_receipt, message.content, reason
-                        )
+                        await self._move_to_poison_queue(message_id, pop_receipt, message.content, reason)
                     else:
                         # Delete invalid message
-                        await run_blocking(
-                            self.queue_client.delete_message, message_id, pop_receipt
-                        )
+                        await run_blocking(self.queue_client.delete_message, message_id, pop_receipt)
                     continue
 
             # Return batch if max_messages > 1, otherwise None (no valid messages found)
@@ -413,21 +376,15 @@ class AzureQueueService:
             True if deleted successfully, False otherwise
         """
         try:
-            await run_blocking(
-                self.queue_client.delete_message, message_id, pop_receipt
-            )
+            await run_blocking(self.queue_client.delete_message, message_id, pop_receipt)
             logger.debug(f"✅ Deleted message: {message_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"❌ Failed to delete message {message_id}: {e}", exc_info=True
-            )
+            logger.error(f"❌ Failed to delete message {message_id}: {e}", exc_info=True)
             # Raise exception so caller can handle failure
             raise
 
-    async def update_message_visibility(
-        self, message_id: str, pop_receipt: str, visibility_timeout: int
-    ) -> str:
+    async def update_message_visibility(self, message_id: str, pop_receipt: str, visibility_timeout: int) -> str:
         """
         Update message visibility timeout (extend processing time) (non-blocking).
 

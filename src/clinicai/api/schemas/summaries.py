@@ -62,35 +62,21 @@ class PostVisitSummaryResponse(BaseModel):
 
     # Medical Content (Generated during visit)
     chief_complaint: str = Field(..., description="Reason for visit in plain language")
-    key_findings: List[str] = Field(
-        ..., description="Key findings from exam/consultation"
-    )
+    key_findings: List[str] = Field(..., description="Key findings from exam/consultation")
     diagnosis: str = Field(..., description="Diagnosis in layman-friendly terms")
 
     # Treatment Plan
-    medications: List[Dict[str, str]] = Field(
-        default_factory=list, description="Prescribed medications"
-    )
-    other_recommendations: List[str] = Field(
-        default_factory=list, description="Lifestyle recommendations"
-    )
-    tests_ordered: List[Dict[str, str]] = Field(
-        default_factory=list, description="Ordered tests"
-    )
+    medications: List[Dict[str, str]] = Field(default_factory=list, description="Prescribed medications")
+    other_recommendations: List[str] = Field(default_factory=list, description="Lifestyle recommendations")
+    tests_ordered: List[Dict[str, str]] = Field(default_factory=list, description="Ordered tests")
 
     # Follow-Up
-    next_appointment: Optional[str] = Field(
-        None, description="Next appointment details"
-    )
-    red_flag_symptoms: List[str] = Field(
-        default_factory=list, description="Warning signs"
-    )
+    next_appointment: Optional[str] = Field(None, description="Next appointment details")
+    red_flag_symptoms: List[str] = Field(default_factory=list, description="Warning signs")
     patient_instructions: List[str] = Field(..., description="Patient instructions")
 
     # Closing Note
-    reassurance_note: str = Field(
-        ..., description="Reassurance and encouragement message"
-    )
+    reassurance_note: str = Field(..., description="Reassurance and encouragement message")
 
     # Metadata
     generated_at: str = Field(..., description="Summary generation timestamp")

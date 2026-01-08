@@ -62,11 +62,7 @@ class Container:
 
     def has(self, name: str) -> bool:
         """Check if a service is registered."""
-        return (
-            name in self._services
-            or name in self._factories
-            or name in self._singletons
-        )
+        return name in self._services or name in self._factories or name in self._singletons
 
     def clear(self) -> None:
         """Clear all registered services."""

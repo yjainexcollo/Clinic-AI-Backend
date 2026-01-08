@@ -36,9 +36,7 @@ def extract_user_id_from_request(request: Request) -> str:
 
     # Fallback: Try to extract from headers (for cases where auth middleware might not have run)
     # This should rarely be needed if authentication middleware is properly configured
-    user_id_header = request.headers.get("X-User-ID") or request.headers.get(
-        "x-user-id"
-    )
+    user_id_header = request.headers.get("X-User-ID") or request.headers.get("x-user-id")
     if user_id_header:
         logger.warning(
             f"Using X-User-ID header for user identification on {request.url.path}. "
@@ -47,9 +45,7 @@ def extract_user_id_from_request(request: Request) -> str:
         return user_id_header
 
     # Last resort: Try to get from Authorization header
-    auth_header = request.headers.get("Authorization") or request.headers.get(
-        "authorization"
-    )
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     if auth_header:
         if auth_header.startswith("Bearer "):
             # Extract token and use first 20 chars as identifier
@@ -139,9 +135,7 @@ class HIPAAAuditMiddleware(BaseHTTPMiddleware):
         phi_accessed = phi_info is not None
 
         # Extract IDs from URL path (before processing request)
-        resource_id, patient_id, visit_id = self._extract_ids_from_path(
-            request.url.path
-        )
+        resource_id, patient_id, visit_id = self._extract_ids_from_path(request.url.path)
 
         # Process request
         response = await call_next(request)
@@ -202,17 +196,10 @@ class HIPAAAuditMiddleware(BaseHTTPMiddleware):
                             "method": request.method,
                             "status_code": response.status_code,
                             "process_time_ms": round(process_time * 1000, 2),
-                            "query_params": (
-                                dict(request.query_params)
-                                if request.query_params
-                                else {}
-                            ),
-                            "response_size": response.headers.get(
-                                "content-length", "0"
-                            ),
+                            "query_params": (dict(request.query_params) if request.query_params else {}),
+                            "response_size": response.headers.get("content-length", "0"),
                             "visit_id": visit_id,
-                            "resource_creation": request.method == "POST"
-                            and request.url.path == "/patients/",
+                            "resource_creation": request.method == "POST" and request.url.path == "/patients/",
                         },
                         request_id=request_id,
                         session_id=getattr(request.state, "session_id", None),
@@ -247,11 +234,7 @@ class HIPAAAuditMiddleware(BaseHTTPMiddleware):
         visit_id = None
 
         # Pattern: /patients/{patient_id}/...
-        if (
-            len(parts) > 2
-            and parts[1] == "patients"
-            and parts[2] not in ["consultations", "webhook", "summary", ""]
-        ):
+        if len(parts) > 2 and parts[1] == "patients" and parts[2] not in ["consultations", "webhook", "summary", ""]:
             patient_id = parts[2]
             resource_id = patient_id
 

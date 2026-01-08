@@ -201,9 +201,7 @@ async def lifespan(app: FastAPI):
                 msg = "⚠️  Azure Queue Storage not available (azure-storage-queue package not installed)"
                 print(msg, flush=True)
                 logger.warning(msg)
-                logging.warning(
-                    "Azure Queue Storage not available - install azure-storage-queue package"
-                )
+                logging.warning("Azure Queue Storage not available - install azure-storage-queue package")
         except Exception as e:
             msg = f"⚠️  Azure Queue Storage initialization failed: {e}"
             print(msg, flush=True)
@@ -256,9 +254,7 @@ async def lifespan(app: FastAPI):
             msg = "Validating Azure OpenAI configuration..."
             print(msg, flush=True)
             logger.info(msg)
-            azure_openai_configured = (
-                settings.azure_openai.endpoint and settings.azure_openai.api_key
-            )
+            azure_openai_configured = settings.azure_openai.endpoint and settings.azure_openai.api_key
 
             if azure_openai_configured:
                 # Validate endpoint format
@@ -274,21 +270,14 @@ async def lifespan(app: FastAPI):
                 # Validate deployment names are configured
                 if not settings.azure_openai.deployment_name:
                     raise ValueError(
-                        "Azure OpenAI chat deployment name is required. "
-                        "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
+                        "Azure OpenAI chat deployment name is required. " "Please set AZURE_OPENAI_DEPLOYMENT_NAME."
                     )
 
                 # Azure OpenAI Whisper deployment not required - using Azure Speech Service for transcription
 
                 # Validate API key is not empty
-                if (
-                    not settings.azure_openai.api_key
-                    or len(settings.azure_openai.api_key.strip()) == 0
-                ):
-                    raise ValueError(
-                        "Azure OpenAI API key is required. "
-                        "Please set AZURE_OPENAI_API_KEY."
-                    )
+                if not settings.azure_openai.api_key or len(settings.azure_openai.api_key.strip()) == 0:
+                    raise ValueError("Azure OpenAI API key is required. " "Please set AZURE_OPENAI_API_KEY.")
 
                 # Validate deployment actually exists by making a test call
                 msg = f"🔍 Validating Azure OpenAI deployments..."
@@ -335,9 +324,7 @@ async def lifespan(app: FastAPI):
                         print(error_detail2, flush=True)
                         logger.error(error_detail2)
                         sys.stderr.flush()
-                        raise ValueError(
-                            f"Azure OpenAI chat deployment validation failed: {error_msg}"
-                        )
+                        raise ValueError(f"Azure OpenAI chat deployment validation failed: {error_msg}")
                 except SyntaxError as e:
                     error_msg = f"Syntax error in azure_openai_client.py: {e}"
                     print(f"⚠️  {error_msg}", flush=True)
@@ -355,9 +342,7 @@ async def lifespan(app: FastAPI):
                         logger.warning(error_msg)
                         # Don't fail startup for syntax errors, just log warning
                     else:
-                        error_msg = (
-                            f"Error importing or validating azure_openai_client: {e}"
-                        )
+                        error_msg = f"Error importing or validating azure_openai_client: {e}"
                         print(f"⚠️  {error_msg}", flush=True)
                         logger.warning(error_msg)
                         # Don't fail startup, just log warning
@@ -484,9 +469,7 @@ def create_app() -> FastAPI:
     # Initialize Azure Application Insights BEFORE middleware
     # This must happen early to capture all requests and ensure proper instrumentation order
     try:
-        app_insights_connection_string = os.getenv(
-            "APPLICATIONINSIGHTS_CONNECTION_STRING"
-        )
+        app_insights_connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
         if app_insights_connection_string:
             from azure.monitor.opentelemetry import configure_azure_monitor
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -499,20 +482,14 @@ def create_app() -> FastAPI:
             print("✅ Azure Application Insights initialized (before middleware)")
             logging.info("Azure Application Insights initialized successfully")
         else:
-            print(
-                "⚠️  APPLICATIONINSIGHTS_CONNECTION_STRING not set, Application Insights disabled"
-            )
-            logging.debug(
-                "Application Insights not configured (connection string missing)"
-            )
+            print("⚠️  APPLICATIONINSIGHTS_CONNECTION_STRING not set, Application Insights disabled")
+            logging.debug("Application Insights not configured (connection string missing)")
     except ImportError as e:
         print(f"⚠️  Application Insights packages not installed: {e}")
         logging.warning(f"Application Insights not available: {e}")
     except Exception as e:
         print(f"⚠️  Azure Application Insights initialization failed: {e}")
-        logging.error(
-            f"Azure Application Insights failed to initialize: {e}", exc_info=True
-        )
+        logging.error(f"Azure Application Insights failed to initialize: {e}", exc_info=True)
 
     # Customize OpenAPI schema to control tag order
     def custom_openapi():
@@ -636,23 +613,17 @@ def create_app() -> FastAPI:
                             if isinstance(param, dict):
                                 if (
                                     param.get("name") == "X-Doctor-ID"
-                                    or param.get("$ref")
-                                    == "#/components/parameters/X-Doctor-ID"
+                                    or param.get("$ref") == "#/components/parameters/X-Doctor-ID"
                                 ):
                                     has_doctor_param = True
                                     break
-                            elif (
-                                isinstance(param, str)
-                                and param == "#/components/parameters/X-Doctor-ID"
-                            ):
+                            elif isinstance(param, str) and param == "#/components/parameters/X-Doctor-ID":
                                 has_doctor_param = True
                                 break
 
                         # Add the parameter reference if it doesn't exist
                         if not has_doctor_param:
-                            method_info["parameters"].append(
-                                {"$ref": "#/components/parameters/X-Doctor-ID"}
-                            )
+                            method_info["parameters"].append({"$ref": "#/components/parameters/X-Doctor-ID"})
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema
@@ -671,9 +642,7 @@ def create_app() -> FastAPI:
     ]
     allow_methods = list({m.upper() for m in allow_methods} | {"PATCH", "OPTIONS"})
     allow_headers = settings.cors.allowed_headers or ["*"]
-    if allow_headers != ["*"] and "content-type" not in {
-        h.lower() for h in allow_headers
-    }:
+    if allow_headers != ["*"] and "content-type" not in {h.lower() for h in allow_headers}:
         allow_headers = [*allow_headers, "content-type"]
 
     # Add specific headers for file uploads
@@ -727,9 +696,7 @@ def create_app() -> FastAPI:
                 response = await asyncio.wait_for(call_next(request), timeout=300.0)
                 return response
             except asyncio.TimeoutError:
-                logger.error(
-                    f"Request timeout after 300s: {request.method} {request.url.path}"
-                )
+                logger.error(f"Request timeout after 300s: {request.method} {request.url.path}")
                 return JSONResponse(
                     status_code=504,
                     content={
@@ -771,9 +738,7 @@ def create_app() -> FastAPI:
 
         # Add CORS headers to all responses
         response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = (
-            "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        )
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         response.headers["Access-Control-Allow-Headers"] = (
             "Content-Type, Authorization, X-Requested-With, X-API-Key, Accept, Origin"
         )
@@ -816,9 +781,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):
         req_id = getattr(request.state, "request_id", None)
-        logging.error(
-            f"APIError: {exc.code} ({exc.http_status}) {exc.message} | request_id={req_id}"
-        )
+        logging.error(f"APIError: {exc.code} ({exc.http_status}) {exc.message} | request_id={req_id}")
         return JSONResponse(
             status_code=exc.http_status,
             content=ErrorResponse(
@@ -838,13 +801,9 @@ def create_app() -> FastAPI:
         print(f"   Error details: {error_details}")
         print(f"   Request headers: {dict(request.headers)}")
         print(f"   Content-type: {request.headers.get('content-type', 'not set')}")
-        logging.error(
-            f"ValidationError on {request.method} {request.url.path}: {error_details} | request_id={req_id}"
-        )
+        logging.error(f"ValidationError on {request.method} {request.url.path}: {error_details} | request_id={req_id}")
         logging.error(f"Request headers: {dict(request.headers)}")
-        logging.error(
-            f"Request content-type: {request.headers.get('content-type', 'not set')}"
-        )
+        logging.error(f"Request content-type: {request.headers.get('content-type', 'not set')}")
 
         # Create user-friendly error message
         error_messages = []
@@ -950,14 +909,8 @@ async def root():
 @app.get("/swagger.yaml", include_in_schema=False)
 async def get_swagger_yaml():
     """Serve the custom Swagger YAML file."""
-    swagger_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "swagger.yaml"
-    )
+    swagger_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "swagger.yaml")
     if os.path.exists(swagger_path):
-        return FileResponse(
-            path=swagger_path, media_type="application/x-yaml", filename="swagger.yaml"
-        )
+        return FileResponse(path=swagger_path, media_type="application/x-yaml", filename="swagger.yaml")
     else:
-        return JSONResponse(
-            status_code=404, content={"error": "Swagger file not found"}
-        )
+        return JSONResponse(status_code=404, content={"error": "Swagger file not found"})

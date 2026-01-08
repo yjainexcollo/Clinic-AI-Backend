@@ -16,9 +16,7 @@ def format_timestamp(timestamp: datetime, format_str: str = "%Y-%m-%d %H:%M:%S")
     return timestamp.strftime(format_str)
 
 
-def parse_timestamp(
-    timestamp_str: str, format_str: str = "%Y-%m-%d %H:%M:%S"
-) -> Optional[datetime]:
+def parse_timestamp(timestamp_str: str, format_str: str = "%Y-%m-%d %H:%M:%S") -> Optional[datetime]:
     """Parse timestamp string to datetime object."""
     try:
         return datetime.strptime(timestamp_str, format_str)
@@ -50,9 +48,7 @@ def get_age_from_birthdate(birthdate: Union[str, date, datetime]) -> int:
     age = today.year - birthdate.year
 
     # Adjust if birthday hasn't occurred this year
-    if today.month < birthdate.month or (
-        today.month == birthdate.month and today.day < birthdate.day
-    ):
+    if today.month < birthdate.month or (today.month == birthdate.month and today.day < birthdate.day):
         age -= 1
 
     return age

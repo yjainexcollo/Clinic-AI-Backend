@@ -46,9 +46,7 @@ class AuthService:
             self._parse_api_keys(api_keys_str)
             logger.info("✅ Loaded API keys from environment variables")
         else:
-            logger.warning(
-                "⚠️  No API keys configured. Authentication will fail for all requests."
-            )
+            logger.warning("⚠️  No API keys configured. Authentication will fail for all requests.")
 
     def _parse_api_keys(self, api_keys_str: str) -> None:
         """
@@ -113,9 +111,7 @@ class AuthService:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    def get_user_from_request(
-        self, api_key: Optional[str] = None, auth_header: Optional[str] = None
-    ) -> str:
+    def get_user_from_request(self, api_key: Optional[str] = None, auth_header: Optional[str] = None) -> str:
         """
         Extract and validate user ID from request headers.
 

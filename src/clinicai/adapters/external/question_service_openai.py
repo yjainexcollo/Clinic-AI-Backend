@@ -109,9 +109,7 @@ def _clamp_topics(topics: List[str]) -> List[str]:
     return [t for t in topics if t in allowed]
 
 
-def _ensure_nonempty_topic_plan(
-    priority_topics: List[str], topic_plan: List[str]
-) -> List[str]:
+def _ensure_nonempty_topic_plan(priority_topics: List[str], topic_plan: List[str]) -> List[str]:
     """
     Guarantee topic_plan exists and is valid:
     - If empty → use priority_topics
@@ -238,11 +236,7 @@ def _duration_implies_chronic(answers: List[str]) -> bool:
                 elif val in number_words and number_words[val] >= 3:
                     return True
         # catch generic phrasing
-        if (
-            "over 3 months" in a
-            or "more than 3 months" in a
-            or "more than three months" in a
-        ):
+        if "over 3 months" in a or "more than 3 months" in a or "more than three months" in a:
             return True
     return False
 
@@ -266,12 +260,8 @@ class ConditionPropertiesModel(BaseModel):
     is_allergy_related: Optional[bool] = None
     requires_lifestyle_assessment: Optional[bool] = None
     is_travel_related: Optional[bool] = None
-    severity_level: Optional[str] = Field(
-        default=None, pattern="^(mild|moderate|severe)$"
-    )
-    acuity_level: Optional[str] = Field(
-        default=None, pattern="^(acute|subacute|chronic)$"
-    )
+    severity_level: Optional[str] = Field(default=None, pattern="^(mild|moderate|severe)$")
+    acuity_level: Optional[str] = Field(default=None, pattern="^(acute|subacute|chronic)$")
     is_new_problem: Optional[bool] = None
     is_followup: Optional[bool] = None
 
@@ -381,9 +371,7 @@ Gender: {patient_gender or "Not specified"}
 Recent Travel Checkbox: {"Yes" if recently_travelled else "No"}
 Return the JSON plan now.
 """
-        logger.info(
-            "Agent1: calling LLM for context plan chief_complaint='%s'", chief_complaint
-        )
+        logger.info("Agent1: calling LLM for context plan chief_complaint='%s'", chief_complaint)
         resp = await call_llm_with_telemetry(
             ai_client=self._client,
             scenario=PromptScenario.RED_FLAG,
@@ -397,8 +385,7 @@ Return the JSON plan now.
         )
         response_text = (resp.choices[0].message.content or "").strip()
         log_msg = (
-            "[Agent1-MedicalContextAnalyzer] Raw LLM response received\n"
-            f"{'=' * 80}\n{response_text}\n{'=' * 80}"
+            "[Agent1-MedicalContextAnalyzer] Raw LLM response received\n" f"{'=' * 80}\n{response_text}\n{'=' * 80}"
         )
         print(log_msg, flush=True)
         logger.info(log_msg)
@@ -415,9 +402,7 @@ Return the JSON plan now.
                     response_text=response_text,
                     metadata={
                         "chief_complaint": chief_complaint,
-                        "prompt_version": PROMPT_VERSIONS.get(
-                            PromptScenario.INTAKE, "UNKNOWN"
-                        ),
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
                     },
                 )
             except Exception as e:
@@ -478,18 +463,13 @@ Return the JSON plan now.
                 "dolor de barriga",
             ]
 
-            has_womens_health_symptom = any(
-                symptom in complaint_lower for symptom in womens_health_symptoms
-            )
+            has_womens_health_symptom = any(symptom in complaint_lower for symptom in womens_health_symptoms)
 
             if has_womens_health_symptom:
                 # Set is_womens_health to true
                 condition_props["is_womens_health"] = True
                 # Ensure menstrual_cycle is in priority_topics if not already there and not avoided
-                if (
-                    "menstrual_cycle" not in priority_topics
-                    and "menstrual_cycle" not in avoid_topics
-                ):
+                if "menstrual_cycle" not in priority_topics and "menstrual_cycle" not in avoid_topics:
                     priority_topics.append("menstrual_cycle")
                     logger.info(
                         "Added menstrual_cycle to priority_topics for female patient (age %s) with stomach/abdominal pain: %s",
@@ -497,17 +477,13 @@ Return the JSON plan now.
                         chief_complaint,
                     )
 
-        topic_plan = _ensure_nonempty_topic_plan(
-            priority_topics, parsed.topic_plan or []
-        )
+        topic_plan = _ensure_nonempty_topic_plan(priority_topics, parsed.topic_plan or [])
         avoid_set = set(avoid_topics)
         topic_plan = [t for t in topic_plan if t not in avoid_set]
         if not topic_plan:
             topic_plan = [t for t in priority_topics if t not in avoid_set]
         if not priority_topics:
-            raise ValueError(
-                "Agent1 returned empty priority_topics; fix prompt or model behavior"
-            )
+            raise ValueError("Agent1 returned empty priority_topics; fix prompt or model behavior")
         logger.info(
             "Agent1 parsed: priority_topics=%s avoid_topics=%s topic_plan=%s triage=%s",
             priority_topics,
@@ -572,14 +548,10 @@ class AnswerExtractor:
         all_qa: List[Dict[str, str]] = []
         for i in range(len(asked_questions or [])):
             if i < len(previous_answers or []):
-                all_qa.append(
-                    {"question": asked_questions[i], "answer": previous_answers[i]}
-                )
+                all_qa.append({"question": asked_questions[i], "answer": previous_answers[i]})
         # HARD RULE: if nothing asked yet => nothing covered
         if not all_qa:
-            gaps = _recompute_gaps_from_plan(
-                medical_context=medical_context, topics_covered=[]
-            )
+            gaps = _recompute_gaps_from_plan(medical_context=medical_context, topics_covered=[])
             return ExtractedInformation(
                 topics_covered=[],
                 information_gaps=gaps,
@@ -638,10 +610,7 @@ Return the JSON now.
             temperature=0.1,
         )
         response_text = (resp.choices[0].message.content or "").strip()
-        log_msg = (
-            "[Agent2-AnswerExtractor] Raw LLM response received\n"
-            f"{'=' * 80}\n{response_text}\n{'=' * 80}"
-        )
+        log_msg = "[Agent2-AnswerExtractor] Raw LLM response received\n" f"{'=' * 80}\n{response_text}\n{'=' * 80}"
         print(log_msg, flush=True)
         logger.info(log_msg)
         raw = _extract_first_json_object(response_text)
@@ -649,9 +618,7 @@ Return the JSON now.
             raise ValueError("Agent2 returned no valid JSON")
         topics_covered = _clamp_topics(_safe_str_list(raw.get("topics_covered")))
         information_gaps = _clamp_topics(_safe_str_list(raw.get("information_gaps")))
-        redundant_categories = _clamp_topics(
-            _safe_str_list(raw.get("redundant_categories"))
-        )
+        redundant_categories = _clamp_topics(_safe_str_list(raw.get("redundant_categories")))
         extracted_facts = raw.get("extracted_facts") or {}
         if not isinstance(extracted_facts, dict):
             extracted_facts = {}
@@ -666,18 +633,10 @@ Return the JSON now.
         priority = set(medical_context.priority_topics or [])
         avoid = set(medical_context.avoid_topics or [])
         topics_covered = [t for t in topics_covered if t in priority and t not in avoid]
-        redundant_categories = [
-            t for t in redundant_categories if t in set(ALLOWED_TOPICS)
-        ]
+        redundant_categories = [t for t in redundant_categories if t in set(ALLOWED_TOPICS)]
         covered_set = set(topics_covered)
-        information_gaps = [
-            t
-            for t in information_gaps
-            if t in priority and t not in avoid and t not in covered_set
-        ]
-        recomputed_gaps = _recompute_gaps_from_plan(
-            medical_context=medical_context, topics_covered=topics_covered
-        )
+        information_gaps = [t for t in information_gaps if t in priority and t not in avoid and t not in covered_set]
+        recomputed_gaps = _recompute_gaps_from_plan(medical_context=medical_context, topics_covered=topics_covered)
         if not information_gaps or (set(information_gaps) == set(topics_covered)):
             information_gaps = recomputed_gaps
         topic_counts = raw.get("topic_counts")
@@ -702,9 +661,7 @@ Return the JSON now.
                         "already_mentioned_duration": already_duration,
                         "already_mentioned_medications": already_meds,
                         "topic_counts": topic_counts,
-                        "prompt_version": PROMPT_VERSIONS.get(
-                            PromptScenario.INTAKE, "UNKNOWN"
-                        ),
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
                     },
                 )
             except Exception as e:
@@ -738,9 +695,7 @@ class QuestionGenerator:
         if not question:
             return question
         q = question.strip()
-        if (q.startswith('"') and q.endswith('"')) or (
-            q.startswith("'") and q.endswith("'")
-        ):
+        if (q.startswith('"') and q.endswith('"')) or (q.startswith("'") and q.endswith("'")):
             q = q[1:-1].strip()
         q = re.sub(r"^(q:|\d+\.)\s*", "", q, flags=re.IGNORECASE)
         q = q.replace("\n", " ")
@@ -1095,16 +1050,12 @@ class QuestionGenerator:
         "screening": "¿Ha tenido alguna prueba de detección para complicaciones (como exámenes de ojos, corazón o riñones) recientemente?",
     }
 
-    def _question_matches_topic(
-        self, chosen_topic: str, question: str, language: str = "en"
-    ) -> bool:
+    def _question_matches_topic(self, chosen_topic: str, question: str, language: str = "en") -> bool:
         q = (question or "").strip().lower()
         if not q:
             return False
         lang = self._normalize_language(language)
-        keyword_dict = (
-            self._TOPIC_KEYWORDS_ES if lang == "es" else self._TOPIC_KEYWORDS_EN
-        )
+        keyword_dict = self._TOPIC_KEYWORDS_ES if lang == "es" else self._TOPIC_KEYWORDS_EN
         kws = keyword_dict.get(chosen_topic, [])
         if not kws:
             return True  # if no rulebook, don't block
@@ -1112,14 +1063,8 @@ class QuestionGenerator:
 
     def _get_fallback_question(self, chosen_topic: str, language: str = "en") -> str:
         lang = self._normalize_language(language)
-        fallback_dict = (
-            self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
-        )
-        default_q = (
-            "¿Podría contarme más sobre eso?"
-            if lang == "es"
-            else "Could you tell me more about that?"
-        )
+        fallback_dict = self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
+        default_q = "¿Podría contarme más sobre eso?" if lang == "es" else "Could you tell me more about that?"
         return fallback_dict.get(chosen_topic, default_q)
 
     async def _llm_generate_once(self, system_prompt: str, user_prompt: str) -> str:
@@ -1156,9 +1101,7 @@ class QuestionGenerator:
             all_qa = []
             for i in range(len(asked_questions)):
                 if i < len(previous_answers):
-                    all_qa.append(
-                        {"question": asked_questions[i], "answer": previous_answers[i]}
-                    )
+                    all_qa.append({"question": asked_questions[i], "answer": previous_answers[i]})
             qa_history = self._format_qa_pairs(all_qa) if all_qa else ""
         lang = _normalize_language(language)
         output_language = _get_output_language_name(language)
@@ -1195,10 +1138,7 @@ Generate the question now.
         deep_diag_note = ""
         if deep_diagnostic_question_num is not None:
             if lang == "es":
-                if (
-                    deep_diagnostic_question_num == 1
-                    and chosen_topic == "chronic_monitoring"
-                ):
+                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
                     deep_diag_note = (
                         "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #1 - MONITOREO EN CASA Y CLÍNICO:\n"
                         "Pregunte sobre cómo el paciente monitorea esta condición crónica TANTO en casa como en entornos clínicos.\n"
@@ -1223,10 +1163,7 @@ Generate the question now.
                         "Ejemplo: '¿Ha tenido alguna prueba de detección para complicaciones relacionadas con esta condición (como exámenes de ojos, corazón o riñones), y cuándo fueron realizados por última vez?'"
                     )
             else:
-                if (
-                    deep_diagnostic_question_num == 1
-                    and chosen_topic == "chronic_monitoring"
-                ):
+                if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
                     deep_diag_note = (
                         "\n\nDEEP DIAGNOSTIC QUESTION #1 - HOME & CLINICAL MONITORING:\n"
                         "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n"
@@ -1274,10 +1211,7 @@ Generate ONE question now, strictly about {chosen_topic}.
         # 1) attempt
         response_text = await self._llm_generate_once(system_prompt, user_prompt)
         q1 = self._postprocess_question_text(response_text)
-        log_msg = (
-            "[Agent3-QuestionGenerator] Raw LLM response received\n"
-            f"{'=' * 80}\n{response_text}\n{'=' * 80}"
-        )
+        log_msg = "[Agent3-QuestionGenerator] Raw LLM response received\n" f"{'=' * 80}\n{response_text}\n{'=' * 80}"
         print(log_msg, flush=True)
         logger.info(log_msg)
         # Log to structured llm_interaction collection (only user_prompt, no system_prompt)
@@ -1294,15 +1228,11 @@ Generate ONE question now, strictly about {chosen_topic}.
                     metadata={
                         "chosen_topic": chosen_topic,
                         "attempt": 1,
-                        "prompt_version": PROMPT_VERSIONS.get(
-                            PromptScenario.INTAKE, "UNKNOWN"
-                        ),
+                        "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
                     },
                 )
             except Exception as e:
-                logger.warning(
-                    "Agent3: failed to persist interaction (attempt 1): %s", e
-                )
+                logger.warning("Agent3: failed to persist interaction (attempt 1): %s", e)
         # If question is empty or doesn't match topic => retry once
         if (not q1) or (not self._question_matches_topic(chosen_topic, q1, language)):
             correction = f"""
@@ -1311,9 +1241,7 @@ Please generate a question that is SPECIFICALLY about {chosen_topic}.
 Make it clear, concise, and directly relevant to this topic.
 Return ONE question ONLY.
 """
-            response_text_2 = await self._llm_generate_once(
-                system_prompt, user_prompt + "\n\n" + correction
-            )
+            response_text_2 = await self._llm_generate_once(system_prompt, user_prompt + "\n\n" + correction)
             q2 = self._postprocess_question_text(response_text_2)
             log_msg2 = (
                 "[Agent3-QuestionGenerator] Raw LLM response received (retry)\n"
@@ -1328,35 +1256,22 @@ Return ONE question ONLY.
                         visit_id=visit_id,
                         patient_id=patient_id,
                         question_number=question_number,
-                        question_text=(
-                            q2
-                            if q2
-                            and self._question_matches_topic(chosen_topic, q2, language)
-                            else None
-                        ),
+                        question_text=(q2 if q2 and self._question_matches_topic(chosen_topic, q2, language) else None),
                         agent_name="agent3_question_generator",
-                        user_prompt=user_prompt
-                        + "\n\n"
-                        + correction,  # Only user_prompt, NO system_prompt
+                        user_prompt=user_prompt + "\n\n" + correction,  # Only user_prompt, NO system_prompt
                         response_text=response_text_2,
                         metadata={
                             "chosen_topic": chosen_topic,
                             "attempt": 2,
-                            "prompt_version": PROMPT_VERSIONS.get(
-                                PromptScenario.INTAKE, "UNKNOWN"
-                            ),
+                            "prompt_version": PROMPT_VERSIONS.get(PromptScenario.INTAKE, "UNKNOWN"),
                         },
                     )
                 except Exception as e:
-                    logger.warning(
-                        "Agent3: failed to persist interaction (attempt 2): %s", e
-                    )
+                    logger.warning("Agent3: failed to persist interaction (attempt 2): %s", e)
             if q2 and self._question_matches_topic(chosen_topic, q2, language):
                 return q2
             # deterministic fallback
-            return self._postprocess_question_text(
-                self._get_fallback_question(chosen_topic, language)
-            )
+            return self._postprocess_question_text(self._get_fallback_question(chosen_topic, language))
         return q1
 
 
@@ -1389,9 +1304,7 @@ class SafetyValidator:
         issues: List[str] = []
         q = (question or "").strip()
         ql = q.lower()
-        prev_norm = {
-            (x or "").strip().lower().rstrip("?.") for x in (asked_questions or [])
-        }
+        prev_norm = {(x or "").strip().lower().rstrip("?.") for x in (asked_questions or [])}
         if q.lower().rstrip("?.") in prev_norm:
             issues.append("CRITICAL VIOLATION: exact duplicate question")
         if medical_context.patient_gender:
@@ -1404,12 +1317,8 @@ class SafetyValidator:
         ):
             if any(k in ql for k in MENSTRUAL_KEYWORDS):
                 issues.append("CRITICAL VIOLATION: menstrual asked outside age window")
-        is_travel_related = bool(
-            (medical_context.condition_properties or {}).get("is_travel_related", False)
-        )
-        if (not recently_travelled or not is_travel_related) and any(
-            k in ql for k in TRAVEL_KEYWORDS
-        ):
+        is_travel_related = bool((medical_context.condition_properties or {}).get("is_travel_related", False))
+        if (not recently_travelled or not is_travel_related) and any(k in ql for k in TRAVEL_KEYWORDS):
             issues.append("CRITICAL VIOLATION: travel asked when not allowed")
         corrected = q
         if not corrected.endswith("?"):
@@ -1614,10 +1523,7 @@ class OpenAIQuestionService(QuestionService):
         if asked_questions and previous_answers:
             for idx, q in enumerate(asked_questions):
                 q_low = q.lower()
-                if (
-                    "detailed diagnostic questions" in q_low
-                    or "preguntas diagnósticas detalladas" in q_low
-                ):
+                if "detailed diagnostic questions" in q_low or "preguntas diagnósticas detalladas" in q_low:
                     consent_index = idx
             if consent_index is not None and consent_index < len(previous_answers):
                 consent_answer = previous_answers[consent_index].lower().strip()
@@ -1672,9 +1578,7 @@ class OpenAIQuestionService(QuestionService):
                 # Chronic/hereditary + negative consent OR no consent yet: max 10 questions (step 10 is closing)
                 max_count = min(max_count, 10)
         # =============================================================================
-        step_number = (
-            current_count + 1
-        )  # 1-based (step 1 = chief complaint, handled separately)
+        step_number = current_count + 1  # 1-based (step 1 = chief complaint, handled separately)
         next_topic: Optional[str] = None
         # Step 2: duration (include cause)
         if step_number == 2:
@@ -1756,15 +1660,9 @@ class OpenAIQuestionService(QuestionService):
         # Step 10: Non-chronic/non-hereditary OR chronic/hereditary with negative consent gets closing question
         elif step_number == 10:
             if not is_chronic and not is_hereditary:
-                logger.info(
-                    "Step 10 reached (non-chronic, non-hereditary) - returning closing question"
-                )
-            elif (is_chronic or is_hereditary) and (
-                has_negative_consent or not has_positive_consent
-            ):
-                logger.info(
-                    "Step 10 reached (chronic/hereditary + negative/no consent) - returning closing question"
-                )
+                logger.info("Step 10 reached (non-chronic, non-hereditary) - returning closing question")
+            elif (is_chronic or is_hereditary) and (has_negative_consent or not has_positive_consent):
+                logger.info("Step 10 reached (chronic/hereditary + negative/no consent) - returning closing question")
             return self._closing(language)
         # Safety check: beyond max_count (should not reach here normally due to step-based logic)
         elif current_count >= max_count:
@@ -1783,22 +1681,16 @@ class OpenAIQuestionService(QuestionService):
             return self._closing(language)
         # If no topic determined, fallback to closing
         if not next_topic:
-            logger.warning(
-                "Strict sequence: no topic for step %d -> closing", step_number
-            )
+            logger.warning("Strict sequence: no topic for step %d -> closing", step_number)
             return self._closing(language)
         # Validate topic is allowed and not in avoid list
         allowed = set(ALLOWED_TOPICS)
         avoid = set(medical_context.avoid_topics or [])
         if next_topic not in allowed:
-            logger.warning(
-                "Strict sequence: topic '%s' not in allowed list -> closing", next_topic
-            )
+            logger.warning("Strict sequence: topic '%s' not in allowed list -> closing", next_topic)
             return self._closing(language)
         if next_topic in avoid:
-            logger.warning(
-                "Strict sequence: topic '%s' in avoid list -> closing", next_topic
-            )
+            logger.warning("Strict sequence: topic '%s' in avoid list -> closing", next_topic)
             return self._closing(language)
         # =============================================================================
         # =============================================================================
@@ -1816,10 +1708,7 @@ class OpenAIQuestionService(QuestionService):
             if asked_questions and previous_answers:
                 for idx, q in enumerate(asked_questions):
                     q_low = q.lower()
-                    if (
-                        "detailed diagnostic questions" in q_low
-                        or "preguntas diagnósticas detalladas" in q_low
-                    ):
+                    if "detailed diagnostic questions" in q_low or "preguntas diagnósticas detalladas" in q_low:
                         consent_index = idx
             if consent_index is not None and consent_index < len(previous_answers):
                 consent_answer = previous_answers[consent_index].lower().strip()
@@ -1907,29 +1796,21 @@ class OpenAIQuestionService(QuestionService):
     # PRE-VISIT SUMMARY & RED-FLAG METHODS ARE INTENTIONALLY EXCLUDED HERE
     # ========================================================================
 
-    async def _get_doctor_preferences(
-        self, doctor_id: Optional[str]
-    ) -> Optional[Dict[str, Any]]:
+    async def _get_doctor_preferences(self, doctor_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Fetch doctor preferences with 1s timeout; fail-open on error."""
         if not doctor_id:
             return None
         try:
             prefs = await asyncio.wait_for(
-                DoctorPreferencesMongo.find_one(
-                    DoctorPreferencesMongo.doctor_id == doctor_id
-                ),
+                DoctorPreferencesMongo.find_one(DoctorPreferencesMongo.doctor_id == doctor_id),
                 timeout=1.0,
             )
             return prefs.dict() if prefs else None
         except Exception as e:
-            logger.warning(
-                f"[DoctorPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}"
-            )
+            logger.warning(f"[DoctorPrefs] Failed to load preferences for doctor_id={doctor_id}: {e}")
             return None
 
-    def _normalize_previsit_section_config(
-        self, raw_sections: list[dict] | list
-    ) -> dict[str, dict]:
+    def _normalize_previsit_section_config(self, raw_sections: list[dict] | list) -> dict[str, dict]:
         """
         Returns a map: section_key -> {"enabled": bool, "selected_fields": list[str]}
         Only recognized section keys are retained.
@@ -1946,23 +1827,11 @@ class OpenAIQuestionService(QuestionService):
             return cfg
 
         for sec in raw_sections:
-            key = (
-                sec.get("section_key")
-                if isinstance(sec, dict)
-                else getattr(sec, "section_key", None)
-            )
+            key = sec.get("section_key") if isinstance(sec, dict) else getattr(sec, "section_key", None)
             if key not in recognized_sections:
                 continue
-            enabled = bool(
-                sec.get("enabled", True)
-                if isinstance(sec, dict)
-                else getattr(sec, "enabled", True)
-            )
-            sel_fields = (
-                sec.get("selected_fields")
-                if isinstance(sec, dict)
-                else getattr(sec, "selected_fields", None)
-            )
+            enabled = bool(sec.get("enabled", True) if isinstance(sec, dict) else getattr(sec, "enabled", True))
+            sel_fields = sec.get("selected_fields") if isinstance(sec, dict) else getattr(sec, "selected_fields", None)
             if sel_fields is None:
                 sel_fields = []
             cfg[key] = {
@@ -2019,9 +1888,7 @@ class OpenAIQuestionService(QuestionService):
         # Chief Complaint is Q1 (symptom field)
         return None
 
-    def _filter_intake_answers_by_prefs(
-        self, intake_answers: Dict[str, Any], cfg: dict[str, dict]
-    ) -> Dict[str, Any]:
+    def _filter_intake_answers_by_prefs(self, intake_answers: Dict[str, Any], cfg: dict[str, dict]) -> Dict[str, Any]:
         """
         Filters intake_answers Q/A pairs based on enabled sections.
         Removes Q/A pairs that belong to disabled sections to prevent data leakage.
@@ -2055,11 +1922,7 @@ class OpenAIQuestionService(QuestionService):
 
             # Filter remaining questions based on their category
             for idx, qa in enumerate(questions_asked[1:], start=1):  # Skip Q1
-                category = (
-                    asked_categories[idx - 1]
-                    if idx - 1 < len(asked_categories)
-                    else None
-                )
+                category = asked_categories[idx - 1] if idx - 1 < len(asked_categories) else None
                 section = self._map_category_to_section(category) if category else None
 
                 # Include if:
@@ -2081,8 +1944,7 @@ class OpenAIQuestionService(QuestionService):
                 filtered["asked_categories"] = [
                     asked_categories[i]
                     for i in range(len(asked_categories))
-                    if i + 1 < len(questions_asked)
-                    and questions_asked[i + 1] in filtered_qa
+                    if i + 1 < len(questions_asked) and questions_asked[i + 1] in filtered_qa
                 ]
             else:
                 filtered["asked_categories"] = []
@@ -2125,9 +1987,7 @@ class OpenAIQuestionService(QuestionService):
         # Section configuration from doctor preferences (pre_visit_config)
         raw_sections = (prefs or {}).get("pre_visit_config") or []
         section_cfg = self._normalize_previsit_section_config(raw_sections)
-        filtered_intake_answers = self._filter_intake_answers_by_prefs(
-            intake_answers, section_cfg
-        )
+        filtered_intake_answers = self._filter_intake_answers_by_prefs(intake_answers, section_cfg)
         # Default behavior:
         # - If NO config present at all -> all sections enabled (fail-open, legacy behavior).
         # - If ANY config present       -> sections are opt-in and must be explicitly enabled.
@@ -2150,22 +2010,14 @@ class OpenAIQuestionService(QuestionService):
         enabled_sections = default_section_state.copy()
         try:
             for sec in raw_sections:
-                key = (
-                    sec.get("section_key")
-                    if isinstance(sec, dict)
-                    else getattr(sec, "section_key", None)
-                )
+                key = sec.get("section_key") if isinstance(sec, dict) else getattr(sec, "section_key", None)
                 if key in enabled_sections:
                     enabled_sections[key] = bool(
-                        sec.get("enabled", True)
-                        if isinstance(sec, dict)
-                        else getattr(sec, "enabled", True)
+                        sec.get("enabled", True) if isinstance(sec, dict) else getattr(sec, "enabled", True)
                     )
         except Exception as e:
             # Fail-open: if malformed, keep defaults and log at debug level
-            logger.debug(
-                f"[DoctorPrefs] Failed to parse pre_visit_config for doctor_id={doctor_id}: {e}"
-            )
+            logger.debug(f"[DoctorPrefs] Failed to parse pre_visit_config for doctor_id={doctor_id}: {e}")
 
         enable_cc = enabled_sections.get("chief_complaint", True)
         enable_hpi = enabled_sections.get("hpi", True)
@@ -2187,16 +2039,12 @@ class OpenAIQuestionService(QuestionService):
             headings_lines.append("Review of Systems:")
         if enable_meds:
             headings_lines.append("Current Medication:")
-            headings_text = "\n".join(headings_lines) + (
-                "\n\n" if headings_lines else "\n\n"
-            )
+            headings_text = "\n".join(headings_lines) + ("\n\n" if headings_lines else "\n\n")
 
             # Dynamic example block based on enabled sections
             example_lines: list[str] = []
             if enable_cc:
-                example_lines.append(
-                    "Chief Complaint: Patient reports severe headache for 3 days."
-                )
+                example_lines.append("Chief Complaint: Patient reports severe headache for 3 days.")
             if enable_hpi:
                 example_lines.append(
                     "HPI: The patient describes a week of persistent headaches that begin in the morning and worsen through "
@@ -2211,16 +2059,12 @@ class OpenAIQuestionService(QuestionService):
                     "Current Medication: On meds: lisinopril 10 mg daily and ibuprofen as needed; allergies included only if "
                     "the patient explicitly stated them."
                 )
-            example_block = "\n".join(example_lines) + (
-                "\n\n" if example_lines else "\n\n"
-            )
+            example_block = "\n".join(example_lines) + ("\n\n" if example_lines else "\n\n")
 
             # Dynamic guidelines text based on enabled sections
             guidelines_lines: list[str] = []
             if enable_cc:
-                guidelines_lines.append(
-                    "- Chief Complaint: One line in the patient's own words if available."
-                )
+                guidelines_lines.append("- Chief Complaint: One line in the patient's own words if available.")
             if enable_hpi:
                 guidelines_lines.append(
                     "- HPI: ONE readable paragraph weaving OLDCARTS into prose (only if HPI is listed)."
@@ -2239,9 +2083,7 @@ class OpenAIQuestionService(QuestionService):
                     "- Current Medication: One narrative line with meds/supplements actually stated by the patient or "
                     "mention of medication images (only if Current Medication is listed)."
                 )
-            guidelines_text = "\n".join(guidelines_lines) + (
-                "\n\n" if guidelines_lines else "\n\n"
-            )
+            guidelines_text = "\n".join(guidelines_lines) + ("\n\n" if guidelines_lines else "\n\n")
 
             # Build comprehensive section definitions
             section_definitions: list[str] = []
@@ -2300,9 +2142,7 @@ class OpenAIQuestionService(QuestionService):
                     "- Format: One narrative line with meds/supplements actually stated by the patient\n"
                 )
 
-            section_definitions_text = (
-                "\n".join(section_definitions) + "\n\n" if section_definitions else ""
-            )
+            section_definitions_text = "\n".join(section_definitions) + "\n\n" if section_definitions else ""
 
             # Build explicit exclusion rules for disabled sections
             exclusion_rules: list[str] = []
@@ -2397,9 +2237,7 @@ class OpenAIQuestionService(QuestionService):
             try:
                 red_flags = await self._detect_red_flags(filtered_intake_answers, lang)
             except Exception as e:
-                logger.warning(
-                    f"Red flag detection failed, continuing without flags: {e}"
-                )
+                logger.warning(f"Red flag detection failed, continuing without flags: {e}")
                 red_flags = []
 
             resp = await call_llm_with_telemetry(
@@ -2458,10 +2296,7 @@ class OpenAIQuestionService(QuestionService):
 
         red_flags: List[Dict[str, str]] = []
 
-        if (
-            not isinstance(intake_answers, dict)
-            or "questions_asked" not in intake_answers
-        ):
+        if not isinstance(intake_answers, dict) or "questions_asked" not in intake_answers:
             logger.warning("Invalid intake_answers format for red flag detection")
             return red_flags
 
@@ -2470,9 +2305,7 @@ class OpenAIQuestionService(QuestionService):
             logger.warning("No questions found in intake_answers")
             return red_flags
 
-        logger.info(
-            f"Starting hybrid abusive language detection for {len(questions_asked)} questions"
-        )
+        logger.info(f"Starting hybrid abusive language detection for {len(questions_asked)} questions")
 
         # Step 1: Fast hardcoded detection for obvious cases
         obvious_flags = self._detect_obvious_abusive_language(questions_asked, lang)
@@ -2480,9 +2313,7 @@ class OpenAIQuestionService(QuestionService):
         logger.info(f"Obvious abusive language flags detected: {len(obvious_flags)}")
 
         # Step 2: LLM analysis for subtle/contextual abusive language
-        complex_flags = await self._detect_subtle_abusive_language_with_llm(
-            questions_asked, lang
-        )
+        complex_flags = await self._detect_subtle_abusive_language_with_llm(questions_asked, lang)
         red_flags.extend(complex_flags)
         logger.info(f"Subtle abusive language flags detected: {len(complex_flags)}")
 
@@ -2679,9 +2510,7 @@ Responses to analyze:
             formatted.append(f"{i}. Q: {question}\n   A: {answer}")
         return "\n\n".join(formatted)
 
-    def _get_llm_abusive_language_message(
-        self, reason: str, language: str = "en"
-    ) -> str:
+    def _get_llm_abusive_language_message(self, reason: str, language: str = "en") -> str:
         """Get message for LLM-detected abusive language."""
         lang = self._normalize_language(language)
         if lang == "es":
@@ -2829,9 +2658,7 @@ Responses to analyze:
         return {
             "summary": summary,
             "structured_data": {
-                "chief_complaint": patient_data.get("symptom")
-                or patient_data.get("complaint")
-                or "N/A",
+                "chief_complaint": patient_data.get("symptom") or patient_data.get("complaint") or "N/A",
                 "key_findings": ["See intake responses"],
             },
             "red_flags": red_flags,
@@ -2842,18 +2669,8 @@ Responses to analyze:
         if not isinstance(result, dict):
             return await self._generate_fallback_summary({}, {})
 
-        summary = (
-            result.get("summary")
-            or result.get("markdown")
-            or result.get("content")
-            or ""
-        )
-        structured = (
-            result.get("structured_data")
-            or result.get("structuredData")
-            or result.get("data")
-            or {}
-        )
+        summary = result.get("summary") or result.get("markdown") or result.get("content") or ""
+        structured = result.get("structured_data") or result.get("structuredData") or result.get("data") or {}
 
         if not isinstance(summary, str):
             summary = str(summary)
@@ -2896,15 +2713,11 @@ Responses to analyze:
                 data["chief_complaint"] = ", ".join(chief_bullets)
             return data
 
-        if structured.get("key_findings") == ["See summary"] or not structured.get(
-            "key_findings"
-        ):
+        if structured.get("key_findings") == ["See summary"] or not structured.get("key_findings"):
             extracted = _extract_from_markdown(summary)
             if extracted.get("key_findings"):
                 structured["key_findings"] = extracted["key_findings"]
-            if extracted.get("chief_complaint") and structured.get(
-                "chief_complaint"
-            ) in (
+            if extracted.get("chief_complaint") and structured.get("chief_complaint") in (
                 None,
                 "See summary",
                 "N/A",

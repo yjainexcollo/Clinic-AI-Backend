@@ -49,9 +49,7 @@ class AzureOpenAIClient:
 
         # Normalize endpoint: remove trailing slash (Azure OpenAI SDK doesn't expect it)
         normalized_endpoint = endpoint.rstrip("/") if endpoint else endpoint
-        self.endpoint = (
-            normalized_endpoint  # Store normalized endpoint for error messages
-        )
+        self.endpoint = normalized_endpoint  # Store normalized endpoint for error messages
 
         # Initialize Azure OpenAI client
         self.client = AsyncAzureOpenAI(
@@ -104,9 +102,7 @@ class AzureOpenAIClient:
                     with trace_operation("ai.chat.completion", trace_attrs) as span:
                         if span:
                             add_span_attribute(span, "attempt", attempt + 1)
-                            add_span_attribute(
-                                span, "max_tokens", max_tokens or "unlimited"
-                            )
+                            add_span_attribute(span, "max_tokens", max_tokens or "unlimited")
 
                         # Make API call - Azure OpenAI uses deployment_name instead of model
                         response = await self.client.chat.completions.create(
@@ -130,9 +126,7 @@ class AzureOpenAIClient:
                         )
                         if span:
                             add_span_attribute(span, "tokens", metrics["total_tokens"])
-                            add_span_attribute(
-                                span, "latency_ms", metrics["latency_ms"]
-                            )
+                            add_span_attribute(span, "latency_ms", metrics["latency_ms"])
                             set_span_status(span, success=True)
 
                         # Log metrics
@@ -169,11 +163,7 @@ class AzureOpenAIClient:
                 error_str = str(e).lower()
 
                 # Check if it's a 404 error (deployment not found)
-                is_not_found = (
-                    "404" in str(e)
-                    or "not found" in error_str
-                    or "resource not found" in error_str
-                )
+                is_not_found = "404" in str(e) or "not found" in error_str or "resource not found" in error_str
 
                 # Check if it's a rate limit error (429)
                 is_rate_limit = (
@@ -205,12 +195,8 @@ class AzureOpenAIClient:
                     continue
 
                 # If it's a 404, try alternative API versions before giving up
-                if (
-                    is_not_found and attempt == 0
-                ):  # Only try alternative versions on first attempt
-                    logger.warning(
-                        f"404 error with API version '{self.api_version}', trying alternative versions..."
-                    )
+                if is_not_found and attempt == 0:  # Only try alternative versions on first attempt
+                    logger.warning(f"404 error with API version '{self.api_version}', trying alternative versions...")
                     # Try alternative API versions
                     alternative_versions = [
                         "2024-12-01-preview",
@@ -265,19 +251,13 @@ class AzureOpenAIClient:
                             continue
 
                     # If we get here, no alternative version worked
-                    logger.error(
-                        f"All API versions failed for deployment '{self.deployment_name}'"
-                    )
+                    logger.error(f"All API versions failed for deployment '{self.deployment_name}'")
 
                 # Don't retry on other errors or if we've exhausted retries
                 error_type = (
                     "not_found"
                     if is_not_found
-                    else (
-                        "rate_limit"
-                        if is_rate_limit
-                        else ("transient" if is_transient else "permanent")
-                    )
+                    else ("rate_limit" if is_rate_limit else ("transient" if is_transient else "permanent"))
                 )
                 logger.error(
                     f"Azure OpenAI API error ({error_type}): {e} "
@@ -336,9 +316,7 @@ class AzureOpenAIClient:
             "prompt_tokens": usage.prompt_tokens if usage else 0,
             "completion_tokens": usage.completion_tokens if usage else 0,
             "total_tokens": usage.total_tokens if usage else 0,
-            "finish_reason": (
-                response.choices[0].finish_reason if response.choices else None
-            ),
+            "finish_reason": (response.choices[0].finish_reason if response.choices else None),
         }
 
         return metrics
@@ -415,12 +393,7 @@ async def validate_azure_openai_deployment(
         except Exception as e:
             error_str = str(e).lower()
             # If it's a 404, try next version. If it's auth/permission error, fail immediately
-            if (
-                "401" in str(e)
-                or "unauthorized" in error_str
-                or "403" in str(e)
-                or "forbidden" in error_str
-            ):
+            if "401" in str(e) or "unauthorized" in error_str or "403" in str(e) or "forbidden" in error_str:
                 # Don't try other versions for auth errors
                 last_error = str(e)
                 break
@@ -435,15 +408,9 @@ async def validate_azure_openai_deployment(
 
     # If we get here, all API versions failed
     error_str = str(last_error).lower() if last_error else ""
-    full_error = (
-        f"{type(last_error).__name__}: {last_error}" if last_error else "Unknown error"
-    )
+    full_error = f"{type(last_error).__name__}: {last_error}" if last_error else "Unknown error"
 
-    if (
-        "401" in str(last_error)
-        or "unauthorized" in error_str
-        or "authentication" in error_str
-    ):
+    if "401" in str(last_error) or "unauthorized" in error_str or "authentication" in error_str:
         return False, (
             f"Authentication failed for Azure OpenAI resource at {endpoint}. "
             f"Tried API versions: {', '.join(api_versions_to_try)}\n"
@@ -460,11 +427,7 @@ async def validate_azure_openai_deployment(
             f"Please verify you have the necessary permissions. "
             f"Error: {full_error}"
         )
-    elif (
-        "404" in str(last_error)
-        or "not found" in error_str
-        or "resource not found" in error_str
-    ):
+    elif "404" in str(last_error) or "not found" in error_str or "resource not found" in error_str:
         return False, (
             f"Deployment '{deployment_name}' not found in Azure OpenAI resource at {endpoint}. "
             f"Tried API versions: {', '.join(api_versions_to_try)}\n"

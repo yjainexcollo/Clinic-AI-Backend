@@ -9,9 +9,7 @@ from ..schemas.common import ApiResponse, ErrorResponse
 
 def ok(request: Request, data: Any = None, message: str = "") -> ApiResponse[Any]:
     req_id = getattr(request.state, "request_id", None)
-    return ApiResponse(
-        success=True, message=message, request_id=req_id or "", data=data
-    )
+    return ApiResponse(success=True, message=message, request_id=req_id or "", data=data)
 
 
 def fail(

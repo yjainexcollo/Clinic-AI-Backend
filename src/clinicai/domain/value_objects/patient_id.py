@@ -53,9 +53,7 @@ class PatientId:
         # Clean and format the name (remove spaces, special chars, convert to lowercase)
         clean_name = re.sub(r"[^a-zA-Z0-9]", "", patient_name).lower()
         if not clean_name:
-            raise ValueError(
-                "Patient name must contain at least one alphanumeric character"
-            )
+            raise ValueError("Patient name must contain at least one alphanumeric character")
 
         # Clean phone number (remove all non-digits)
         clean_phone = re.sub(r"\D", "", phone_number)

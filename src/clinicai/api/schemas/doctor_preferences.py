@@ -25,27 +25,15 @@ class PreVisitSectionConfig(BaseModel):
 
 
 class PreVisitAIConfig(BaseModel):
-    style: Optional[str] = Field(
-        default=None, description="concise | standard | comprehensive"
-    )
-    focus_areas: Optional[List[str]] = Field(
-        default=None, description="Preferred focus areas"
-    )
-    include_red_flags: Optional[bool] = Field(
-        default=None, description="Whether to highlight red flags"
-    )
+    style: Optional[str] = Field(default=None, description="concise | standard | comprehensive")
+    focus_areas: Optional[List[str]] = Field(default=None, description="Preferred focus areas")
+    include_red_flags: Optional[bool] = Field(default=None, description="Whether to highlight red flags")
 
 
 class SoapAIConfig(BaseModel):
-    detail_level: Optional[str] = Field(
-        default=None, description="brief | standard | detailed"
-    )
-    formatting: Optional[str] = Field(
-        default=None, description="bullet_points | paragraphs"
-    )
-    language: Optional[str] = Field(
-        default=None, description="Language override (e.g., en, hi)"
-    )
+    detail_level: Optional[str] = Field(default=None, description="brief | standard | detailed")
+    formatting: Optional[str] = Field(default=None, description="bullet_points | paragraphs")
+    language: Optional[str] = Field(default=None, description="Language override (e.g., en, hi)")
 
 
 class DoctorPreferencesResponse(BaseModel):

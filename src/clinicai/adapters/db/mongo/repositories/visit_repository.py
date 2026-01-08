@@ -39,9 +39,7 @@ class MongoVisitRepository(VisitRepository):
         logger.info(f"Saving visit {visit.visit_id.value} to database")
         logger.info(f"Visit status: {visit.status}")
         if visit.transcription_session:
-            logger.info(
-                f"Transcription session status: {visit.transcription_session.transcription_status}"
-            )
+            logger.info(f"Transcription session status: {visit.transcription_session.transcription_status}")
             logger.info(
                 f"Transcript length: {len(visit.transcription_session.transcript) if visit.transcription_session.transcript else 0}"
             )
@@ -54,9 +52,7 @@ class MongoVisitRepository(VisitRepository):
 
         # Save to database
         await visit_mongo.save()
-        logger.info(
-            f"Visit {visit.visit_id.value} saved to database with ID: {visit_mongo.id}"
-        )
+        logger.info(f"Visit {visit.visit_id.value} saved to database with ID: {visit_mongo.id}")
 
         # Remove revision_id from the document after saving using raw MongoDB operations
         if visit_mongo.id:
@@ -69,9 +65,7 @@ class MongoVisitRepository(VisitRepository):
             db = client[settings.database.db_name]
             collection = db["visits"]
 
-            await collection.update_one(
-                {"_id": visit_mongo.id}, {"$unset": {"revision_id": ""}}
-            )
+            await collection.update_one({"_id": visit_mongo.id}, {"$unset": {"revision_id": ""}})
             logger.info(f"Removed revision_id from visit {visit.visit_id.value}")
 
         # Return the domain entity
@@ -100,13 +94,9 @@ class MongoVisitRepository(VisitRepository):
             .to_list()
         )
 
-        return [
-            await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo
-        ]
+        return [await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo]
 
-    async def find_by_patient_and_visit_id(
-        self, patient_id: str, visit_id: VisitId, doctor_id: str
-    ) -> Optional[Visit]:
+    async def find_by_patient_and_visit_id(self, patient_id: str, visit_id: VisitId, doctor_id: str) -> Optional[Visit]:
         """Find a specific visit for a patient."""
         visit_mongo = await VisitMongo.find_one(
             VisitMongo.patient_id == patient_id,
@@ -119,9 +109,7 @@ class MongoVisitRepository(VisitRepository):
 
         return await self._mongo_to_domain(visit_mongo)
 
-    async def find_latest_by_patient_id(
-        self, patient_id: str, doctor_id: str
-    ) -> Optional[Visit]:
+    async def find_latest_by_patient_id(self, patient_id: str, doctor_id: str) -> Optional[Visit]:
         """Find the latest visit for a specific patient."""
         visit_mongo = (
             await VisitMongo.find(
@@ -155,9 +143,7 @@ class MongoVisitRepository(VisitRepository):
 
         return result is not None
 
-    async def find_all(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find all visits with pagination."""
         visits_mongo = (
             await VisitMongo.find(VisitMongo.doctor_id == doctor_id)
@@ -167,13 +153,9 @@ class MongoVisitRepository(VisitRepository):
             .to_list()
         )
 
-        return [
-            await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo
-        ]
+        return [await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo]
 
-    async def find_by_status(
-        self, status: str, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_by_status(self, status: str, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find visits by status with pagination."""
         visits_mongo = (
             await VisitMongo.find(
@@ -186,9 +168,7 @@ class MongoVisitRepository(VisitRepository):
             .to_list()
         )
 
-        return [
-            await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo
-        ]
+        return [await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo]
 
     async def count_by_patient_id(self, patient_id: str, doctor_id: str) -> int:
         """Count total visits for a patient."""
@@ -216,25 +196,15 @@ class MongoVisitRepository(VisitRepository):
             .to_list()
         )
 
-        return [
-            await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo
-        ]
+        return [await self._mongo_to_domain(visit_mongo) for visit_mongo in visits_mongo]
 
-    async def find_walk_in_visits(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_walk_in_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find walk-in visits with pagination."""
-        return await self.find_by_workflow_type(
-            VisitWorkflowType.WALK_IN, doctor_id, limit, offset
-        )
+        return await self.find_by_workflow_type(VisitWorkflowType.WALK_IN, doctor_id, limit, offset)
 
-    async def find_scheduled_visits(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_scheduled_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find scheduled visits with pagination."""
-        return await self.find_by_workflow_type(
-            VisitWorkflowType.SCHEDULED, doctor_id, limit, offset
-        )
+        return await self.find_by_workflow_type(VisitWorkflowType.SCHEDULED, doctor_id, limit, offset)
 
     async def find_patients_with_visits(
         self,
@@ -274,16 +244,8 @@ class MongoVisitRepository(VisitRepository):
                     "_id": "$patient_id",
                     "latest_visit": {"$first": "$$ROOT"},
                     "total_visits": {"$sum": 1},
-                    "scheduled_visits_count": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$workflow_type", "scheduled"]}, 1, 0]
-                        }
-                    },
-                    "walk_in_visits_count": {
-                        "$sum": {
-                            "$cond": [{"$eq": ["$workflow_type", "walk_in"]}, 1, 0]
-                        }
-                    },
+                    "scheduled_visits_count": {"$sum": {"$cond": [{"$eq": ["$workflow_type", "scheduled"]}, 1, 0]}},
+                    "walk_in_visits_count": {"$sum": {"$cond": [{"$eq": ["$workflow_type", "walk_in"]}, 1, 0]}},
                 }
             },
             # Lookup patient information
@@ -383,9 +345,7 @@ class MongoVisitRepository(VisitRepository):
                 started_at=visit.intake_session.started_at,
                 completed_at=visit.intake_session.completed_at,
                 pending_question=visit.intake_session.pending_question,
-                travel_questions_count=getattr(
-                    visit.intake_session, "travel_questions_count", 0
-                ),
+                travel_questions_count=getattr(visit.intake_session, "travel_questions_count", 0),
                 asked_categories=getattr(visit.intake_session, "asked_categories", []),
             )
 
@@ -402,58 +362,26 @@ class MongoVisitRepository(VisitRepository):
                 worker_id=getattr(visit.transcription_session, "worker_id", None),
                 audio_duration_seconds=visit.transcription_session.audio_duration_seconds,
                 word_count=visit.transcription_session.word_count,
-                structured_dialogue=getattr(
-                    visit.transcription_session, "structured_dialogue", None
-                ),
-                transcription_id=getattr(
-                    visit.transcription_session, "transcription_id", None
-                ),
-                last_poll_status=getattr(
-                    visit.transcription_session, "last_poll_status", None
-                ),
+                structured_dialogue=getattr(visit.transcription_session, "structured_dialogue", None),
+                transcription_id=getattr(visit.transcription_session, "transcription_id", None),
+                last_poll_status=getattr(visit.transcription_session, "last_poll_status", None),
                 last_poll_at=getattr(visit.transcription_session, "last_poll_at", None),
                 enqueued_at=getattr(visit.transcription_session, "enqueued_at", None),
                 dequeued_at=getattr(visit.transcription_session, "dequeued_at", None),
-                azure_job_created_at=getattr(
-                    visit.transcription_session, "azure_job_created_at", None
-                ),
-                first_poll_at=getattr(
-                    visit.transcription_session, "first_poll_at", None
-                ),
-                results_downloaded_at=getattr(
-                    visit.transcription_session, "results_downloaded_at", None
-                ),
+                azure_job_created_at=getattr(visit.transcription_session, "azure_job_created_at", None),
+                first_poll_at=getattr(visit.transcription_session, "first_poll_at", None),
+                results_downloaded_at=getattr(visit.transcription_session, "results_downloaded_at", None),
                 db_saved_at=getattr(visit.transcription_session, "db_saved_at", None),
-                normalized_audio=getattr(
-                    visit.transcription_session, "normalized_audio", None
-                ),
-                original_content_type=getattr(
-                    visit.transcription_session, "original_content_type", None
-                ),
-                normalized_format=getattr(
-                    visit.transcription_session, "normalized_format", None
-                ),
-                file_content_type=getattr(
-                    visit.transcription_session, "file_content_type", None
-                ),
-                enqueue_state=getattr(
-                    visit.transcription_session, "enqueue_state", None
-                ),
-                enqueue_attempts=getattr(
-                    visit.transcription_session, "enqueue_attempts", None
-                ),
-                enqueue_last_error=getattr(
-                    visit.transcription_session, "enqueue_last_error", None
-                ),
-                enqueue_requested_at=getattr(
-                    visit.transcription_session, "enqueue_requested_at", None
-                ),
-                enqueue_failed_at=getattr(
-                    visit.transcription_session, "enqueue_failed_at", None
-                ),
-                queue_message_id=getattr(
-                    visit.transcription_session, "queue_message_id", None
-                ),
+                normalized_audio=getattr(visit.transcription_session, "normalized_audio", None),
+                original_content_type=getattr(visit.transcription_session, "original_content_type", None),
+                normalized_format=getattr(visit.transcription_session, "normalized_format", None),
+                file_content_type=getattr(visit.transcription_session, "file_content_type", None),
+                enqueue_state=getattr(visit.transcription_session, "enqueue_state", None),
+                enqueue_attempts=getattr(visit.transcription_session, "enqueue_attempts", None),
+                enqueue_last_error=getattr(visit.transcription_session, "enqueue_last_error", None),
+                enqueue_requested_at=getattr(visit.transcription_session, "enqueue_requested_at", None),
+                enqueue_failed_at=getattr(visit.transcription_session, "enqueue_failed_at", None),
+                queue_message_id=getattr(visit.transcription_session, "queue_message_id", None),
             )
 
         # Convert SOAP note
@@ -483,9 +411,7 @@ class MongoVisitRepository(VisitRepository):
             existing_visit.doctor_id = visit.doctor_id
             existing_visit.status = visit.status
             existing_visit.updated_at = datetime.utcnow()
-            existing_visit.recently_travelled = getattr(
-                visit, "recently_travelled", False
-            )
+            existing_visit.recently_travelled = getattr(visit, "recently_travelled", False)
             existing_visit.symptom = visit.symptom
             existing_visit.intake_session = intake_session_mongo
             existing_visit.pre_visit_summary = visit.pre_visit_summary
@@ -539,16 +465,10 @@ class MongoVisitRepository(VisitRepository):
                 status=visit_mongo.intake_session.status,
                 started_at=visit_mongo.intake_session.started_at,
                 completed_at=visit_mongo.intake_session.completed_at,
-                travel_questions_count=getattr(
-                    visit_mongo.intake_session, "travel_questions_count", 0
-                ),
-                asked_categories=getattr(
-                    visit_mongo.intake_session, "asked_categories", []
-                ),
+                travel_questions_count=getattr(visit_mongo.intake_session, "travel_questions_count", 0),
+                asked_categories=getattr(visit_mongo.intake_session, "asked_categories", []),
             )
-            intake_session.pending_question = getattr(
-                visit_mongo.intake_session, "pending_question", None
-            )
+            intake_session.pending_question = getattr(visit_mongo.intake_session, "pending_question", None)
 
         # Convert transcription session
         transcription_session = None
@@ -563,66 +483,26 @@ class MongoVisitRepository(VisitRepository):
                 worker_id=getattr(visit_mongo.transcription_session, "worker_id", None),
                 audio_duration_seconds=visit_mongo.transcription_session.audio_duration_seconds,
                 word_count=visit_mongo.transcription_session.word_count,
-                structured_dialogue=getattr(
-                    visit_mongo.transcription_session, "structured_dialogue", None
-                ),
-                transcription_id=getattr(
-                    visit_mongo.transcription_session, "transcription_id", None
-                ),
-                last_poll_status=getattr(
-                    visit_mongo.transcription_session, "last_poll_status", None
-                ),
-                last_poll_at=getattr(
-                    visit_mongo.transcription_session, "last_poll_at", None
-                ),
-                enqueued_at=getattr(
-                    visit_mongo.transcription_session, "enqueued_at", None
-                ),
-                dequeued_at=getattr(
-                    visit_mongo.transcription_session, "dequeued_at", None
-                ),
-                azure_job_created_at=getattr(
-                    visit_mongo.transcription_session, "azure_job_created_at", None
-                ),
-                first_poll_at=getattr(
-                    visit_mongo.transcription_session, "first_poll_at", None
-                ),
-                results_downloaded_at=getattr(
-                    visit_mongo.transcription_session, "results_downloaded_at", None
-                ),
-                db_saved_at=getattr(
-                    visit_mongo.transcription_session, "db_saved_at", None
-                ),
-                normalized_audio=getattr(
-                    visit_mongo.transcription_session, "normalized_audio", None
-                ),
-                original_content_type=getattr(
-                    visit_mongo.transcription_session, "original_content_type", None
-                ),
-                normalized_format=getattr(
-                    visit_mongo.transcription_session, "normalized_format", None
-                ),
-                file_content_type=getattr(
-                    visit_mongo.transcription_session, "file_content_type", None
-                ),
-                enqueue_state=getattr(
-                    visit_mongo.transcription_session, "enqueue_state", None
-                ),
-                enqueue_attempts=getattr(
-                    visit_mongo.transcription_session, "enqueue_attempts", None
-                ),
-                enqueue_last_error=getattr(
-                    visit_mongo.transcription_session, "enqueue_last_error", None
-                ),
-                enqueue_requested_at=getattr(
-                    visit_mongo.transcription_session, "enqueue_requested_at", None
-                ),
-                enqueue_failed_at=getattr(
-                    visit_mongo.transcription_session, "enqueue_failed_at", None
-                ),
-                queue_message_id=getattr(
-                    visit_mongo.transcription_session, "queue_message_id", None
-                ),
+                structured_dialogue=getattr(visit_mongo.transcription_session, "structured_dialogue", None),
+                transcription_id=getattr(visit_mongo.transcription_session, "transcription_id", None),
+                last_poll_status=getattr(visit_mongo.transcription_session, "last_poll_status", None),
+                last_poll_at=getattr(visit_mongo.transcription_session, "last_poll_at", None),
+                enqueued_at=getattr(visit_mongo.transcription_session, "enqueued_at", None),
+                dequeued_at=getattr(visit_mongo.transcription_session, "dequeued_at", None),
+                azure_job_created_at=getattr(visit_mongo.transcription_session, "azure_job_created_at", None),
+                first_poll_at=getattr(visit_mongo.transcription_session, "first_poll_at", None),
+                results_downloaded_at=getattr(visit_mongo.transcription_session, "results_downloaded_at", None),
+                db_saved_at=getattr(visit_mongo.transcription_session, "db_saved_at", None),
+                normalized_audio=getattr(visit_mongo.transcription_session, "normalized_audio", None),
+                original_content_type=getattr(visit_mongo.transcription_session, "original_content_type", None),
+                normalized_format=getattr(visit_mongo.transcription_session, "normalized_format", None),
+                file_content_type=getattr(visit_mongo.transcription_session, "file_content_type", None),
+                enqueue_state=getattr(visit_mongo.transcription_session, "enqueue_state", None),
+                enqueue_attempts=getattr(visit_mongo.transcription_session, "enqueue_attempts", None),
+                enqueue_last_error=getattr(visit_mongo.transcription_session, "enqueue_last_error", None),
+                enqueue_requested_at=getattr(visit_mongo.transcription_session, "enqueue_requested_at", None),
+                enqueue_failed_at=getattr(visit_mongo.transcription_session, "enqueue_failed_at", None),
+                queue_message_id=getattr(visit_mongo.transcription_session, "queue_message_id", None),
             )
 
         # Convert SOAP note
@@ -633,9 +513,7 @@ class MongoVisitRepository(VisitRepository):
             if isinstance(objective, str):
                 try:
                     # Try to parse as JSON if it looks like a dict string
-                    if objective.strip().startswith("{") and objective.strip().endswith(
-                        "}"
-                    ):
+                    if objective.strip().startswith("{") and objective.strip().endswith("}"):
                         import json
 
                         objective = json.loads(objective)
@@ -643,17 +521,13 @@ class MongoVisitRepository(VisitRepository):
                         # If it's not JSON, create a basic structure
                         objective = {
                             "vital_signs": {},
-                            "physical_exam": {
-                                "general_appearance": objective or "Not discussed"
-                            },
+                            "physical_exam": {"general_appearance": objective or "Not discussed"},
                         }
                 except:
                     # If parsing fails, create a basic structure
                     objective = {
                         "vital_signs": {},
-                        "physical_exam": {
-                            "general_appearance": objective or "Not discussed"
-                        },
+                        "physical_exam": {"general_appearance": objective or "Not discussed"},
                     }
             elif not isinstance(objective, dict):
                 # If it's neither string nor dict, create a basic structure
@@ -814,9 +688,7 @@ class MongoVisitRepository(VisitRepository):
 
         # Add transcription_session fields with dot notation
         for field_name, field_value in fields.items():
-            update_operation["$set"][
-                f"transcription_session.{field_name}"
-            ] = field_value
+            update_operation["$set"][f"transcription_session.{field_name}"] = field_value
 
         # Update the visit document
         result = await collection.update_one(

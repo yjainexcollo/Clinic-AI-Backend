@@ -98,12 +98,7 @@ def is_strong_match(name1: str, phone1: str, name2: str, phone2: str) -> bool:
     norm_name1, norm_phone1 = normalize_patient_data(name1, phone1)
     norm_name2, norm_phone2 = normalize_patient_data(name2, phone2)
 
-    return (
-        norm_name1 == norm_name2
-        and norm_phone1 == norm_phone2
-        and norm_name1 != ""
-        and norm_phone1 != ""
-    )
+    return norm_name1 == norm_name2 and norm_phone1 == norm_phone2 and norm_name1 != "" and norm_phone1 != ""
 
 
 def generate_patient_id(name: str, phone: str) -> str:
@@ -135,9 +130,7 @@ def validate_phone_otp_verified(phone: str, otp_verified: bool) -> bool:
     return otp_verified
 
 
-def should_prevent_rapid_repeat(
-    patient_id: str, last_visit_time: Optional[str]
-) -> bool:
+def should_prevent_rapid_repeat(patient_id: str, last_visit_time: Optional[str]) -> bool:
     """
     Check if rapid repeat visits should be prevented.
 

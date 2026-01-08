@@ -133,9 +133,7 @@ class HIPAAAuditLogger:
             "request_id": request_id,
             "session_id": session_id,
             "details": details or {},
-            "retention_date": (
-                timestamp + timedelta(days=2190)
-            ).isoformat(),  # Store as ISO string
+            "retention_date": (timestamp + timedelta(days=2190)).isoformat(),  # Store as ISO string
             "created_at": timestamp.isoformat(),  # Store as ISO string
             "immutable": True,  # Mark as immutable
             "checksum": None,  # Will be added below
@@ -159,9 +157,7 @@ class HIPAAAuditLogger:
                     "phi_type": resource_type,
                     "phi_fields": phi_fields,
                     "action": action,
-                    "purpose": (
-                        details.get("purpose", "treatment") if details else "treatment"
-                    ),
+                    "purpose": (details.get("purpose", "treatment") if details else "treatment"),
                     "ip_address": ip_address,
                     "created_at": timestamp,
                 }
@@ -265,9 +261,7 @@ class HIPAAAuditLogger:
         if not is_valid:
             # Debug: Show what fields are in the entry
             excluded_fields = {"checksum", "_id"}
-            entry_for_checksum = {
-                k: v for k, v in entry.items() if k not in excluded_fields
-            }
+            entry_for_checksum = {k: v for k, v in entry.items() if k not in excluded_fields}
 
             # Print to console for immediate visibility
             print(f"❌ Audit integrity mismatch!")

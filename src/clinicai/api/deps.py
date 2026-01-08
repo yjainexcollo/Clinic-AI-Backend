@@ -70,14 +70,10 @@ def get_transcription_service() -> TranscriptionService:
         settings = get_settings()
 
         # Check which transcription service to use
-        transcription_service_type = os.getenv(
-            "TRANSCRIPTION_SERVICE", "azure_speech"
-        ).lower()
+        transcription_service_type = os.getenv("TRANSCRIPTION_SERVICE", "azure_speech").lower()
 
         if transcription_service_type == "azure_speech":
-            print(
-                "Using Azure Speech Service transcription (batch with speaker diarization)"
-            )
+            print("Using Azure Speech Service transcription (batch with speaker diarization)")
             try:
                 from clinicai.adapters.external.transcription_service_azure_speech import (
                     AzureSpeechTranscriptionService,
@@ -133,12 +129,8 @@ def get_current_user(request: Request) -> str:
 # Dependency annotations for FastAPI
 VisitRepositoryDep = Annotated[VisitRepository, Depends(get_visit_repository)]
 PatientRepositoryDep = Annotated[PatientRepository, Depends(get_patient_repository)]
-AudioRepositoryDep = Annotated[
-    AudioRepository, Depends(get_audio_repository)
-]  # Internal use for transcription
+AudioRepositoryDep = Annotated[AudioRepository, Depends(get_audio_repository)]  # Internal use for transcription
 QuestionServiceDep = Annotated[QuestionService, Depends(get_question_service)]
-TranscriptionServiceDep = Annotated[
-    TranscriptionService, Depends(get_transcription_service)
-]
+TranscriptionServiceDep = Annotated[TranscriptionService, Depends(get_transcription_service)]
 SoapServiceDep = Annotated[SoapService, Depends(get_soap_service)]
 CurrentUserDep = Annotated[str, Depends(get_current_user)]

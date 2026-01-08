@@ -41,9 +41,7 @@ class IntakeSession:
     completed_at: Optional[datetime] = None
     pending_question: Optional[str] = None
     travel_questions_count: int = 0  # Track how many travel-related questions asked
-    asked_categories: List[str] = field(
-        default_factory=list
-    )  # Code-truth topic tracking
+    asked_categories: List[str] = field(default_factory=list)  # Code-truth topic tracking
 
     def __post_init__(self) -> None:
         """Normalize primary symptom string (no fixed whitelist)."""
@@ -59,9 +57,7 @@ class IntakeSession:
     ) -> None:
         # Check limit
         if self.current_question_count >= self.max_questions:
-            raise QuestionLimitExceededError(
-                self.current_question_count, self.max_questions
-            )
+            raise QuestionLimitExceededError(self.current_question_count, self.max_questions)
 
         # Check for duplicate questions - exact text match only
         # Note: Semantic duplicate checking is handled at the application layer
@@ -107,10 +103,7 @@ class IntakeSession:
 
     def can_ask_more_questions(self) -> bool:
         """Check if more questions can be asked."""
-        return (
-            self.current_question_count < self.max_questions
-            and self.status == "in_progress"
-        )
+        return self.current_question_count < self.max_questions and self.status == "in_progress"
 
     def is_complete(self) -> bool:
         """Check if intake is complete."""
@@ -151,45 +144,31 @@ class TranscriptionSession:
 
     audio_file_path: Optional[str] = None
     transcript: Optional[str] = None
-    transcription_status: str = (
-        "pending"  # pending, queued, processing, completed, failed
-    )
+    transcription_status: str = "pending"  # pending, queued, processing, completed, failed
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
-    worker_id: Optional[str] = (
-        None  # Worker that claimed/processed this job (format: "hostname:pid")
-    )
+    worker_id: Optional[str] = None  # Worker that claimed/processed this job (format: "hostname:pid")
     audio_duration_seconds: Optional[float] = None
     word_count: Optional[int] = None
     # Cached structured dialogue turns (ordered Doctor/Patient), to avoid re-structuring on the fly
     structured_dialogue: Optional[List[Dict[str, Any]]] = None
-    transcription_id: Optional[str] = (
-        None  # Azure Speech Service transcription job ID for tracking
-    )
+    transcription_id: Optional[str] = None  # Azure Speech Service transcription job ID for tracking
     last_poll_status: Optional[str] = (
         None  # Last polled status from Azure Speech Service (Succeeded, Running, Failed, etc.)
     )
-    last_poll_at: Optional[datetime] = (
-        None  # Timestamp of last status poll from Azure Speech Service
-    )
+    last_poll_at: Optional[datetime] = None  # Timestamp of last status poll from Azure Speech Service
     # Observability timestamps for latency analysis
     enqueued_at: Optional[datetime] = None  # When job was enqueued to Azure Queue
     dequeued_at: Optional[datetime] = None  # When worker dequeued the job
     azure_job_created_at: Optional[datetime] = None  # When Azure Speech job was created
     first_poll_at: Optional[datetime] = None  # When first status poll was made
-    results_downloaded_at: Optional[datetime] = (
-        None  # When transcription results were downloaded
-    )
+    results_downloaded_at: Optional[datetime] = None  # When transcription results were downloaded
     db_saved_at: Optional[datetime] = None  # When transcript was saved to database
     # Audio normalization metadata
     normalized_audio: Optional[bool] = None  # Whether audio was normalized/converted
-    original_content_type: Optional[str] = (
-        None  # Original content type before normalization
-    )
-    normalized_format: Optional[str] = (
-        None  # Format after normalization (e.g., wav_16khz_mono_pcm)
-    )
+    original_content_type: Optional[str] = None  # Original content type before normalization
+    normalized_format: Optional[str] = None  # Format after normalization (e.g., wav_16khz_mono_pcm)
     file_content_type: Optional[str] = None  # Final content type used for transcription
     # Enqueue tracking (two-phase enqueue state machine)
     enqueue_state: Optional[str] = None  # "pending" | "queued" | "failed"
@@ -224,9 +203,7 @@ class Visit:
     doctor_id: str  # Owning doctor
     symptom: str
     workflow_type: VisitWorkflowType = VisitWorkflowType.SCHEDULED
-    status: str = (
-        "intake"  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
-    )
+    status: str = "intake"  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -291,11 +268,7 @@ class Visit:
 
     def update_answer(self, question_number: int, new_answer: str) -> None:
         """Update an existing answer by question number."""
-        if (
-            not self.intake_session
-            or question_number < 1
-            or question_number > len(self.intake_session.questions_asked)
-        ):
+        if not self.intake_session or question_number < 1 or question_number > len(self.intake_session.questions_asked):
             raise ValueError("Invalid question number")
         self.intake_session.questions_asked[question_number - 1].answer = new_answer
         self.updated_at = datetime.utcnow()
@@ -333,15 +306,11 @@ class Visit:
             "intake_status": self.intake_session.status,
             "started_at": self.intake_session.started_at.isoformat(),
             "completed_at": (
-                self.intake_session.completed_at.isoformat()
-                if self.intake_session.completed_at
-                else None
+                self.intake_session.completed_at.isoformat() if self.intake_session.completed_at else None
             ),
         }
 
-    def store_pre_visit_summary(
-        self, summary: str, red_flags: Optional[List[Dict[str, str]]] = None
-    ) -> None:
+    def store_pre_visit_summary(self, summary: str, red_flags: Optional[List[Dict[str, str]]] = None) -> None:
         """Store pre-visit summary in EHR (minimal schema)."""
         self.pre_visit_summary = {
             "summary": summary,
@@ -447,9 +416,7 @@ class Visit:
             steps.extend(["intake", "pre_visit_summary"])
         elif self.status == "pre_visit_summary_generated":
             # After pre-visit summary, vitals form comes next
-            steps.extend(
-                ["vitals", "transcription", "soap_generation", "post_visit_summary"]
-            )
+            steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
         elif self.status in ["vitals", "vitals_pending", "transcription"]:
             # After vitals (or during transcription), all subsequent steps are available
             steps.extend(["transcription", "soap_generation", "post_visit_summary"])
@@ -498,16 +465,11 @@ class Visit:
         Used when enqueuing to Azure Queue - actual processing is claimed by worker atomically.
         """
         if not self.can_proceed_to_transcription():
-            raise ValueError(
-                f"Cannot queue transcription. Current status: {self.status}"
-            )
+            raise ValueError(f"Cannot queue transcription. Current status: {self.status}")
 
         now = datetime.utcnow()
         # Only update if not already completed (idempotency)
-        if (
-            self.transcription_session
-            and self.transcription_session.transcription_status == "completed"
-        ):
+        if self.transcription_session and self.transcription_session.transcription_status == "completed":
             return  # Already completed, don't overwrite
 
         # Preserve existing transcription_session fields if it exists (e.g., transcription_id, last_poll_status)
@@ -516,16 +478,10 @@ class Visit:
             if audio_file_path is not None:
                 self.transcription_session.audio_file_path = audio_file_path
             self.transcription_session.transcription_status = "queued"
-            self.transcription_session.started_at = (
-                None  # Will be set when worker claims it
-            )
+            self.transcription_session.started_at = None  # Will be set when worker claims it
             self.transcription_session.enqueued_at = enqueued_at or now
-            self.transcription_session.dequeued_at = (
-                None  # Will be set when worker claims it
-            )
-            self.transcription_session.worker_id = (
-                None  # Will be set when worker claims it
-            )
+            self.transcription_session.dequeued_at = None  # Will be set when worker claims it
+            self.transcription_session.worker_id = None  # Will be set when worker claims it
             self.transcription_session.error_message = None  # Clear any previous errors
         else:
             # Create new session only if none exists
@@ -632,14 +588,10 @@ class Visit:
         # Preserve previous transcription_status; explicitly avoid setting it to "queued"
         self.updated_at = datetime.utcnow()
 
-    def start_transcription(
-        self, audio_file_path: str, enqueued_at: Optional[datetime] = None
-    ) -> None:
+    def start_transcription(self, audio_file_path: str, enqueued_at: Optional[datetime] = None) -> None:
         """Start the transcription process."""
         if not self.can_proceed_to_transcription():
-            raise ValueError(
-                f"Cannot start transcription. Current status: {self.status}"
-            )
+            raise ValueError(f"Cannot start transcription. Current status: {self.status}")
 
         now = datetime.utcnow()
         # Preserve existing transcription_session fields if it exists (e.g., transcription_id, last_poll_status)
@@ -659,8 +611,7 @@ class Visit:
                 audio_file_path=audio_file_path,
                 transcription_status="processing",
                 started_at=now,
-                enqueued_at=enqueued_at
-                or now,  # Use provided enqueued_at or fallback to now
+                enqueued_at=enqueued_at or now,  # Use provided enqueued_at or fallback to now
             )
         if self.is_walk_in_workflow():
             self.status = "transcription"
@@ -703,9 +654,7 @@ class Visit:
     def start_soap_generation(self) -> None:
         """Start the SOAP generation process."""
         if not self.can_proceed_to_soap():
-            raise ValueError(
-                f"Cannot start SOAP generation. Current status: {self.status}"
-            )
+            raise ValueError(f"Cannot start SOAP generation. Current status: {self.status}")
 
         if self.is_walk_in_workflow():
             self.status = "soap_pending"
@@ -724,9 +673,7 @@ class Visit:
     def start_post_visit_summary(self) -> None:
         """Start the post-visit summary generation process."""
         if not self.can_proceed_to_post_visit():
-            raise ValueError(
-                f"Cannot start post-visit summary. Current status: {self.status}"
-            )
+            raise ValueError(f"Cannot start post-visit summary. Current status: {self.status}")
 
         if self.is_walk_in_workflow():
             self.status = "post_visit_pending"
@@ -756,9 +703,7 @@ class Visit:
         self.transcription_session.transcription_status = "completed"
         self.transcription_session.completed_at = datetime.utcnow()
         self.transcription_session.audio_duration_seconds = audio_duration
-        self.transcription_session.word_count = (
-            len(transcript.split()) if transcript else 0
-        )
+        self.transcription_session.word_count = len(transcript.split()) if transcript else 0
 
         # Store structured dialogue if provided
         if structured_dialogue:
@@ -796,9 +741,7 @@ class Visit:
 
         # For walk-in workflows, also allow vitals_completed (next step after vitals)
         if self.is_walk_in_workflow():
-            valid_statuses_for_soap.extend(
-                ["vitals_completed", "transcription_completed"]
-            )
+            valid_statuses_for_soap.extend(["vitals_completed", "transcription_completed"])
         # For scheduled workflows, also allow transcription and transcription_completed
         elif self.is_scheduled_workflow():
             valid_statuses_for_soap.extend(["transcription", "transcription_completed"])
@@ -864,10 +807,7 @@ class Visit:
 
     def is_transcription_complete(self) -> bool:
         """Check if transcription is complete."""
-        return (
-            self.transcription_session
-            and self.transcription_session.transcription_status == "completed"
-        )
+        return self.transcription_session and self.transcription_session.transcription_status == "completed"
 
     def is_soap_generated(self) -> bool:
         """Check if SOAP note is generated."""

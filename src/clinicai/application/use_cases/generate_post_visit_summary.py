@@ -30,9 +30,7 @@ class GeneratePostVisitSummaryUseCase:
         self._visit_repository = visit_repository
         self._soap_service = soap_service
 
-    async def execute(
-        self, request: PostVisitSummaryRequest, doctor_id: str
-    ) -> PostVisitSummaryResponse:
+    async def execute(self, request: PostVisitSummaryRequest, doctor_id: str) -> PostVisitSummaryResponse:
         """Generate a comprehensive post-visit summary for patient sharing."""
 
         # Find patient
@@ -43,23 +41,17 @@ class GeneratePostVisitSummaryUseCase:
 
         # Find visit
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id, doctor_id
-        )
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
         # Check if visit has SOAP note generated
         if not visit.is_soap_generated():
-            raise ValueError(
-                "Cannot generate post-visit summary. SOAP note must be generated first."
-            )
+            raise ValueError("Cannot generate post-visit summary. SOAP note must be generated first.")
 
         # Check if post-visit summary already exists
         if visit.has_post_visit_summary():
-            raise ValueError(
-                "Post-visit summary already exists for this visit. Use GET endpoint to retrieve it."
-            )
+            raise ValueError("Post-visit summary already exists for this visit. Use GET endpoint to retrieve it.")
 
         # Get SOAP note data
         soap_note = visit.get_soap_note()
@@ -109,19 +101,13 @@ class GeneratePostVisitSummaryUseCase:
 
         # Get chief complaint - use visit symptom or fallback to first question answer
         chief_complaint = visit.symptom
-        if (
-            not chief_complaint
-            and visit.intake_session
-            and visit.intake_session.questions_asked
-        ):
+        if not chief_complaint and visit.intake_session and visit.intake_session.questions_asked:
             chief_complaint = visit.intake_session.questions_asked[0].answer
 
         response = PostVisitSummaryResponse(
             chief_complaint=chief_complaint or "General consultation",
             key_findings=parsed_summary.get("key_findings", []),
-            diagnosis=parsed_summary.get(
-                "diagnosis", "Please consult with your doctor for diagnosis"
-            ),
+            diagnosis=parsed_summary.get("diagnosis", "Please consult with your doctor for diagnosis"),
             medications=parsed_summary.get("medications", []),
             other_recommendations=parsed_summary.get("other_recommendations", []),
             tests_ordered=parsed_summary.get("tests_ordered", []),
@@ -161,9 +147,7 @@ class GeneratePostVisitSummaryUseCase:
         except Exception as e:
             import logging
 
-            logging.getLogger("clinicai").warning(
-                f"Failed to append structured post-visit log: {e}"
-            )
+            logging.getLogger("clinicai").warning(f"Failed to append structured post-visit log: {e}")
 
         # Persist to visit for future retrieval
         try:
@@ -179,9 +163,7 @@ class GeneratePostVisitSummaryUseCase:
 
         return response
 
-    def _parse_summary_result(
-        self, summary_result: Dict[str, Any], chief_complaint: str
-    ) -> Dict[str, Any]:
+    def _parse_summary_result(self, summary_result: Dict[str, Any], chief_complaint: str) -> Dict[str, Any]:
         """Parse and structure the AI-generated summary result according to recommended format."""
 
         # Default structure following the recommended format
@@ -205,18 +187,12 @@ class GeneratePostVisitSummaryUseCase:
                     "key_findings": summary_result.get("key_findings", []),
                     "diagnosis": summary_result.get("diagnosis", ""),
                     "medications": summary_result.get("medications", []),
-                    "other_recommendations": summary_result.get(
-                        "other_recommendations", []
-                    ),
+                    "other_recommendations": summary_result.get("other_recommendations", []),
                     "tests_ordered": summary_result.get("tests_ordered", []),
                     "next_appointment": summary_result.get("next_appointment"),
                     "red_flag_symptoms": summary_result.get("red_flag_symptoms", []),
-                    "patient_instructions": summary_result.get(
-                        "patient_instructions", []
-                    ),
-                    "reassurance_note": summary_result.get(
-                        "reassurance_note", parsed["reassurance_note"]
-                    ),
+                    "patient_instructions": summary_result.get("patient_instructions", []),
+                    "reassurance_note": summary_result.get("reassurance_note", parsed["reassurance_note"]),
                 }
             )
         else:

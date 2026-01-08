@@ -39,9 +39,7 @@ def normalize_template(template: str) -> str:
         "{DYNAMIC_VAR}",
         normalized,
     )
-    normalized = re.sub(
-        r"\{[^}]+\.format\([^)]*\)\}", "{DYNAMIC_VAR}", normalized  # {obj.format(...)}
-    )
+    normalized = re.sub(r"\{[^}]+\.format\([^)]*\)\}", "{DYNAMIC_VAR}", normalized)  # {obj.format(...)}
 
     # STEP 3: Replace dict.get() calls
     # Pattern: {dict.get('key', 'default')} -> {DYNAMIC_DICT}
@@ -63,11 +61,7 @@ def normalize_template(template: str) -> str:
     # Pattern: f"{variable}" -> {DYNAMIC_VAR} (but only if not already a placeholder)
     normalized = re.sub(
         r'f"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"',
-        lambda m: (
-            "{DYNAMIC_VAR}"
-            if m.group(1) not in ["DYNAMIC_DICT", "DYNAMIC_VAR", "VERSION"]
-            else m.group(0)
-        ),
+        lambda m: ("{DYNAMIC_VAR}" if m.group(1) not in ["DYNAMIC_DICT", "DYNAMIC_VAR", "VERSION"] else m.group(0)),
         normalized,
     )
 
@@ -75,11 +69,7 @@ def normalize_template(template: str) -> str:
     # Pattern: {variable} -> {DYNAMIC_VAR} (but preserve our placeholders)
     normalized = re.sub(
         r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}",  # {variable} - but not {DYNAMIC_DICT} etc.
-        lambda m: (
-            "{DYNAMIC_VAR}"
-            if m.group(1) not in ["DYNAMIC_DICT", "DYNAMIC_VAR", "VERSION"]
-            else m.group(0)
-        ),
+        lambda m: ("{DYNAMIC_VAR}" if m.group(1) not in ["DYNAMIC_DICT", "DYNAMIC_VAR", "VERSION"] else m.group(0)),
         normalized,
     )
 
@@ -92,9 +82,7 @@ def normalize_template(template: str) -> str:
     )
 
     # STEP 8: Normalize whitespace (preserve intentional line breaks)
-    normalized = re.sub(
-        r"[ \t]+", " ", normalized
-    )  # Multiple spaces/tabs -> single space
+    normalized = re.sub(r"[ \t]+", " ", normalized)  # Multiple spaces/tabs -> single space
     normalized = re.sub(r" *\n *", "\n", normalized)  # Clean up line breaks
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)  # Max 2 consecutive newlines
     normalized = normalized.strip()
@@ -121,15 +109,11 @@ def extract_soap_prompt() -> str:
 
     # Extract English prompt (else block) - handle f-strings
     # Pattern matches: else:\n            prompt = f"""..."""
-    match = re.search(
-        r'else:\s+prompt\s*=\s*f?"""(.*?)"""', source[else_start:], re.DOTALL
-    )
+    match = re.search(r'else:\s+prompt\s*=\s*f?"""(.*?)"""', source[else_start:], re.DOTALL)
 
     if not match:
         # Try without 'else:' prefix (fallback)
-        match = re.search(
-            r'prompt\s*=\s*f?"""You are a clinical scribe(.*?)"""', source, re.DOTALL
-        )
+        match = re.search(r'prompt\s*=\s*f?"""You are a clinical scribe(.*?)"""', source, re.DOTALL)
 
     if not match:
         raise ValueError("Could not extract SOAP prompt template")
@@ -138,14 +122,10 @@ def extract_soap_prompt() -> str:
 
     # Validate it's English (not Spanish)
     if "Eres un escribano" in template or "Genera una nota SOAP" in template:
-        raise ValueError(
-            "Extracted Spanish prompt instead of English! Check extraction logic."
-        )
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
 
     if "You are a clinical scribe" not in template:
-        raise ValueError(
-            "Extracted prompt does not contain English marker! Check extraction logic."
-        )
+        raise ValueError("Extracted prompt does not contain English marker! Check extraction logic.")
 
     # CRITICAL: Replace {ordered_en_sections} with {DYNAMIC_VAR} BEFORE normalization
     # This variable contains the JSON schema which is dynamically built
@@ -160,9 +140,7 @@ def extract_postvisit_prompt() -> str:
 
     from clinicai.adapters.external import soap_service_openai
 
-    method = getattr(
-        soap_service_openai.OpenAISoapService, "generate_post_visit_summary", None
-    )
+    method = getattr(soap_service_openai.OpenAISoapService, "generate_post_visit_summary", None)
     if not method:
         raise ValueError("Could not find generate_post_visit_summary method")
 
@@ -171,14 +149,10 @@ def extract_postvisit_prompt() -> str:
     # Find the else block (English version)
     else_start = source.find("else:")
     if else_start == -1:
-        raise ValueError(
-            "Could not find else block (English prompt) in post-visit method"
-        )
+        raise ValueError("Could not find else block (English prompt) in post-visit method")
 
     # Extract English prompt from else block
-    match = re.search(
-        r'else:\s+prompt\s*=\s*f?"""(.*?)"""', source[else_start:], re.DOTALL
-    )
+    match = re.search(r'else:\s+prompt\s*=\s*f?"""(.*?)"""', source[else_start:], re.DOTALL)
 
     if not match:
         # Fallback: try without 'else:' prefix
@@ -194,18 +168,11 @@ def extract_postvisit_prompt() -> str:
     template = match.group(1)
 
     # Validate it's English (not Spanish)
-    if (
-        "Estás generando un resumen post-consulta" in template
-        or "Genera un resumen post-consulta" in template
-    ):
-        raise ValueError(
-            "Extracted Spanish prompt instead of English! Check extraction logic."
-        )
+    if "Estás generando un resumen post-consulta" in template or "Genera un resumen post-consulta" in template:
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
 
     if "You are generating a post-visit summary" not in template:
-        raise ValueError(
-            "Extracted prompt does not contain English marker! Check extraction logic."
-        )
+        raise ValueError("Extracted prompt does not contain English marker! Check extraction logic.")
 
     return normalize_template(template)
 
@@ -236,31 +203,23 @@ def extract_intake_prompt() -> str:
     # Extract Agent-01 (Medical Context Analyzer) prompt
     # ============================================================================
     try:
-        analyzer_class = getattr(
-            question_service_openai, "MedicalContextAnalyzer", None
-        )
+        analyzer_class = getattr(question_service_openai, "MedicalContextAnalyzer", None)
         if not analyzer_class:
             raise ValueError("MedicalContextAnalyzer class not found")
 
         method = getattr(analyzer_class, "analyze_condition", None)
         if not method:
-            raise ValueError(
-                "analyze_condition method not found in MedicalContextAnalyzer"
-            )
+            raise ValueError("analyze_condition method not found in MedicalContextAnalyzer")
 
         source = inspect.getsource(method)
         # Extract English system_prompt (directly defined, not in else block)
         # Pattern: system_prompt = """You are AGENT-01...
-        match = re.search(
-            r'system_prompt\s*=\s*"""You are AGENT-01(.*?)"""', source, re.DOTALL
-        )
+        match = re.search(r'system_prompt\s*=\s*"""You are AGENT-01(.*?)"""', source, re.DOTALL)
         if not match:
             raise ValueError("Could not extract Agent-01 prompt with regex")
 
         agent1_prompt = normalize_template("You are AGENT-01" + match.group(1))
-        combined_prompts.append(
-            f"=== AGENT-01: MEDICAL CONTEXT ANALYZER ===\n{agent1_prompt}"
-        )
+        combined_prompts.append(f"=== AGENT-01: MEDICAL CONTEXT ANALYZER ===\n{agent1_prompt}")
 
     except Exception as e:
         error_msg = f"Failed to extract Agent-01 prompt: {e}"
@@ -277,23 +236,17 @@ def extract_intake_prompt() -> str:
 
         method = getattr(extractor_class, "extract_covered_information", None)
         if not method:
-            raise ValueError(
-                "extract_covered_information method not found in AnswerExtractor"
-            )
+            raise ValueError("extract_covered_information method not found in AnswerExtractor")
 
         source = inspect.getsource(method)
         # Extract English system_prompt (directly defined, not in else block)
         # Pattern: system_prompt = """You are AGENT-02...
-        match = re.search(
-            r'system_prompt\s*=\s*"""You are AGENT-02(.*?)"""', source, re.DOTALL
-        )
+        match = re.search(r'system_prompt\s*=\s*"""You are AGENT-02(.*?)"""', source, re.DOTALL)
         if not match:
             raise ValueError("Could not extract Agent-02 prompt with regex")
 
         agent2_prompt = normalize_template("You are AGENT-02" + match.group(1))
-        combined_prompts.append(
-            f"=== AGENT-02: COVERAGE & FACT EXTRACTOR ===\n{agent2_prompt}"
-        )
+        combined_prompts.append(f"=== AGENT-02: COVERAGE & FACT EXTRACTOR ===\n{agent2_prompt}")
 
     except Exception as e:
         error_msg = f"Failed to extract Agent-02 prompt: {e}"
@@ -311,23 +264,17 @@ def extract_intake_prompt() -> str:
         # Use generate_question_for_topic method (not generate_question)
         method = getattr(generator_class, "generate_question_for_topic", None)
         if not method:
-            raise ValueError(
-                "generate_question_for_topic method not found in QuestionGenerator"
-            )
+            raise ValueError("generate_question_for_topic method not found in QuestionGenerator")
 
         source = inspect.getsource(method)
         # Extract English system_prompt (the main system_prompt assignment)
         # Pattern: system_prompt = f"""You are AGENT-03...
-        match = re.search(
-            r'system_prompt\s*=\s*f?"""You are AGENT-03(.*?)"""', source, re.DOTALL
-        )
+        match = re.search(r'system_prompt\s*=\s*f?"""You are AGENT-03(.*?)"""', source, re.DOTALL)
         if not match:
             raise ValueError("Could not extract Agent-03 prompt with regex")
 
         agent3_prompt = normalize_template("You are AGENT-03" + match.group(1))
-        combined_prompts.append(
-            f"=== AGENT-03: QUESTION GENERATOR ===\n{agent3_prompt}"
-        )
+        combined_prompts.append(f"=== AGENT-03: QUESTION GENERATOR ===\n{agent3_prompt}")
 
     except Exception as e:
         error_msg = f"Failed to extract Agent-03 prompt: {e}"
@@ -338,15 +285,12 @@ def extract_intake_prompt() -> str:
     # Validate that all 3 agents were extracted
     # ============================================================================
     if errors:
-        raise ValueError(
-            f"Failed to extract all required intake agent prompts. Errors: {'; '.join(errors)}"
-        )
+        raise ValueError(f"Failed to extract all required intake agent prompts. Errors: {'; '.join(errors)}")
 
     if len(combined_prompts) != 3:
         extracted_agents = [p.split("===")[1].strip() for p in combined_prompts]
         raise ValueError(
-            f"Expected 3 agent prompts but got {len(combined_prompts)}. "
-            f"Extracted agents: {extracted_agents}"
+            f"Expected 3 agent prompts but got {len(combined_prompts)}. " f"Extracted agents: {extracted_agents}"
         )
 
     # Join all prompts with separator
@@ -385,9 +329,7 @@ def extract_previsit_prompt() -> str:
     # We'll match from "Role & Task" (English marker) to just before the closing paren
     else_start = source.find("else:")
     if else_start == -1:
-        raise ValueError(
-            "Could not find else block (English prompt) in pre-visit summary method"
-        )
+        raise ValueError("Could not find else block (English prompt) in pre-visit summary method")
 
     # Find "Role & Task" marker (English version starts here, Spanish starts with "Rol y Tarea")
     role_marker_start = source.find('"Role & Task', else_start)
@@ -445,9 +387,7 @@ def extract_previsit_prompt() -> str:
     ]
     for var in known_dynamic_vars:
         # Match f"{var}" or just {var} in the template
-        template = re.sub(
-            rf'f?"\{{\s*{re.escape(var)}\s*\}}"', "{DYNAMIC_VAR}", template
-        )
+        template = re.sub(rf'f?"\{{\s*{re.escape(var)}\s*\}}"', "{DYNAMIC_VAR}", template)
         template = re.sub(rf"\{{\s*{re.escape(var)}\s*\}}", "{DYNAMIC_VAR}", template)
 
     # Remove quote concatenation (Python automatically concatenates adjacent string literals)
@@ -461,14 +401,10 @@ def extract_previsit_prompt() -> str:
 
     # Validate it's English (not Spanish)
     if "Rol y Tarea" in template or "Motivo de Consulta:" in template:
-        raise ValueError(
-            "Extracted Spanish prompt instead of English! Check extraction logic."
-        )
+        raise ValueError("Extracted Spanish prompt instead of English! Check extraction logic.")
 
     if "Role & Task" not in template:
-        raise ValueError(
-            "Extracted prompt does not contain English marker 'Role & Task'! Check extraction logic."
-        )
+        raise ValueError("Extracted prompt does not contain English marker 'Role & Task'! Check extraction logic.")
 
     return normalize_template(template)
 
@@ -482,9 +418,7 @@ def extract_redflag_prompt() -> str:
 
     # Agent-01 is MedicalContextAnalyzer
     try:
-        analyzer_class = getattr(
-            question_service_openai, "MedicalContextAnalyzer", None
-        )
+        analyzer_class = getattr(question_service_openai, "MedicalContextAnalyzer", None)
         if analyzer_class:
             method = getattr(analyzer_class, "analyze_condition", None)
             if method:
@@ -505,19 +439,13 @@ def extract_redflag_prompt() -> str:
                     )
                 if match:
                     template = (
-                        match.group(1)
-                        if match.group(1).startswith("You are")
-                        else "You are AGENT-01" + match.group(1)
+                        match.group(1) if match.group(1).startswith("You are") else "You are AGENT-01" + match.group(1)
                     )
                     return normalize_template(template)
                 else:
-                    logging.warning(
-                        "Could not extract Agent-01 prompt with regex in extract_redflag_prompt"
-                    )
+                    logging.warning("Could not extract Agent-01 prompt with regex in extract_redflag_prompt")
     except Exception as e:
-        logging.warning(
-            f"Could not extract Agent-01 prompt in extract_redflag_prompt: {e}"
-        )
+        logging.warning(f"Could not extract Agent-01 prompt in extract_redflag_prompt: {e}")
 
     # FIXED: Changed QuestionServiceOpenAI -> OpenAIQuestionService
     # Fallback: try to find in OpenAIQuestionService (though analyze_condition is in MedicalContextAnalyzer)
@@ -529,9 +457,7 @@ def extract_redflag_prompt() -> str:
             method = getattr(service_class, "analyze_condition", None)
             if method:
                 source = inspect.getsource(method)
-                match = re.search(
-                    r'else:\s+system_prompt\s*=\s*"""(.*?)"""', source, re.DOTALL
-                )
+                match = re.search(r'else:\s+system_prompt\s*=\s*"""(.*?)"""', source, re.DOTALL)
                 if match:
                     template = match.group(1)
                     return normalize_template(template)

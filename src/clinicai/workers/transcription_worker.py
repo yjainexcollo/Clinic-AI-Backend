@@ -45,9 +45,7 @@ class TranscriptionWorker:
         self.patient_repo = MongoPatientRepository()
         self.visit_repo = MongoVisitRepository()
         self.audio_repo = AudioRepository()
-        self.transcription_service = (
-            get_transcription_service()
-        )  # Uses same service selection as API
+        self.transcription_service = get_transcription_service()  # Uses same service selection as API
         self.settings = get_settings()
 
         # Worker configuration
@@ -75,9 +73,7 @@ class TranscriptionWorker:
             )
 
             blob_repo = BlobFileRepository()
-            blob_ref = await blob_repo.get_blob_reference_by_id(
-                audio_file.blob_reference_id
-            )
+            blob_ref = await blob_repo.get_blob_reference_by_id(audio_file.blob_reference_id)
 
             if not blob_ref:
                 logger.error(f"Blob reference {audio_file.blob_reference_id} not found")
@@ -140,13 +136,9 @@ class TranscriptionWorker:
 
         # IDEMPOTENCY GUARD: Check visit status BEFORE attempting claim
         try:
-            visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id), doctor_id
-            )
+            visit = await self.visit_repo.find_by_patient_and_visit_id(patient_id, VisitId(visit_id), doctor_id)
             if not visit:
-                logger.warning(
-                    f"Visit {visit_id} not found, deleting message {message_id}"
-                )
+                logger.warning(f"Visit {visit_id} not found, deleting message {message_id}")
                 try:
                     await self.queue_service.delete_message(message_id, pop_receipt)
                 except Exception:
@@ -154,10 +146,7 @@ class TranscriptionWorker:
                 return
 
             # Check if already completed - skip and delete message
-            if (
-                visit.transcription_session
-                and visit.transcription_session.transcription_status == "completed"
-            ):
+            if visit.transcription_session and visit.transcription_session.transcription_status == "completed":
                 logger.info(
                     f"Transcription already completed for visit {visit_id}, skipping duplicate job {message_id}"
                 )
@@ -168,13 +157,8 @@ class TranscriptionWorker:
                 return
 
             # Check if already failed - skip and delete message (don't retry failed jobs)
-            if (
-                visit.transcription_session
-                and visit.transcription_session.transcription_status == "failed"
-            ):
-                logger.info(
-                    f"Transcription already marked as failed for visit {visit_id}, skipping job {message_id}"
-                )
+            if visit.transcription_session and visit.transcription_session.transcription_status == "failed":
+                logger.info(f"Transcription already marked as failed for visit {visit_id}, skipping job {message_id}")
                 try:
                     await self.queue_service.delete_message(message_id, pop_receipt)
                 except Exception:
@@ -196,9 +180,7 @@ class TranscriptionWorker:
                 queue_name = getattr(self.queue_service, "queue_name", None)
                 if queue_name is None:
                     queue_name = self.queue_service.settings.queue_name
-                claim_backoff_seconds = min(
-                    30, self.settings.azure_queue.visibility_timeout
-                )
+                claim_backoff_seconds = min(30, self.settings.azure_queue.visibility_timeout)
                 logger.info(
                     f"Job not claimed → visibility backoff={claim_backoff_seconds}s: visit={visit_id}, "
                     f"message_id={message_id}, retry={retry_count}, queue_name={queue_name} "
@@ -212,9 +194,7 @@ class TranscriptionWorker:
                         visibility_timeout=claim_backoff_seconds,
                     )
                 except Exception as visibility_error:
-                    logger.warning(
-                        f"Failed to extend visibility for unclaimed message: {visibility_error}"
-                    )
+                    logger.warning(f"Failed to extend visibility for unclaimed message: {visibility_error}")
                 return
 
             # Job was successfully claimed - log and proceed with processing
@@ -224,13 +204,9 @@ class TranscriptionWorker:
             )
 
             # Reload visit to get the updated state from the claim
-            visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id), doctor_id
-            )
+            visit = await self.visit_repo.find_by_patient_and_visit_id(patient_id, VisitId(visit_id), doctor_id)
             if not visit:
-                logger.error(
-                    f"Visit {visit_id} not found after claim, this should not happen"
-                )
+                logger.error(f"Visit {visit_id} not found after claim, this should not happen")
                 return
 
         except Exception as idempotency_check_error:
@@ -240,9 +216,7 @@ class TranscriptionWorker:
             )
             # On error, extend visibility with short backoff and skip to avoid processing corrupted state
             try:
-                claim_backoff_seconds = min(
-                    30, self.settings.azure_queue.visibility_timeout
-                )
+                claim_backoff_seconds = min(30, self.settings.azure_queue.visibility_timeout)
                 await self.queue_service.update_message_visibility(
                     message_id, pop_receipt, visibility_timeout=claim_backoff_seconds
                 )
@@ -251,11 +225,7 @@ class TranscriptionWorker:
             return
 
         # Get dequeued_at from visit (set by atomic claim)
-        dequeued_at = (
-            visit.transcription_session.dequeued_at
-            if visit.transcription_session
-            else None
-        )
+        dequeued_at = visit.transcription_session.dequeued_at if visit.transcription_session else None
         logger.info(
             f"Processing transcription job: visit={visit_id}, "
             f"audio_file={audio_file_id}, language={language}, retry={retry_count}, "
@@ -279,13 +249,9 @@ class TranscriptionWorker:
             )
 
             blob_repo = BlobFileRepository()
-            blob_ref = await blob_repo.get_blob_reference_by_id(
-                audio_file.blob_reference_id
-            )
+            blob_ref = await blob_repo.get_blob_reference_by_id(audio_file.blob_reference_id)
             if not blob_ref:
-                raise ValueError(
-                    f"Blob reference {audio_file.blob_reference_id} not found"
-                )
+                raise ValueError(f"Blob reference {audio_file.blob_reference_id} not found")
 
             # Generate SAS URL for existing audio blob (avoids re-upload for Azure Speech)
             sas_start = time.time()
@@ -299,18 +265,12 @@ class TranscriptionWorker:
                 expires_in_hours=24,
             )
             timings["blob_sas_generation"] = time.time() - sas_start
-            logger.debug(
-                f"Generated SAS URL for transcription blob in {timings['blob_sas_generation']:.2f}s"
-            )
+            logger.debug(f"Generated SAS URL for transcription blob in {timings['blob_sas_generation']:.2f}s")
 
             # OPTIMIZATION: Skip blob download - use SAS URL directly
             # The transcription service can use SAS URL without local file
             # Only create temp file path as placeholder (transcription_service will handle SAS URL)
-            ext = (
-                audio_file.filename.split(".")[-1]
-                if "." in audio_file.filename
-                else "mp3"
-            )
+            ext = audio_file.filename.split(".")[-1] if "." in audio_file.filename else "mp3"
             temp_file_path = None  # Not needed when using SAS URL directly
 
             # Extend message visibility periodically during processing
@@ -344,9 +304,7 @@ class TranscriptionWorker:
                 )
 
                 # Execute transcription use case
-                use_case = TranscribeAudioUseCase(
-                    self.patient_repo, self.visit_repo, self.transcription_service
-                )
+                use_case = TranscribeAudioUseCase(self.patient_repo, self.visit_repo, self.transcription_service)
 
                 # Process transcription with timeout (this can take 10+ minutes)
                 job_create_start = time.time()
@@ -363,20 +321,13 @@ class TranscriptionWorker:
                         # Read transcription_id from database
                         transcription_id_from_db = "N/A"
                         try:
-                            current_visit = (
-                                await self.visit_repo.find_by_patient_and_visit_id(
-                                    patient_id, VisitId(visit_id), doctor_id
-                                )
+                            current_visit = await self.visit_repo.find_by_patient_and_visit_id(
+                                patient_id, VisitId(visit_id), doctor_id
                             )
                             if current_visit and current_visit.transcription_session:
-                                transcription_id_from_db = (
-                                    current_visit.transcription_session.transcription_id
-                                    or "N/A"
-                                )
+                                transcription_id_from_db = current_visit.transcription_session.transcription_id or "N/A"
                         except Exception as db_error:
-                            logger.debug(
-                                f"Failed to read transcription_id from DB for heartbeat: {db_error}"
-                            )
+                            logger.debug(f"Failed to read transcription_id from DB for heartbeat: {db_error}")
 
                         logger.info(
                             f"💓 Transcription heartbeat: visit={visit_id}, "
@@ -409,16 +360,12 @@ class TranscriptionWorker:
 
                 # Track timings: job_create includes all transcription work (speech + LLM + PII removal)
                 timings["job_create"] = time.time() - job_create_start
-                timings["postprocess"] = timings[
-                    "job_create"
-                ]  # For backward compatibility
+                timings["postprocess"] = timings["job_create"]  # For backward compatibility
 
                 # STRICT VALIDATION: Never log "completed" for empty/failed transcripts
                 if result.transcription_status != "completed":
                     error_msg = result.message or "Transcription status not completed"
-                    logger.error(
-                        f"❌ Transcription failed: status={result.transcription_status}, message={error_msg}"
-                    )
+                    logger.error(f"❌ Transcription failed: status={result.transcription_status}, message={error_msg}")
                     raise ValueError(f"Transcription failed: {error_msg}")
 
                 if not result.transcript or result.transcript.strip() == "":
@@ -433,12 +380,8 @@ class TranscriptionWorker:
 
                 # Update audio file with duration if we have the result
                 if result.audio_duration:
-                    await self.audio_repo.update_audio_metadata(
-                        audio_file_id, duration_seconds=result.audio_duration
-                    )
-                    logger.debug(
-                        f"Updated audio file duration: {result.audio_duration} seconds"
-                    )
+                    await self.audio_repo.update_audio_metadata(audio_file_id, duration_seconds=result.audio_duration)
+                    logger.debug(f"Updated audio file duration: {result.audio_duration} seconds")
 
                 # P0-1: DB save is done inside use_case.execute() - verify it succeeded
                 # The use case saves the visit with transcript, so we can now safely delete the queue message
@@ -451,10 +394,8 @@ class TranscriptionWorker:
                 while db_save_attempts < max_db_save_attempts and not db_save_success:
                     try:
                         # Verify visit was saved by reloading and checking transcript exists
-                        saved_visit = (
-                            await self.visit_repo.find_by_patient_and_visit_id(
-                                patient_id, VisitId(visit_id), doctor_id
-                            )
+                        saved_visit = await self.visit_repo.find_by_patient_and_visit_id(
+                            patient_id, VisitId(visit_id), doctor_id
                         )
                         if (
                             saved_visit
@@ -462,9 +403,7 @@ class TranscriptionWorker:
                             and saved_visit.transcription_session.transcript
                         ):
                             db_save_success = True
-                            logger.info(
-                                f"✅ DB save verified: transcript exists for visit {visit_id}"
-                            )
+                            logger.info(f"✅ DB save verified: transcript exists for visit {visit_id}")
                         else:
                             # Transcript not found - try to save again
                             logger.warning(
@@ -478,43 +417,31 @@ class TranscriptionWorker:
                                 await self.visit_repo.save(visit)
                                 db_save_attempts += 1
                                 if db_save_attempts < max_db_save_attempts:
-                                    await asyncio.sleep(
-                                        2**db_save_attempts
-                                    )  # Exponential backoff
+                                    await asyncio.sleep(2**db_save_attempts)  # Exponential backoff
                             else:
-                                raise ValueError(
-                                    "Visit or transcription session not found"
-                                )
+                                raise ValueError("Visit or transcription session not found")
                     except Exception as db_save_error:
                         db_save_attempts += 1
                         logger.error(
                             f"❌ DB save attempt {db_save_attempts}/{max_db_save_attempts} failed: {db_save_error}"
                         )
                         if db_save_attempts < max_db_save_attempts:
-                            await asyncio.sleep(
-                                2**db_save_attempts
-                            )  # Exponential backoff
+                            await asyncio.sleep(2**db_save_attempts)  # Exponential backoff
                         else:
                             # Max attempts exceeded - do NOT delete queue message
                             logger.error(
                                 f"❌ ACK_SKIPPED_DB_SAVE_FAILED: visit={visit_id}, message_id={message_id}, "
                                 f"db_save_attempts={db_save_attempts}. Queue message will remain for retry."
                             )
-                            raise ValueError(
-                                f"DB save failed after {max_db_save_attempts} attempts: {db_save_error}"
-                            )
+                            raise ValueError(f"DB save failed after {max_db_save_attempts} attempts: {db_save_error}")
 
                 timings["db_save"] = time.time() - db_save_start
 
                 # P0-1: Only delete queue message AFTER successful DB save
                 if db_save_success:
                     try:
-                        await self.queue_service.delete_message(
-                            message_id, latest_pop_receipt
-                        )
-                        logger.info(
-                            f"✅ ACK_AFTER_DB_SAVE_OK: visit={visit_id}, message_id={message_id}"
-                        )
+                        await self.queue_service.delete_message(message_id, latest_pop_receipt)
+                        logger.info(f"✅ ACK_AFTER_DB_SAVE_OK: visit={visit_id}, message_id={message_id}")
                     except Exception as delete_error:
                         logger.error(
                             f"❌ Failed to delete queue message after DB save: {delete_error}",
@@ -560,11 +487,7 @@ class TranscriptionWorker:
             # Extract clean error information (no PHI, no __name__ bug)
             error_type = type(e).__name__  # Use type(e).__name__ not e.__name__
             error_message = str(e)
-            error_code = (
-                getattr(e, "error_code", "UNKNOWN_ERROR")
-                if hasattr(e, "error_code")
-                else "UNKNOWN_ERROR"
-            )
+            error_code = getattr(e, "error_code", "UNKNOWN_ERROR") if hasattr(e, "error_code") else "UNKNOWN_ERROR"
 
             # Avoid double-prefixing error messages
             if error_message.startswith("Transcription failed:"):
@@ -596,14 +519,10 @@ class TranscriptionWorker:
 
             if is_permanent_error:
                 # Permanent error - mark as failed, but only delete if DB save succeeds
-                logger.warning(
-                    f"Permanent error detected ({error_type}), not retrying: {clean_error_message}"
-                )
+                logger.warning(f"Permanent error detected ({error_type}), not retrying: {clean_error_message}")
                 db_save_success = False
                 try:
-                    visit = await self.visit_repo.find_by_patient_and_visit_id(
-                        patient_id, VisitId(visit_id), doctor_id
-                    )
+                    visit = await self.visit_repo.find_by_patient_and_visit_id(patient_id, VisitId(visit_id), doctor_id)
                     if visit:
                         error_info = f"{error_code}: {clean_error_message}"
                         visit.fail_transcription(error_info)
@@ -618,9 +537,7 @@ class TranscriptionWorker:
                 # P0-1: Only delete message if DB save succeeded
                 if db_save_success:
                     try:
-                        await self.queue_service.delete_message(
-                            message_id, latest_pop_receipt
-                        )
+                        await self.queue_service.delete_message(message_id, latest_pop_receipt)
                         logger.info(
                             f"✅ ACK_AFTER_DB_SAVE_OK (permanent error): visit={visit_id}, message_id={message_id}"
                         )
@@ -676,9 +593,7 @@ class TranscriptionWorker:
                         f"Re-queued job for retry {new_retry_count}/{self.settings.azure_queue.max_retry_attempts} with {delay_seconds}s delay"
                     )
                 except Exception as requeue_error:
-                    logger.error(
-                        f"Failed to re-enqueue job: {requeue_error}", exc_info=True
-                    )
+                    logger.error(f"Failed to re-enqueue job: {requeue_error}", exc_info=True)
                     # If re-enqueue fails, we cannot proceed - original message remains for retry
                     return
 
@@ -716,18 +631,14 @@ class TranscriptionWorker:
                 # Mark visit transcription as failed with clean error message
                 db_save_success = False
                 try:
-                    visit = await self.visit_repo.find_by_patient_and_visit_id(
-                        patient_id, VisitId(visit_id), doctor_id
-                    )
+                    visit = await self.visit_repo.find_by_patient_and_visit_id(patient_id, VisitId(visit_id), doctor_id)
                     if visit:
                         # Store structured error info (no PHI)
                         error_info = f"{error_code}: {clean_error_message}"
                         visit.fail_transcription(error_info)
                         await self.visit_repo.save(visit)
                         db_save_success = True
-                        logger.info(
-                            f"Marked transcription as failed for visit {visit_id}"
-                        )
+                        logger.info(f"Marked transcription as failed for visit {visit_id}")
                 except Exception as db_error:
                     logger.error(
                         f"Failed to mark transcription as failed: {db_error}",
@@ -737,12 +648,8 @@ class TranscriptionWorker:
                 # P0-1: Only delete message if DB save succeeded
                 if db_save_success:
                     try:
-                        await self.queue_service.delete_message(
-                            message_id, latest_pop_receipt
-                        )
-                        logger.info(
-                            f"✅ ACK_AFTER_DB_SAVE_OK (failed job): visit={visit_id}, message_id={message_id}"
-                        )
+                        await self.queue_service.delete_message(message_id, latest_pop_receipt)
+                        logger.info(f"✅ ACK_AFTER_DB_SAVE_OK (failed job): visit={visit_id}, message_id={message_id}")
                     except Exception as delete_error:
                         logger.error(
                             f"Failed to delete message after max retries: {delete_error}",
@@ -838,9 +745,7 @@ class TranscriptionWorker:
 
         db_save_success = False
         try:
-            visit = await self.visit_repo.find_by_patient_and_visit_id(
-                patient_id, VisitId(visit_id), doctor_id
-            )
+            visit = await self.visit_repo.find_by_patient_and_visit_id(patient_id, VisitId(visit_id), doctor_id)
             if not visit:
                 logger.warning(
                     "POISON_VISIT_NOT_FOUND: patient_id=%s visit_id=%s message_id=%s",
@@ -924,9 +829,7 @@ class TranscriptionWorker:
         # Read concurrency from environment (default to 5 for dev, 2 for production)
         default_concurrency = 5  # Increased default for better throughput
         try:
-            max_concurrent_jobs = int(
-                os.getenv("TRANSCRIPTION_WORKER_CONCURRENCY", str(default_concurrency))
-            )
+            max_concurrent_jobs = int(os.getenv("TRANSCRIPTION_WORKER_CONCURRENCY", str(default_concurrency)))
         except ValueError:
             max_concurrent_jobs = default_concurrency
         if max_concurrent_jobs < 1:
@@ -986,25 +889,18 @@ class TranscriptionWorker:
                 logger.debug(f"Signal handlers not available on this platform: {e}")
         else:
             # On Windows, signal handlers are not available
-            logger.debug(
-                "Running on Windows - signal handlers not available, "
-                "using event-based shutdown"
-            )
+            logger.debug("Running on Windows - signal handlers not available, " "using event-based shutdown")
 
         while not shutdown_event.is_set():
             try:
                 # P0-2: Calculate free slots and batch size
                 active_jobs = len(active_tasks)
                 free_slots = max_concurrent_jobs - active_jobs
-                batch_size = (
-                    min(free_slots, max_concurrent_jobs) if free_slots > 0 else 0
-                )
+                batch_size = min(free_slots, max_concurrent_jobs) if free_slots > 0 else 0
 
                 # Poll queue for messages (batch dequeue if slots available)
                 if batch_size > 0:
-                    jobs = await self.queue_service.dequeue_transcription_job(
-                        max_messages=batch_size
-                    )
+                    jobs = await self.queue_service.dequeue_transcription_job(max_messages=batch_size)
                     poll_count += 1
 
                     if jobs:
@@ -1049,20 +945,12 @@ class TranscriptionWorker:
 
         # Graceful shutdown: wait for active tasks with timeout
         if active_tasks:
-            logger.info(
-                f"⏳ Waiting for {len(active_tasks)} active job(s) to "
-                f"complete (max 60s)..."
-            )
+            logger.info(f"⏳ Waiting for {len(active_tasks)} active job(s) to " f"complete (max 60s)...")
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*active_tasks, return_exceptions=True), timeout=60.0
-                )
+                await asyncio.wait_for(asyncio.gather(*active_tasks, return_exceptions=True), timeout=60.0)
                 logger.info("✅ All active jobs completed")
             except asyncio.TimeoutError:
-                logger.warning(
-                    f"⚠️  Timeout waiting for {len(active_tasks)} job(s) "
-                    f"to complete. Cancelling..."
-                )
+                logger.warning(f"⚠️  Timeout waiting for {len(active_tasks)} job(s) " f"to complete. Cancelling...")
                 for task in active_tasks:
                     if not task.done():
                         task.cancel()
@@ -1070,9 +958,7 @@ class TranscriptionWorker:
                 await asyncio.sleep(2)
                 unfinished = [t for t in active_tasks if not t.done()]
                 if unfinished:
-                    logger.error(
-                        f"❌ {len(unfinished)} job(s) did not complete gracefully"
-                    )
+                    logger.error(f"❌ {len(unfinished)} job(s) did not complete gracefully")
 
 
 async def main():

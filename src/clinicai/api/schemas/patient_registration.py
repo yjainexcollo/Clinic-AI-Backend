@@ -59,9 +59,7 @@ class RegisterPatientRequest(BaseModel):
         # Local format: 8-16 digits without country code
         if re.fullmatch(r"^\d{8,16}$", s):
             return s
-        raise ValueError(
-            "Phone must be E.164 format (+country code followed by 7-14 digits) or 8-16 local digits"
-        )
+        raise ValueError("Phone must be E.164 format (+country code followed by 7-14 digits) or 8-16 local digits")
 
     @validator("consent")
     def validate_consent(cls, v):
@@ -113,9 +111,7 @@ class PatientWithVisitsSchema(BaseModel):
     mobile: str = Field(..., description="Mobile number")
     age: int = Field(..., description="Patient age")
     gender: Optional[str] = Field(None, description="Patient gender")
-    latest_visit: Optional[LatestVisitInfo] = Field(
-        None, description="Latest visit information"
-    )
+    latest_visit: Optional[LatestVisitInfo] = Field(None, description="Latest visit information")
     total_visits: int = Field(..., description="Total number of visits")
     scheduled_visits_count: int = Field(..., description="Number of scheduled visits")
     walk_in_visits_count: int = Field(..., description="Number of walk-in visits")
@@ -124,7 +120,5 @@ class PatientWithVisitsSchema(BaseModel):
 class PatientListResponse(BaseModel):
     """Response schema for patient list endpoint."""
 
-    patients: List[PatientWithVisitsSchema] = Field(
-        ..., description="List of patients with visit information"
-    )
+    patients: List[PatientWithVisitsSchema] = Field(..., description="List of patients with visit information")
     pagination: Dict[str, Any] = Field(..., description="Pagination information")

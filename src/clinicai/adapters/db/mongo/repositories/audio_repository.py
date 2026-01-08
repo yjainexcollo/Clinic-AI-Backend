@@ -56,9 +56,7 @@ class AudioRepository:
                 audio_type=audio_type,
                 duration_seconds=duration_seconds,
             )
-            print(
-                f"🔵 [AudioRepo] Step 4: Blob upload completed, creating blob reference..."
-            )
+            print(f"🔵 [AudioRepo] Step 4: Blob upload completed, creating blob reference...")
 
             # Create blob reference
             blob_reference = await self.blob_repo.create_blob_reference(
@@ -78,9 +76,7 @@ class AudioRepository:
                     "audio_type": audio_type,
                 },
             )
-            print(
-                f"🔵 [AudioRepo] Step 5: Blob reference created, creating audio file record..."
-            )
+            print(f"🔵 [AudioRepo] Step 5: Blob reference created, creating audio file record...")
 
             # Create audio file record
             audio_file = AudioFileMongo(
@@ -96,13 +92,9 @@ class AudioRepository:
                 audio_type=audio_type,
             )
 
-            print(
-                f"🔵 [AudioRepo] Step 6: Inserting audio file record into database..."
-            )
+            print(f"🔵 [AudioRepo] Step 6: Inserting audio file record into database...")
             await audio_file.insert()
-            logger.info(
-                f"Created audio file with blob storage: {audio_id} ({filename})"
-            )
+            logger.info(f"Created audio file with blob storage: {audio_id} ({filename})")
             print(f"🔵 [AudioRepo] Step 7: Audio file record created successfully!")
             return audio_file
 
@@ -172,9 +164,7 @@ class AudioRepository:
             )
 
             await audio_file.insert()
-            logger.info(
-                f"Created audio file with blob storage: {audio_id} ({filename})"
-            )
+            logger.info(f"Created audio file with blob storage: {audio_id} ({filename})")
             return audio_file
 
         except Exception as e:
@@ -189,9 +179,7 @@ class AudioRepository:
             logger.error(f"Failed to get audio file by ID {audio_id}: {e}")
             return None
 
-    async def get_audio_file_by_mongo_id(
-        self, mongo_id: str
-    ) -> Optional[AudioFileMongo]:
+    async def get_audio_file_by_mongo_id(self, mongo_id: str) -> Optional[AudioFileMongo]:
         """Get audio file by MongoDB ObjectId."""
         try:
             oid = PydanticObjectId(mongo_id)
@@ -252,16 +240,12 @@ class AudioRepository:
         """Get audio file binary data by audio_id from blob storage."""
         try:
             # Get the audio file document
-            audio_file = await AudioFileMongo.find_one(
-                AudioFileMongo.audio_id == audio_id
-            )
+            audio_file = await AudioFileMongo.find_one(AudioFileMongo.audio_id == audio_id)
             if not audio_file:
                 return None
 
             # Get blob reference
-            blob_reference = await self.blob_repo.get_blob_reference_by_id(
-                audio_file.blob_reference_id
-            )
+            blob_reference = await self.blob_repo.get_blob_reference_by_id(audio_file.blob_reference_id)
             if not blob_reference:
                 logger.error(f"Blob reference not found for audio file: {audio_id}")
                 return None
@@ -383,9 +367,7 @@ class AudioRepository:
             logger.error(f"Failed to link audio to adhoc: {e}")
             return False
 
-    async def link_audio_to_visit(
-        self, audio_id: str, patient_id: str, visit_id: str
-    ) -> bool:
+    async def link_audio_to_visit(self, audio_id: str, patient_id: str, visit_id: str) -> bool:
         """Link audio file to visit."""
         try:
             audio_file = await self.get_audio_file_by_id(audio_id)
@@ -462,37 +444,21 @@ class AudioRepository:
                 # Get structured dialogue based on audio type
                 # NOTE: AdhocTranscriptMongo has been removed from the codebase.
                 # For audio_type == "adhoc", structured_dialogue will remain an empty list.
-                if (
-                    audio_file.audio_type == "visit"
-                    and audio_file.patient_id
-                    and audio_file.visit_id
-                ):
+                if audio_file.audio_type == "visit" and audio_file.patient_id and audio_file.visit_id:
                     try:
                         visit = await VisitMongo.find_one(
                             VisitMongo.patient_id == audio_file.patient_id,
                             VisitMongo.visit_id == audio_file.visit_id,
                         )
-                        if (
-                            visit
-                            and visit.transcription_session
-                            and visit.transcription_session.structured_dialogue
-                        ):
+                        if visit and visit.transcription_session and visit.transcription_session.structured_dialogue:
                             # Ensure structured_dialogue is a list
-                            if isinstance(
-                                visit.transcription_session.structured_dialogue, list
-                            ):
-                                dialogue_data["structured_dialogue"] = (
-                                    visit.transcription_session.structured_dialogue
-                                )
+                            if isinstance(visit.transcription_session.structured_dialogue, list):
+                                dialogue_data["structured_dialogue"] = visit.transcription_session.structured_dialogue
                             else:
-                                logger.warning(
-                                    f"structured_dialogue is not a list for visit {audio_file.audio_id}"
-                                )
+                                logger.warning(f"structured_dialogue is not a list for visit {audio_file.audio_id}")
                                 dialogue_data["structured_dialogue"] = []
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to get visit dialogue for {audio_file.audio_id}: {e}"
-                        )
+                        logger.warning(f"Failed to get visit dialogue for {audio_file.audio_id}: {e}")
                         dialogue_data["structured_dialogue"] = []
 
                 dialogue_list.append(dialogue_data)

@@ -17,9 +17,7 @@ logger.propagate = True
 class TimingContext:
     """Context manager for timing operations with detailed metrics."""
 
-    def __init__(
-        self, stage_name: str, logger_instance: Optional[logging.Logger] = None
-    ):
+    def __init__(self, stage_name: str, logger_instance: Optional[logging.Logger] = None):
         self.stage_name = stage_name
         self.logger = logger_instance or logger
         self.start_time: Optional[float] = None

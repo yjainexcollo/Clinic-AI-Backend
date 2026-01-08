@@ -20,9 +20,7 @@ try:
 except ImportError:
     METRICS_AVAILABLE = False
     meter = None
-    logger.warning(
-        "OpenTelemetry metrics not available. Install 'opentelemetry-api' for metrics support."
-    )
+    logger.warning("OpenTelemetry metrics not available. Install 'opentelemetry-api' for metrics support.")
 
 
 # Initialize custom metrics (lazy initialization)
@@ -87,9 +85,7 @@ def _initialize_metrics():
             unit="ms",
         )
 
-        _error_counter = meter.create_counter(
-            name="clinicai.errors", description="Total application errors", unit="1"
-        )
+        _error_counter = meter.create_counter(name="clinicai.errors", description="Total application errors", unit="1")
 
         _metrics_initialized = True
         logger.info("Custom metrics initialized successfully")
@@ -113,9 +109,7 @@ def record_ai_request(model: str, latency_ms: float, tokens: int, success: bool 
     try:
         _initialize_metrics()
         if _ai_request_counter:
-            _ai_request_counter.add(
-                1, {"model": model, "status": "success" if success else "error"}
-            )
+            _ai_request_counter.add(1, {"model": model, "status": "success" if success else "error"})
         if _ai_latency_histogram:
             _ai_latency_histogram.record(latency_ms, {"model": model})
         if _ai_token_counter:
@@ -175,13 +169,9 @@ def record_http_request(method: str, path: str, status_code: int, latency_ms: fl
                 },
             )
         if _request_latency_histogram:
-            _request_latency_histogram.record(
-                latency_ms, {"method": method, "path": path}
-            )
+            _request_latency_histogram.record(latency_ms, {"method": method, "path": path})
         if status_code >= 500 and _error_counter:
-            _error_counter.add(
-                1, {"type": "http_error", "status_code": str(status_code)}
-            )
+            _error_counter.add(1, {"type": "http_error", "status_code": str(status_code)})
     except Exception as e:
         logger.warning(f"Failed to record HTTP request metric: {e}")
 

@@ -62,28 +62,20 @@ class BlobFileRepository:
             logger.error(f"Failed to create blob file reference: {e}")
             raise
 
-    async def get_blob_reference_by_id(
-        self, file_id: str
-    ) -> Optional[BlobFileReference]:
+    async def get_blob_reference_by_id(self, file_id: str) -> Optional[BlobFileReference]:
         """Get blob file reference by file_id."""
         try:
-            return await BlobFileReference.find_one(
-                BlobFileReference.file_id == file_id
-            )
+            return await BlobFileReference.find_one(BlobFileReference.file_id == file_id)
         except Exception as e:
             logger.error(f"Failed to get blob file reference by ID {file_id}: {e}")
             return None
 
-    async def get_blob_reference_by_mongo_id(
-        self, mongo_id: str
-    ) -> Optional[BlobFileReference]:
+    async def get_blob_reference_by_mongo_id(self, mongo_id: str) -> Optional[BlobFileReference]:
         """Get blob file reference by MongoDB ObjectId."""
         try:
             return await BlobFileReference.get(PydanticObjectId(mongo_id))
         except Exception as e:
-            logger.error(
-                f"Failed to get blob file reference by MongoDB ID {mongo_id}: {e}"
-            )
+            logger.error(f"Failed to get blob file reference by MongoDB ID {mongo_id}: {e}")
             return None
 
     async def get_blob_references_by_patient(
@@ -102,9 +94,7 @@ class BlobFileRepository:
                 .to_list()
             )
         except Exception as e:
-            logger.error(
-                f"Failed to get blob file references by patient {patient_id}: {e}"
-            )
+            logger.error(f"Failed to get blob file references by patient {patient_id}: {e}")
             return []
 
     async def get_blob_references_by_visit(
@@ -145,9 +135,7 @@ class BlobFileRepository:
             logger.error(f"Failed to get blob file references by type {file_type}: {e}")
             return []
 
-    async def update_blob_reference(
-        self, file_id: str, update_data: Dict[str, Any]
-    ) -> Optional[BlobFileReference]:
+    async def update_blob_reference(self, file_id: str, update_data: Dict[str, Any]) -> Optional[BlobFileReference]:
         """Update blob file reference."""
         try:
             blob_reference = await self.get_blob_reference_by_id(file_id)
@@ -200,9 +188,7 @@ class BlobFileRepository:
             return True
 
         except Exception as e:
-            logger.error(
-                f"Failed to permanently delete blob file reference {file_id}: {e}"
-            )
+            logger.error(f"Failed to permanently delete blob file reference {file_id}: {e}")
             return False
 
     async def cleanup_expired_files(self) -> int:

@@ -279,9 +279,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
 
         import json as _json
 
-        sentences = [
-            _s.strip() for _s in _re.split(r"(?<=[.!?])\s+", raw) if _s.strip()
-        ]
+        sentences = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", raw) if _s.strip()]
         # More specific model detection for chunk sizing
         deployment_name_lower = str(deployment_name).lower()
         if "gpt-4o-mini" in deployment_name_lower:
@@ -317,9 +315,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                         ],
                         max_tokens=4000 if is_gpt4 else 2000,
                         temperature=0.0,
-                        response_format={
-                            "type": "json_object"
-                        },  # enforce strict JSON when supported
+                        response_format={"type": "json_object"},  # enforce strict JSON when supported
                     )
                 except Exception:
                     # Fallback without response_format if unsupported
@@ -339,10 +335,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
             chunks: List[str] = []
             current_chunk = ""
             for s in sentences:
-                if (
-                    len(current_chunk) + len(s) + 1 > max_chars_per_chunk
-                    and current_chunk
-                ):
+                if len(current_chunk) + len(s) + 1 > max_chars_per_chunk and current_chunk:
                     chunks.append(current_chunk.strip())
                     overlap_start = max(0, len(current_chunk) - overlap_chars)
                     current_chunk = current_chunk[overlap_start:] + " " + s
@@ -392,9 +385,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                 try:
                     # Prefer JSON object with 'dialogue'
                     parsed = _json.loads(text)
-                    if isinstance(parsed, dict) and isinstance(
-                        parsed.get("dialogue"), list
-                    ):
+                    if isinstance(parsed, dict) and isinstance(parsed.get("dialogue"), list):
                         return parsed["dialogue"]  # type: ignore
                     if isinstance(parsed, list):
                         return parsed  # type: ignore
@@ -408,14 +399,10 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                         if isinstance(arr, list):
                             return arr  # type: ignore
                     # Try to extract object with dialogue key
-                    m2 = _re.search(
-                        r"\{[\s\S]*?\"dialogue\"\s*:\s*\[[\s\S]*?\][\s\S]*?\}", text
-                    )
+                    m2 = _re.search(r"\{[\s\S]*?\"dialogue\"\s*:\s*\[[\s\S]*?\][\s\S]*?\}", text)
                     if m2:
                         obj = _json.loads(m2.group(0))
-                        if isinstance(obj, dict) and isinstance(
-                            obj.get("dialogue"), list
-                        ):
+                        if isinstance(obj, dict) and isinstance(obj.get("dialogue"), list):
                             return obj["dialogue"]  # type: ignore
                 except Exception:
                     pass
@@ -451,10 +438,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
                 # Heuristic fallback if model returned nothing useful
                 turns: List[Dict[str, str]] = []
                 patient_label = (
-                    "Paciente"
-                    if (language or "en").lower()
-                    in ["sp", "es", "es-es", "es-mx", "spanish"]
-                    else "Patient"
+                    "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
                 )
                 next_role = "Doctor"
                 for s in sentences:
@@ -483,10 +467,7 @@ Output ONLY the JSON array. Do not include explanatory text, confidence scores, 
             # Heuristic fallback: alternate speakers
             turns: List[Dict[str, str]] = []
             patient_label = (
-                "Paciente"
-                if (language or "en").lower()
-                in ["sp", "es", "es-es", "es-mx", "spanish"]
-                else "Patient"
+                "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
             )
             next_role = "Doctor"
             for s in sentences:

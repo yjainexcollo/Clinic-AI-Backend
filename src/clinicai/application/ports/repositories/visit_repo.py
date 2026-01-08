@@ -24,15 +24,11 @@ class VisitRepository:
         """Find all visits for a specific patient."""
         raise NotImplementedError
 
-    async def find_by_patient_and_visit_id(
-        self, patient_id: str, visit_id: VisitId, doctor_id: str
-    ) -> Optional[Visit]:
+    async def find_by_patient_and_visit_id(self, patient_id: str, visit_id: VisitId, doctor_id: str) -> Optional[Visit]:
         """Find a specific visit for a patient."""
         raise NotImplementedError
 
-    async def find_latest_by_patient_id(
-        self, patient_id: str, doctor_id: str
-    ) -> Optional[Visit]:
+    async def find_latest_by_patient_id(self, patient_id: str, doctor_id: str) -> Optional[Visit]:
         """Find the latest visit for a specific patient."""
         raise NotImplementedError
 
@@ -44,15 +40,11 @@ class VisitRepository:
         """Delete a visit by ID."""
         raise NotImplementedError
 
-    async def find_all(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find all visits with pagination."""
         raise NotImplementedError
 
-    async def find_by_status(
-        self, status: str, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_by_status(self, status: str, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find visits by status with pagination."""
         raise NotImplementedError
 
@@ -70,15 +62,11 @@ class VisitRepository:
         """Find visits by workflow type with pagination."""
         raise NotImplementedError
 
-    async def find_walk_in_visits(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_walk_in_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find walk-in visits with pagination."""
         raise NotImplementedError
 
-    async def find_scheduled_visits(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Visit]:
+    async def find_scheduled_visits(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Visit]:
         """Find scheduled visits with pagination."""
         raise NotImplementedError
 

@@ -40,8 +40,7 @@ class PerformanceMiddleware(BaseHTTPMiddleware):
         # Log slow requests (> 1 second)
         if process_time > 1.0:
             logger.warning(
-                f"SLOW_REQUEST: method={request.method} path={request.url.path} "
-                f"latency={process_time_ms}ms"
+                f"SLOW_REQUEST: method={request.method} path={request.url.path} " f"latency={process_time_ms}ms"
             )
 
         return response

@@ -54,9 +54,7 @@ def normalize_audio_to_wav(
             timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutError) as e:
-        raise FileNotFoundError(
-            f"ffmpeg not found or not executable. Set FFMPEG_PATH env var. Error: {e}"
-        )
+        raise FileNotFoundError(f"ffmpeg not found or not executable. Set FFMPEG_PATH env var. Error: {e}")
 
     # Create output path if not provided
     if output_path is None:
@@ -93,24 +91,15 @@ def normalize_audio_to_wav(
 
         conversion_time = time.time() - conversion_start
 
-        logger.info(
-            f"Audio normalized: {input_path} -> {output_path}, "
-            f"conversion_time={conversion_time:.2f}s"
-        )
+        logger.info(f"Audio normalized: {input_path} -> {output_path}, " f"conversion_time={conversion_time:.2f}s")
 
         return output_path, conversion_time
 
     except subprocess.TimeoutError:
-        raise TimeoutError(
-            f"Audio normalization timed out after {timeout_seconds}s for {input_path}"
-        )
+        raise TimeoutError(f"Audio normalization timed out after {timeout_seconds}s for {input_path}")
     except subprocess.CalledProcessError as e:
-        error_output = (
-            e.stderr.decode("utf-8", errors="ignore") if e.stderr else "Unknown error"
-        )
-        raise RuntimeError(
-            f"Audio normalization failed for {input_path}: {error_output[:500]}"
-        )
+        error_output = e.stderr.decode("utf-8", errors="ignore") if e.stderr else "Unknown error"
+        raise RuntimeError(f"Audio normalization failed for {input_path}: {error_output[:500]}")
 
 
 def get_audio_duration(input_path: str, timeout_seconds: int = 30) -> float:
@@ -140,9 +129,7 @@ def get_audio_duration(input_path: str, timeout_seconds: int = 30) -> float:
             timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutError) as e:
-        raise FileNotFoundError(
-            f"ffprobe not found or not executable. Set FFPROBE_PATH env var. Error: {e}"
-        )
+        raise FileNotFoundError(f"ffprobe not found or not executable. Set FFPROBE_PATH env var. Error: {e}")
 
     try:
         # Get duration using ffprobe
@@ -177,15 +164,7 @@ def get_audio_duration(input_path: str, timeout_seconds: int = 30) -> float:
         return duration
 
     except subprocess.TimeoutError:
-        raise TimeoutError(
-            f"Audio duration probe timed out after {timeout_seconds}s for {input_path}"
-        )
+        raise TimeoutError(f"Audio duration probe timed out after {timeout_seconds}s for {input_path}")
     except (subprocess.CalledProcessError, ValueError) as e:
-        error_output = (
-            e.stderr.decode("utf-8", errors="ignore")
-            if hasattr(e, "stderr") and e.stderr
-            else str(e)
-        )
-        raise RuntimeError(
-            f"Failed to get audio duration for {input_path}: {error_output[:500]}"
-        )
+        error_output = e.stderr.decode("utf-8", errors="ignore") if hasattr(e, "stderr") and e.stderr else str(e)
+        raise RuntimeError(f"Failed to get audio duration for {input_path}: {error_output[:500]}")

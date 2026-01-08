@@ -37,15 +37,9 @@ class IntakeSessionMongo(BaseModel):
     status: str = Field(default="in_progress")  # in_progress, completed, cancelled
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
-    pending_question: Optional[str] = Field(
-        None, description="Pending next question to ask"
-    )
-    travel_questions_count: int = Field(
-        default=0, description="Number of travel-related questions asked"
-    )
-    asked_categories: List[str] = Field(
-        default_factory=list, description="Categories asked in strict sequence"
-    )
+    pending_question: Optional[str] = Field(None, description="Pending next question to ask")
+    travel_questions_count: int = Field(default=0, description="Number of travel-related questions asked")
+    asked_categories: List[str] = Field(default_factory=list, description="Categories asked in strict sequence")
 
     class Config:
         # Exclude revision_id and other MongoDB-specific fields
@@ -68,16 +62,10 @@ class TranscriptionSessionMongo(BaseModel):
         None,
         description="Worker that claimed/processed this job (format: hostname:pid)",
     )
-    audio_duration_seconds: Optional[float] = Field(
-        None, description="Audio duration in seconds"
-    )
+    audio_duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
     word_count: Optional[int] = Field(None, description="Word count of transcript")
-    structured_dialogue: Optional[list[dict]] = Field(
-        None, description="Ordered Doctor/Patient turns"
-    )
-    transcription_id: Optional[str] = Field(
-        None, description="Azure Speech Service transcription job ID for tracking"
-    )
+    structured_dialogue: Optional[list[dict]] = Field(None, description="Ordered Doctor/Patient turns")
+    transcription_id: Optional[str] = Field(None, description="Azure Speech Service transcription job ID for tracking")
     last_poll_status: Optional[str] = Field(
         None,
         description="Last polled status from Azure Speech Service (Succeeded, Running, Failed, etc.)",
@@ -86,56 +74,24 @@ class TranscriptionSessionMongo(BaseModel):
         None, description="Timestamp of last status poll from Azure Speech Service"
     )
     # Observability timestamps for latency analysis
-    enqueued_at: Optional[datetime] = Field(
-        None, description="When job was enqueued to Azure Queue"
-    )
-    dequeued_at: Optional[datetime] = Field(
-        None, description="When worker dequeued the job"
-    )
-    azure_job_created_at: Optional[datetime] = Field(
-        None, description="When Azure Speech job was created"
-    )
-    first_poll_at: Optional[datetime] = Field(
-        None, description="When first status poll was made"
-    )
-    results_downloaded_at: Optional[datetime] = Field(
-        None, description="When transcription results were downloaded"
-    )
-    db_saved_at: Optional[datetime] = Field(
-        None, description="When transcript was saved to database"
-    )
+    enqueued_at: Optional[datetime] = Field(None, description="When job was enqueued to Azure Queue")
+    dequeued_at: Optional[datetime] = Field(None, description="When worker dequeued the job")
+    azure_job_created_at: Optional[datetime] = Field(None, description="When Azure Speech job was created")
+    first_poll_at: Optional[datetime] = Field(None, description="When first status poll was made")
+    results_downloaded_at: Optional[datetime] = Field(None, description="When transcription results were downloaded")
+    db_saved_at: Optional[datetime] = Field(None, description="When transcript was saved to database")
     # Audio normalization metadata
-    normalized_audio: Optional[bool] = Field(
-        None, description="Whether audio was normalized/converted"
-    )
-    original_content_type: Optional[str] = Field(
-        None, description="Original content type before normalization"
-    )
-    normalized_format: Optional[str] = Field(
-        None, description="Format after normalization (e.g., wav_16khz_mono_pcm)"
-    )
-    file_content_type: Optional[str] = Field(
-        None, description="Final content type used for transcription"
-    )
+    normalized_audio: Optional[bool] = Field(None, description="Whether audio was normalized/converted")
+    original_content_type: Optional[str] = Field(None, description="Original content type before normalization")
+    normalized_format: Optional[str] = Field(None, description="Format after normalization (e.g., wav_16khz_mono_pcm)")
+    file_content_type: Optional[str] = Field(None, description="Final content type used for transcription")
     # Enqueue tracking (two-phase enqueue state machine)
-    enqueue_state: Optional[str] = Field(
-        None, description='Enqueue state: "pending" | "queued" | "failed"'
-    )
-    enqueue_attempts: Optional[int] = Field(
-        None, description="Number of enqueue attempts made for this job"
-    )
-    enqueue_last_error: Optional[str] = Field(
-        None, description="Last enqueue error string, if any"
-    )
-    enqueue_requested_at: Optional[datetime] = Field(
-        None, description="When the latest enqueue attempt was requested"
-    )
-    enqueue_failed_at: Optional[datetime] = Field(
-        None, description="When the last enqueue attempt definitively failed"
-    )
-    queue_message_id: Optional[str] = Field(
-        None, description="Azure Queue message ID for this job (if enqueued)"
-    )
+    enqueue_state: Optional[str] = Field(None, description='Enqueue state: "pending" | "queued" | "failed"')
+    enqueue_attempts: Optional[int] = Field(None, description="Number of enqueue attempts made for this job")
+    enqueue_last_error: Optional[str] = Field(None, description="Last enqueue error string, if any")
+    enqueue_requested_at: Optional[datetime] = Field(None, description="When the latest enqueue attempt was requested")
+    enqueue_failed_at: Optional[datetime] = Field(None, description="When the last enqueue attempt definitively failed")
+    queue_message_id: Optional[str] = Field(None, description="Azure Queue message ID for this job (if enqueued)")
 
 
 class SoapNoteMongo(BaseModel):
@@ -186,9 +142,7 @@ class VisitMongo(Document):
     visit_id: str = Field(..., description="Visit ID", unique=True)
     patient_id: str = Field(..., description="Patient ID reference")
     doctor_id: str = Field(..., description="Doctor ID owner")
-    symptom: str = Field(
-        default="", description="Primary symptom / chief complaint for this visit"
-    )
+    symptom: str = Field(default="", description="Primary symptom / chief complaint for this visit")
     workflow_type: str = Field(
         default=VisitWorkflowType.SCHEDULED,
         description="Workflow type: scheduled or walk_in",
@@ -200,9 +154,7 @@ class VisitMongo(Document):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Visit-specific travel history (moved from Patient - travel is visit-specific, not lifetime patient attribute)
-    recently_travelled: bool = Field(
-        default=False, description="Has the patient travelled recently for this visit"
-    )
+    recently_travelled: bool = Field(default=False, description="Has the patient travelled recently for this visit")
 
     # Step 1: Pre-Visit Intake
     intake_session: Optional[IntakeSessionMongo] = None
@@ -308,26 +260,16 @@ class AudioFileMongo(Document):
     filename: str = Field(..., description="Original filename")
     content_type: str = Field(..., description="MIME type of the audio file")
     file_size: int = Field(..., description="File size in bytes")
-    duration_seconds: Optional[float] = Field(
-        None, description="Audio duration in seconds"
-    )
+    duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
 
     # Blob storage reference (optional for backward compatibility with legacy records)
-    blob_reference_id: Optional[str] = Field(
-        None, description="Reference to blob file storage"
-    )
+    blob_reference_id: Optional[str] = Field(None, description="Reference to blob file storage")
 
     # Metadata
-    patient_id: Optional[str] = Field(
-        None, description="Patient ID if linked to a patient"
-    )
+    patient_id: Optional[str] = Field(None, description="Patient ID if linked to a patient")
     visit_id: Optional[str] = Field(None, description="Visit ID if linked to a visit")
-    adhoc_id: Optional[str] = Field(
-        None, description="Adhoc transcript ID if linked to adhoc transcript"
-    )
-    audio_type: str = Field(
-        default="visit", description="Type: visit or other (adhoc deprecated)"
-    )
+    adhoc_id: Optional[str] = Field(None, description="Adhoc transcript ID if linked to adhoc transcript")
+    audio_type: str = Field(default="visit", description="Type: visit or other (adhoc deprecated)")
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -365,22 +307,14 @@ class DoctorPreferencesMongo(Document):
 class LLMInteractionMongo(Document):
     """MongoDB document for logging raw LLM interactions for debugging/QA."""
 
-    agent_name: str = Field(
-        ..., description="Logical agent name (e.g., agent1_medical_context)"
-    )
+    agent_name: str = Field(..., description="Logical agent name (e.g., agent1_medical_context)")
     visit_id: Optional[str] = Field(None, description="Visit ID (if known at log time)")
-    patient_id: Optional[str] = Field(
-        None, description="Patient ID (if known at log time)"
-    )
+    patient_id: Optional[str] = Field(None, description="Patient ID (if known at log time)")
     system_prompt: str = Field(..., description="System prompt sent to the LLM")
     user_prompt: str = Field(..., description="User prompt or payload sent to the LLM")
     response_text: str = Field(..., description="Raw LLM response text")
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Normalized structured metadata"
-    )
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Log creation timestamp"
-    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Normalized structured metadata")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Log creation timestamp")
 
     class Settings:
         name = "llm_interactions"
@@ -400,12 +334,8 @@ class AgentLog(BaseModel):
     )
     user_prompt: Any = Field(..., description="User prompt sent to the LLM")
     response_text: Any = Field(..., description="Response text from the LLM")
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Metadata (prompt_version, etc.)"
-    )
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When this agent call was made"
-    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata (prompt_version, etc.)")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="When this agent call was made")
 
 
 class IntakeQuestionLog(BaseModel):
@@ -414,12 +344,8 @@ class IntakeQuestionLog(BaseModel):
     question_number: int = Field(..., description="Question number in sequence")
     question_id: Optional[str] = Field(None, description="Question ID")
     question_text: Optional[str] = Field(None, description="The actual question text")
-    asked_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When the question was asked"
-    )
-    agents: List[AgentLog] = Field(
-        default_factory=list, description="List of agent interactions for this question"
-    )
+    asked_at: datetime = Field(default_factory=datetime.utcnow, description="When the question was asked")
+    agents: List[AgentLog] = Field(default_factory=list, description="List of agent interactions for this question")
 
 
 class LLMCallLog(BaseModel):
@@ -429,9 +355,7 @@ class LLMCallLog(BaseModel):
     user_prompt: Any = Field(..., description="User prompt sent to the LLM")
     response_text: Any = Field(..., description="Response text from the LLM")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata")
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When this call was made"
-    )
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="When this call was made")
 
 
 class LLMInteractionVisit(Document):
@@ -447,20 +371,12 @@ class LLMInteractionVisit(Document):
     )
 
     # Other phases: stores single LLM call (only generated once per visit)
-    pre_visit_summary: Optional[LLMCallLog] = Field(
-        None, description="Pre-visit summary phase log"
-    )
+    pre_visit_summary: Optional[LLMCallLog] = Field(None, description="Pre-visit summary phase log")
     soap: Optional[LLMCallLog] = Field(None, description="SOAP generation phase log")
-    post_visit_summary: Optional[LLMCallLog] = Field(
-        None, description="Post-visit summary phase log"
-    )
+    post_visit_summary: Optional[LLMCallLog] = Field(None, description="Post-visit summary phase log")
 
-    created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Document creation timestamp"
-    )
-    updated_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Last update timestamp"
-    )
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Document creation timestamp")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
 
     class Settings:
         name = "llm_interaction"

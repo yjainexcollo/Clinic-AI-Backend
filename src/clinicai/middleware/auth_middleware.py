@@ -72,24 +72,18 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         # Extract authentication credentials from headers
         api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
-        auth_header = request.headers.get("Authorization") or request.headers.get(
-            "authorization"
-        )
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
 
         # Authentication is required - no automatic fallback
         # Frontend must send API key in headers (similar to X-Doctor-ID)
 
         try:
             # Validate authentication and get user ID
-            user_id = auth_service.get_user_from_request(
-                api_key=api_key, auth_header=auth_header
-            )
+            user_id = auth_service.get_user_from_request(api_key=api_key, auth_header=auth_header)
 
             # Store user_id in request state for audit logging and downstream use
             request.state.user_id = user_id
-            logger.debug(
-                f"✅ Authenticated user: {user_id} accessing {request.url.path}"
-            )
+            logger.debug(f"✅ Authenticated user: {user_id} accessing {request.url.path}")
 
         except HTTPException as e:
             # Authentication failed - reject request
@@ -113,9 +107,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             )
         except Exception as e:
             # Unexpected error during authentication
-            logger.error(
-                f"❌ Authentication error for {request.url.path}: {e}", exc_info=True
-            )
+            logger.error(f"❌ Authentication error for {request.url.path}: {e}", exc_info=True)
 
             return JSONResponse(
                 status_code=500,

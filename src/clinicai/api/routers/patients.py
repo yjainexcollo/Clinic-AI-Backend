@@ -195,13 +195,8 @@ async def register_patient(
         # Return error response with more detail in development mode
         import os
 
-        is_dev = (
-            os.getenv("APP_ENV", "production") == "development"
-            or os.getenv("DEBUG", "false").lower() == "true"
-        )
-        error_msg = (
-            f"{error_type}: {error_message}" if is_dev else "Internal error occurred."
-        )
+        is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
+        error_msg = f"{error_type}: {error_message}" if is_dev else "Internal error occurred."
         return fail(
             http_request,
             error="INTERNAL_ERROR",
@@ -315,9 +310,7 @@ async def list_patients(
                     gender=patient_data.get("gender"),
                     latest_visit=latest_visit_info,
                     total_visits=patient_data.get("total_visits", 0),
-                    scheduled_visits_count=patient_data.get(
-                        "scheduled_visits_count", 0
-                    ),
+                    scheduled_visits_count=patient_data.get("scheduled_visits_count", 0),
                     walk_in_visits_count=patient_data.get("walk_in_visits_count", 0),
                 )
             )
@@ -326,9 +319,7 @@ async def list_patients(
         # Note: For accurate total count, we'd need a separate aggregation
         # For now, we'll use the returned count as an indicator
         total_count = len(formatted_patients)
-        has_more = (
-            len(formatted_patients) == limit
-        )  # If we got full limit, there might be more
+        has_more = len(formatted_patients) == limit  # If we got full limit, there might be more
 
         return ok(
             request,
@@ -424,9 +415,7 @@ async def answer_intake_question(
             # Prefer explicitly bound form fields first; fallback to reading the form
             if form_patient_id is None or form_visit_id is None or form_answer is None:
                 form = await request.form()
-                form_patient_id = (
-                    form_patient_id or (form.get("patient_id") or "").strip()
-                )
+                form_patient_id = form_patient_id or (form.get("patient_id") or "").strip()
                 form_visit_id = form_visit_id or (form.get("visit_id") or "").strip()
                 form_answer = form_answer or (form.get("answer") or "").strip()
 
@@ -666,9 +655,7 @@ async def upload_medication_images(
         errors = []
 
         # Prefer FastAPI-bound files; fallback to manual parse
-        file_list: List[UploadFile] = [
-            f for f in (images or []) if getattr(f, "filename", None)
-        ]
+        file_list: List[UploadFile] = [f for f in (images or []) if getattr(f, "filename", None)]
         if not file_list:
             try:
                 form = await request.form()
@@ -684,9 +671,7 @@ async def upload_medication_images(
                     try:
                         items = form.getlist(key)
                         for item in items:
-                            if isinstance(item, UploadFile) and getattr(
-                                item, "filename", None
-                            ):
+                            if isinstance(item, UploadFile) and getattr(item, "filename", None):
                                 candidates.append(item)
                     except Exception:
                         pass
@@ -796,9 +781,7 @@ async def upload_medication_images(
             },
         )
     except Exception as e:
-        logger.error(
-            "Unhandled error in upload_multiple_medication_images", exc_info=True
-        )
+        logger.error("Unhandled error in upload_multiple_medication_images", exc_info=True)
         return fail(request, error="INTERNAL_ERROR", message="Failed to upload images")
 
 
@@ -807,9 +790,7 @@ async def upload_medication_images(
     "/{patient_id}/visits/{visit_id}/intake-images/{image_id}/content",
     include_in_schema=False,
 )
-async def get_intake_medication_image_content(
-    request: Request, patient_id: str, visit_id: str, image_id: str
-):
+async def get_intake_medication_image_content(request: Request, patient_id: str, visit_id: str, image_id: str):
     """Get medication image content uploaded during intake with proper access control."""
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
 
@@ -821,13 +802,9 @@ async def get_intake_medication_image_content(
         # Normalize patient ID
         try:
             internal_patient_id = decode_patient_id(patient_id)
-            logger.info(
-                f"[GetMedicationImage] Decoded patient_id: {internal_patient_id[:50]}..."
-            )
+            logger.info(f"[GetMedicationImage] Decoded patient_id: {internal_patient_id[:50]}...")
         except Exception as e:
-            logger.warning(
-                f"[GetMedicationImage] Could not decode patient_id, using as-is: {e}"
-            )
+            logger.warning(f"[GetMedicationImage] Could not decode patient_id, using as-is: {e}")
             internal_patient_id = patient_id
 
         # Find the image with security validation
@@ -836,9 +813,7 @@ async def get_intake_medication_image_content(
             try:
                 obj_id = PydanticObjectId(image_id)
             except Exception as parse_error:
-                logger.error(
-                    f"[GetMedicationImage] Invalid ObjectId format: {image_id}, error: {parse_error}"
-                )
+                logger.error(f"[GetMedicationImage] Invalid ObjectId format: {image_id}, error: {parse_error}")
                 raise HTTPException(
                     status_code=400,
                     detail={
@@ -864,9 +839,7 @@ async def get_intake_medication_image_content(
             )
 
         if not doc:
-            logger.warning(
-                f"[GetMedicationImage] Image document not found for ID: {image_id}"
-            )
+            logger.warning(f"[GetMedicationImage] Image document not found for ID: {image_id}")
             raise HTTPException(
                 status_code=404,
                 detail={"error": "NOT_FOUND", "message": "Image not found"},
@@ -907,18 +880,14 @@ async def get_intake_medication_image_content(
         from ...adapters.storage.azure_blob_service import get_azure_blob_service
 
         try:
-            logger.info(
-                f"[GetMedicationImage] Fetching blob reference: {doc.blob_reference_id}"
-            )
+            logger.info(f"[GetMedicationImage] Fetching blob reference: {doc.blob_reference_id}")
             blob_repo = BlobFileRepository()
             blob_service = get_azure_blob_service()
 
             # Get blob reference
             blob_ref = await blob_repo.get_blob_reference_by_id(doc.blob_reference_id)
             if not blob_ref:
-                logger.error(
-                    f"[GetMedicationImage] Blob reference not found: {doc.blob_reference_id}"
-                )
+                logger.error(f"[GetMedicationImage] Blob reference not found: {doc.blob_reference_id}")
                 raise HTTPException(
                     status_code=404,
                     detail={
@@ -927,16 +896,12 @@ async def get_intake_medication_image_content(
                     },
                 )
 
-            logger.info(
-                f"[GetMedicationImage] Blob reference found: blob_path={blob_ref.blob_path}"
-            )
+            logger.info(f"[GetMedicationImage] Blob reference found: blob_path={blob_ref.blob_path}")
 
             # Download from blob storage
             file_data = await blob_service.download_file(blob_path=blob_ref.blob_path)
 
-            logger.info(
-                f"[GetMedicationImage] Successfully downloaded {len(file_data)} bytes from blob storage"
-            )
+            logger.info(f"[GetMedicationImage] Successfully downloaded {len(file_data)} bytes from blob storage")
 
             return Response(
                 content=file_data,
@@ -964,9 +929,7 @@ async def get_intake_medication_image_content(
 
 
 # List uploaded images for a visit
-@router.get(
-    "/{patient_id}/visits/{visit_id}/images", tags=["Intake + Pre-Visit Summary"]
-)
+@router.get("/{patient_id}/visits/{visit_id}/images", tags=["Intake + Pre-Visit Summary"])
 async def list_medication_images(request: Request, patient_id: str, visit_id: str):
     from ...adapters.db.mongo.models.patient_m import MedicationImageMongo
     from ...adapters.db.mongo.repositories.blob_file_repository import (
@@ -1001,9 +964,7 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
             signed_url = None
             try:
                 if hasattr(d, "blob_reference_id") and d.blob_reference_id:
-                    blob_ref = await blob_repo.get_blob_reference_by_id(
-                        d.blob_reference_id
-                    )
+                    blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
                     if blob_ref:
                         blob_url = blob_ref.blob_url
                         if getattr(blob_ref, "blob_path", None):
@@ -1019,9 +980,7 @@ async def list_medication_images(request: Request, patient_id: str, visit_id: st
                                     sas_error,
                                 )
             except Exception as e:
-                logger.warning(
-                    f"Failed to fetch blob URL for image {getattr(d, 'id', 'unknown')}: {e}"
-                )
+                logger.warning(f"Failed to fetch blob URL for image {getattr(d, 'id', 'unknown')}: {e}")
 
             images_list.append(
                 {
@@ -1109,9 +1068,7 @@ async def reset_intake_session(
             )
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
         if not visit:
             return fail(
                 request,
@@ -1127,9 +1084,7 @@ async def reset_intake_session(
             visit.status = "intake"  # Reset visit status
             visit.updated_at = datetime.utcnow()
             await visit_repo.save(visit)
-            logger.info(
-                f"Reset intake session for patient {internal_patient_id}, visit {visit_id}"
-            )
+            logger.info(f"Reset intake session for patient {internal_patient_id}, visit {visit_id}")
 
         return ok(
             request,
@@ -1184,9 +1139,7 @@ async def get_intake_status(
             )
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
         if not visit:
             return fail(
                 request,
@@ -1297,9 +1250,7 @@ async def generate_pre_visit_summary(
         )
 
         # Execute use case
-        use_case = GeneratePreVisitSummaryUseCase(
-            patient_repo, visit_repo, question_service
-        )
+        use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
         result = await use_case.execute(dto_request, doctor_id=doctor_id)
 
         return PreVisitSummaryResponse(
@@ -1354,15 +1305,8 @@ async def generate_pre_visit_summary(
         # Return more helpful error message in development, generic in production
         import os
 
-        is_dev = (
-            os.getenv("APP_ENV", "production") == "development"
-            or os.getenv("DEBUG", "false").lower() == "true"
-        )
-        error_msg = (
-            f"{error_type}: {error_message}"
-            if is_dev
-            else "An unexpected error occurred"
-        )
+        is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
+        error_msg = f"{error_type}: {error_message}" if is_dev else "An unexpected error occurred"
         return fail(
             http_request,
             error="INTERNAL_ERROR",
@@ -1423,17 +1367,13 @@ async def get_pre_visit_summary(
         from ...domain.value_objects.visit_id import VisitId
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj, doctor_id
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             raise VisitNotFoundError(visit_id)
 
         # Check if summary exists, if not try to generate it
         if not visit.has_pre_visit_summary():
-            logger.warning(
-                f"No pre-visit summary found for visit {visit_id}, attempting to generate..."
-            )
+            logger.warning(f"No pre-visit summary found for visit {visit_id}, attempting to generate...")
 
             # Check if intake is completed
             if not visit.is_intake_complete():
@@ -1459,9 +1399,7 @@ async def get_pre_visit_summary(
                 # Create question service directly instead of using container
                 question_service = OpenAIQuestionService()
 
-                summary_use_case = GeneratePreVisitSummaryUseCase(
-                    patient_repo, visit_repo, question_service
-                )
+                summary_use_case = GeneratePreVisitSummaryUseCase(patient_repo, visit_repo, question_service)
                 # Pass the original patient_id (encoded) to use case so it can query images correctly
                 summary_request = PreVisitSummaryRequest(
                     patient_id=patient_id,  # Use original encoded patient_id from request
@@ -1469,15 +1407,11 @@ async def get_pre_visit_summary(
                 )
 
                 result = await summary_use_case.execute(summary_request)
-                logger.info(
-                    f"Successfully generated pre-visit summary for visit {visit_id}"
-                )
+                logger.info(f"Successfully generated pre-visit summary for visit {visit_id}")
 
                 # Attach images explicitly in case use case didn't find them
                 if not result.medication_images:
-                    logger.warning(
-                        f"[GetPreVisitSummary] Use case returned no images, querying directly..."
-                    )
+                    logger.warning(f"[GetPreVisitSummary] Use case returned no images, querying directly...")
                     from beanie.operators import Or
 
                     from ...adapters.db.mongo.models.patient_m import (
@@ -1498,8 +1432,7 @@ async def get_pre_visit_summary(
                         Or(
                             MedicationImageMongo.patient_id == patient_internal_id,
                             MedicationImageMongo.patient_id == patient_encoded_id,
-                            MedicationImageMongo.patient_id
-                            == patient_id,  # Original request ID
+                            MedicationImageMongo.patient_id == patient_id,  # Original request ID
                         ),
                         MedicationImageMongo.visit_id == visit_id,
                     ).to_list()
@@ -1512,12 +1445,8 @@ async def get_pre_visit_summary(
                             signed_url = None
                             try:
                                 if getattr(d, "blob_reference_id", None):
-                                    blob_ref = await blob_repo.get_blob_reference_by_id(
-                                        d.blob_reference_id
-                                    )
-                                    if blob_ref and getattr(
-                                        blob_ref, "blob_path", None
-                                    ):
+                                    blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
+                                    if blob_ref and getattr(blob_ref, "blob_path", None):
                                         signed_url = blob_service.generate_signed_url(
                                             blob_path=blob_ref.blob_path,
                                             expires_in_hours=1,
@@ -1551,9 +1480,7 @@ async def get_pre_visit_summary(
                 )
 
             except Exception as e:
-                logger.error(
-                    f"Failed to generate pre-visit summary for visit {visit_id}: {e}"
-                )
+                logger.error(f"Failed to generate pre-visit summary for visit {visit_id}: {e}")
                 return fail(
                     request,
                     error="SUMMARY_GENERATION_FAILED",
@@ -1583,8 +1510,7 @@ async def get_pre_visit_summary(
             Or(
                 MedicationImageMongo.patient_id == patient_internal_id,
                 MedicationImageMongo.patient_id == patient_encoded_id,
-                MedicationImageMongo.patient_id
-                == patient_id,  # Also check the original request ID
+                MedicationImageMongo.patient_id == patient_id,  # Also check the original request ID
             ),
             MedicationImageMongo.visit_id == visit.visit_id.value,
         ).to_list()
@@ -1592,9 +1518,7 @@ async def get_pre_visit_summary(
         logger.info(
             f"[GetPreVisitSummary] Querying images for visit {visit.visit_id.value} with patient_id variants: internal={patient_internal_id[:20]}..., encoded={patient_encoded_id[:20]}..., request={patient_id[:20]}..."
         )
-        logger.info(
-            f"[GetPreVisitSummary] Found {len(docs) if docs else 0} medication images"
-        )
+        logger.info(f"[GetPreVisitSummary] Found {len(docs) if docs else 0} medication images")
 
         images_meta = None
         if docs:
@@ -1605,9 +1529,7 @@ async def get_pre_visit_summary(
                 signed_url = None
                 try:
                     if getattr(d, "blob_reference_id", None):
-                        blob_ref = await blob_repo.get_blob_reference_by_id(
-                            d.blob_reference_id
-                        )
+                        blob_ref = await blob_repo.get_blob_reference_by_id(d.blob_reference_id)
                         if blob_ref and getattr(blob_ref, "blob_path", None):
                             signed_url = blob_service.generate_signed_url(
                                 blob_path=blob_ref.blob_path,
@@ -1648,9 +1570,7 @@ async def get_pre_visit_summary(
         return fail(request, error="VISIT_NOT_FOUND", message=e.message)
     except Exception as e:
         logger.error("Unhandled error in get_pre_visit_summary", exc_info=True)
-        return fail(
-            request, error="INTERNAL_ERROR", message="An unexpected error occurred"
-        )
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.post(
@@ -1704,9 +1624,7 @@ async def generate_post_visit_summary(
             internal_patient_id = decode_patient_id(request.patient_id)
             logger.info(f"Decoded patient_id: {internal_patient_id}")
         except Exception as decode_error:
-            logger.error(
-                f"Failed to decode patient_id: {request.patient_id}, error: {decode_error}"
-            )
+            logger.error(f"Failed to decode patient_id: {request.patient_id}, error: {decode_error}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -1721,14 +1639,10 @@ async def generate_post_visit_summary(
         )
 
         # Create request with decoded patient_id
-        decoded_request = PostVisitSummaryRequest(
-            patient_id=internal_patient_id, visit_id=request.visit_id
-        )
+        decoded_request = PostVisitSummaryRequest(patient_id=internal_patient_id, visit_id=request.visit_id)
 
         # Create use case instance (patient_repo, visit_repo, soap_service)
-        use_case = GeneratePostVisitSummaryUseCase(
-            patient_repo, visit_repo, soap_service
-        )
+        use_case = GeneratePostVisitSummaryUseCase(patient_repo, visit_repo, soap_service)
 
         # Execute use case - pass doctor_id as second argument
         result = await use_case.execute(decoded_request, doctor_id)
@@ -1751,9 +1665,7 @@ async def generate_post_visit_summary(
         return fail(http_request, error="INVALID_VISIT_STATE", message=str(e))
     except Exception as e:
         logger.error("Unhandled error in generate_post_visit_summary", exc_info=True)
-        return fail(
-            http_request, error="INTERNAL_ERROR", message="An unexpected error occurred"
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -1788,18 +1700,14 @@ async def get_post_visit_summary(
         except Exception as e:
             internal_patient_id = patient_id
 
-        patient = await patient_repo.find_by_id(
-            PatientId(internal_patient_id), doctor_id
-        )
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise PatientNotFoundError(patient_id)
 
         from ...domain.value_objects.visit_id import VisitId
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj, doctor_id
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             raise VisitNotFoundError(visit_id)
 
@@ -1886,9 +1794,7 @@ async def store_vitals(
             internal_patient_id = patient_id
 
         # Get patient and visit - with doctor_id for data isolation
-        patient = await patient_repo.find_by_id(
-            PatientId(internal_patient_id), doctor_id
-        )
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise HTTPException(
                 status_code=404,
@@ -1900,9 +1806,7 @@ async def store_vitals(
             )
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj, doctor_id
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             raise HTTPException(
                 status_code=404,
@@ -1946,9 +1850,7 @@ async def store_vitals(
         # Persist visit (not patient)
         await visit_repo.save(visit)
 
-        return ok(
-            request, data={"success": True, "message": "Vitals stored successfully"}
-        )
+        return ok(request, data={"success": True, "message": "Vitals stored successfully"})
 
     except HTTPException:
         raise
@@ -1999,9 +1901,7 @@ async def get_vitals(
             internal_patient_id = patient_id
 
         # Get patient and visit - with doctor_id for data isolation
-        patient = await patient_repo.find_by_id(
-            PatientId(internal_patient_id), doctor_id
-        )
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             raise HTTPException(
                 status_code=404,
@@ -2015,9 +1915,7 @@ async def get_vitals(
         from ...domain.value_objects.visit_id import VisitId
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj, doctor_id
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             raise HTTPException(
                 status_code=404,
@@ -2104,18 +2002,14 @@ async def list_patient_visits(
                 try:
                     internal_patient_id = decode_patient_id(decoded_path_param)
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to decode patient_id '{decoded_path_param}': {e}"
-                    )
+                    logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
                     internal_patient_id = decoded_path_param
         else:
             # Try to decrypt as opaque token
             try:
                 internal_patient_id = decode_patient_id(decoded_path_param)
             except Exception as e:
-                logger.warning(
-                    f"Failed to decode patient_id '{decoded_path_param}': {e}"
-                )
+                logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
                 internal_patient_id = decoded_path_param
 
         # Create PatientId value object with proper error handling
@@ -2151,9 +2045,7 @@ async def list_patient_visits(
             # when transcription_session is None, so we explicitly handle None cases
             try:
                 transcript_result = visit.is_transcription_complete()
-                has_transcript = (
-                    transcript_result if isinstance(transcript_result, bool) else False
-                )
+                has_transcript = transcript_result if isinstance(transcript_result, bool) else False
             except (AttributeError, TypeError):
                 has_transcript = False
 
@@ -2170,17 +2062,13 @@ async def list_patient_visits(
 
             try:
                 pre_visit_result = visit.has_pre_visit_summary()
-                has_pre_visit_summary = (
-                    pre_visit_result if isinstance(pre_visit_result, bool) else False
-                )
+                has_pre_visit_summary = pre_visit_result if isinstance(pre_visit_result, bool) else False
             except (AttributeError, TypeError):
                 has_pre_visit_summary = False
 
             try:
                 post_visit_result = visit.has_post_visit_summary()
-                has_post_visit_summary = (
-                    post_visit_result if isinstance(post_visit_result, bool) else False
-                )
+                has_post_visit_summary = post_visit_result if isinstance(post_visit_result, bool) else False
             except (AttributeError, TypeError):
                 has_post_visit_summary = False
 
@@ -2270,18 +2158,14 @@ async def get_visit_detail(
                 try:
                     internal_patient_id = decode_patient_id(decoded_path_param)
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to decode patient_id '{decoded_path_param}': {e}"
-                    )
+                    logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
                     internal_patient_id = decoded_path_param
         else:
             # Try to decrypt as opaque token
             try:
                 internal_patient_id = decode_patient_id(decoded_path_param)
             except Exception as e:
-                logger.warning(
-                    f"Failed to decode patient_id '{decoded_path_param}': {e}"
-                )
+                logger.warning(f"Failed to decode patient_id '{decoded_path_param}': {e}")
                 internal_patient_id = decoded_path_param
 
         # Create PatientId value object with proper error handling
@@ -2318,9 +2202,7 @@ async def get_visit_detail(
 
         # Get visit
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(
-            internal_patient_id, visit_id_obj, doctor_id
-        )
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             return fail(
                 request,
@@ -2349,9 +2231,7 @@ async def get_visit_detail(
                 "status": visit.intake_session.status,
                 "started_at": visit.intake_session.started_at.isoformat(),
                 "completed_at": (
-                    visit.intake_session.completed_at.isoformat()
-                    if visit.intake_session.completed_at
-                    else None
+                    visit.intake_session.completed_at.isoformat() if visit.intake_session.completed_at else None
                 ),
                 "pending_question": visit.intake_session.pending_question,
             }
@@ -2413,9 +2293,7 @@ async def get_visit_detail(
             post_visit_summary=visit.post_visit_summary,
         )
 
-        return ok(
-            request, data=visit_detail, message="Visit details retrieved successfully"
-        )
+        return ok(request, data=visit_detail, message="Visit details retrieved successfully")
 
     except Exception as e:
         logger.error(f"Error getting visit detail: {e}", exc_info=True)

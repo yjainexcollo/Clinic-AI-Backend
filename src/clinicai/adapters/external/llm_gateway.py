@@ -100,8 +100,5 @@ async def call_llm_with_telemetry(
                 add_span_attribute(span, "llm.error", str(e)[:200])
                 set_span_status(span, success=False, error_message=str(e))
 
-            logger.error(
-                f"LLM call failed: scenario={scenario.value} "
-                f"version={prompt_version} error={str(e)}"
-            )
+            logger.error(f"LLM call failed: scenario={scenario.value} " f"version={prompt_version} error={str(e)}")
             raise

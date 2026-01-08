@@ -165,9 +165,7 @@ class TranscribeAudioUseCase:
         # Store as dict of lists of compiled patterns
         self._compiled_pii_patterns = {}
         for pii_type, patterns in pii_patterns_raw.items():
-            self._compiled_pii_patterns[pii_type] = [
-                re.compile(pattern, re.IGNORECASE) for pattern in patterns
-            ]
+            self._compiled_pii_patterns[pii_type] = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
 
         # Store raw patterns for backward compatibility (if needed)
         self._pii_patterns = pii_patterns_raw
@@ -189,13 +187,9 @@ class TranscribeAudioUseCase:
             ),
         ]
 
-    async def execute(
-        self, request: AudioTranscriptionRequest, doctor_id: str
-    ) -> AudioTranscriptionResponse:
+    async def execute(self, request: AudioTranscriptionRequest, doctor_id: str) -> AudioTranscriptionResponse:
         """Execute the audio transcription use case."""
-        LOGGER.info(
-            f"TranscribeAudioUseCase.execute called for patient {request.patient_id}, visit {request.visit_id}"
-        )
+        LOGGER.info(f"TranscribeAudioUseCase.execute called for patient {request.patient_id}, visit {request.visit_id}")
 
         # Find patient
         patient_id = PatientId(request.patient_id)
@@ -205,20 +199,13 @@ class TranscribeAudioUseCase:
 
         # Find visit
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id, doctor_id
-        )
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
         # Check if transcription is already completed - return existing data if so
-        if (
-            visit.transcription_session
-            and visit.transcription_session.transcription_status == "completed"
-        ):
-            LOGGER.info(
-                f"Transcription already completed for visit {request.visit_id}, returning existing data"
-            )
+        if visit.transcription_session and visit.transcription_session.transcription_status == "completed":
+            LOGGER.info(f"Transcription already completed for visit {request.visit_id}, returning existing data")
             return AudioTranscriptionResponse(
                 patient_id=patient.patient_id.value,
                 visit_id=visit.visit_id.value,
@@ -236,37 +223,23 @@ class TranscribeAudioUseCase:
                     f"Scheduled visit not ready for transcription. Current status: {visit.status}. Complete intake first."
                 )
             elif visit.is_walk_in_workflow():
-                raise ValueError(
-                    f"Walk-in visit not ready for transcription. Current status: {visit.status}."
-                )
+                raise ValueError(f"Walk-in visit not ready for transcription. Current status: {visit.status}.")
             else:
-                raise ValueError(
-                    f"Visit not ready for transcription. Current status: {visit.status}."
-                )
+                raise ValueError(f"Visit not ready for transcription. Current status: {visit.status}.")
 
         try:
             # Validate audio file only if local file path provided (skip if SAS URL only)
             if request.audio_file_path and not getattr(request, "sas_url", None):
-                validation_result = (
-                    await self._transcription_service.validate_audio_file(
-                        request.audio_file_path
-                    )
-                )
+                validation_result = await self._transcription_service.validate_audio_file(request.audio_file_path)
 
                 if not validation_result.get("is_valid", False):
-                    raise ValueError(
-                        f"Invalid audio file: {validation_result.get('error', 'Unknown error')}"
-                    )
+                    raise ValueError(f"Invalid audio file: {validation_result.get('error', 'Unknown error')}")
             elif getattr(request, "sas_url", None):
                 # SAS URL provided - skip local file validation
-                LOGGER.debug(
-                    f"Skipping local file validation (SAS URL provided for visit {request.visit_id})"
-                )
+                LOGGER.debug(f"Skipping local file validation (SAS URL provided for visit {request.visit_id})")
 
             # Get language from request or fallback to patient language
-            transcription_language = (
-                request.language or getattr(patient, "language", "en") or "en"
-            )
+            transcription_language = request.language or getattr(patient, "language", "en") or "en"
             # Normalize language code (handle both 'sp' and 'es' for backward compatibility)
             if transcription_language in ["es", "sp"]:
                 transcription_language = "sp"
@@ -274,10 +247,7 @@ class TranscribeAudioUseCase:
             # Start transcription process (only if not already started)
             # The API endpoint may have already called start_transcription(None) to mark it as processing
             # In that case, just update the audio_file_path instead of creating a new session
-            if (
-                visit.transcription_session
-                and visit.transcription_session.transcription_status == "processing"
-            ):
+            if visit.transcription_session and visit.transcription_session.transcription_status == "processing":
                 # Session already exists and is processing, just update the audio_file_path
                 LOGGER.info(
                     f"Transcription session already exists for visit {request.visit_id}, updating audio_file_path"
@@ -288,18 +258,12 @@ class TranscribeAudioUseCase:
                 visit.updated_at = datetime.utcnow()
             else:
                 # No session or session is not processing, create new one
-                visit.start_transcription(
-                    request.audio_file_path or ""
-                )  # Can be None when using SAS URL
+                visit.start_transcription(request.audio_file_path or "")  # Can be None when using SAS URL
 
             await self._visit_repository.save(visit)
 
             # Transcribe audio using Azure Speech Service
-            audio_source = (
-                getattr(request, "sas_url", None)
-                or request.audio_file_path
-                or "unknown"
-            )
+            audio_source = getattr(request, "sas_url", None) or request.audio_file_path or "unknown"
             LOGGER.info(
                 f"Starting transcription for visit {request.visit_id}, source={('SAS URL' if getattr(request, 'sas_url', None) else 'local file')}, language: {transcription_language}"
             )
@@ -313,35 +277,21 @@ class TranscribeAudioUseCase:
                     # Filter and map fields that should be persisted
                     fields_to_update = {}
                     if "transcription_id" in update_fields:
-                        fields_to_update["transcription_id"] = update_fields[
-                            "transcription_id"
-                        ]
+                        fields_to_update["transcription_id"] = update_fields["transcription_id"]
                     if "azure_job_created_at" in update_fields:
-                        fields_to_update["azure_job_created_at"] = update_fields[
-                            "azure_job_created_at"
-                        ]
+                        fields_to_update["azure_job_created_at"] = update_fields["azure_job_created_at"]
                     if "first_poll_at" in update_fields:
-                        fields_to_update["first_poll_at"] = update_fields[
-                            "first_poll_at"
-                        ]
+                        fields_to_update["first_poll_at"] = update_fields["first_poll_at"]
                     if "results_downloaded_at" in update_fields:
-                        fields_to_update["results_downloaded_at"] = update_fields[
-                            "results_downloaded_at"
-                        ]
+                        fields_to_update["results_downloaded_at"] = update_fields["results_downloaded_at"]
                     if "last_poll_status" in update_fields:
-                        fields_to_update["last_poll_status"] = update_fields[
-                            "last_poll_status"
-                        ]
+                        fields_to_update["last_poll_status"] = update_fields["last_poll_status"]
                     if "last_poll_at" in update_fields:
                         fields_to_update["last_poll_at"] = update_fields["last_poll_at"]
                     if "transcription_status" in update_fields:
-                        fields_to_update["transcription_status"] = update_fields[
-                            "transcription_status"
-                        ]
+                        fields_to_update["transcription_status"] = update_fields["transcription_status"]
                     if "error_message" in update_fields:
-                        fields_to_update["error_message"] = update_fields[
-                            "error_message"
-                        ]
+                        fields_to_update["error_message"] = update_fields["error_message"]
 
                     if fields_to_update:
                         await self._visit_repository.update_transcription_session_fields(
@@ -354,9 +304,7 @@ class TranscribeAudioUseCase:
                             f"Persisted transcription session fields: {list(fields_to_update.keys())} for visit {request.visit_id}"
                         )
                 except Exception as e:
-                    LOGGER.warning(
-                        f"Failed to persist transcription session fields: {e}"
-                    )
+                    LOGGER.warning(f"Failed to persist transcription session fields: {e}")
 
             # P1-4: Timestamps are now set exactly by Azure Speech service via callbacks
             # No more approximate calculations needed
@@ -369,9 +317,7 @@ class TranscribeAudioUseCase:
                 medical_context=True,
                 sas_url=getattr(request, "sas_url", None),
                 status_update_callback=status_update_callback,
-                enable_diarization=getattr(
-                    request, "enable_diarization", None
-                ),  # P1-5: Pass diarization toggle
+                enable_diarization=getattr(request, "enable_diarization", None),  # P1-5: Pass diarization toggle
             )
             speech_end = time.time()
             # Calculate duration after context exits (duration is set in __exit__)
@@ -395,15 +341,11 @@ class TranscribeAudioUseCase:
                 )
 
                 # Mark visit transcription as failed with error info
-                visit.mark_transcription_failed(
-                    error_message=f"{error_code}: {error_message}"
-                )
+                visit.mark_transcription_failed(error_message=f"{error_code}: {error_message}")
                 await self._visit_repository.save(visit)
 
                 # Raise with detailed error information
-                raise ValueError(
-                    f"Transcription failed: {error_message} (code: {error_code})"
-                )
+                raise ValueError(f"Transcription failed: {error_message} (code: {error_code})")
 
             # P1-4: transcription_id and timestamps are already persisted via callbacks
             # No need to update them here - they're set exactly when events occur
@@ -427,17 +369,13 @@ class TranscribeAudioUseCase:
             speaker_info = transcription_result.get("speaker_labels", {})
 
             # P1-5: Handle case where diarization is disabled (may have empty or single-speaker dialogue)
-            if not pre_structured_dialogue or not isinstance(
-                pre_structured_dialogue, list
-            ):
+            if not pre_structured_dialogue or not isinstance(pre_structured_dialogue, list):
                 LOGGER.warning(
                     f"Azure Speech Service did not provide structured dialogue for visit {request.visit_id}. "
                     f"This may occur if diarization is disabled. Creating single-speaker dialogue from transcript."
                 )
                 # Create a single-speaker dialogue from the raw transcript
-                pre_structured_dialogue = (
-                    [{"Speaker 1": raw_transcript}] if raw_transcript else []
-                )
+                pre_structured_dialogue = [{"Speaker 1": raw_transcript}] if raw_transcript else []
                 speaker_info = {"speakers": [{"label": "Speaker 1"}]}
 
             # Map speakers from Azure Speech Service (Speaker 1, Speaker 2) to Doctor/Patient
@@ -471,14 +409,10 @@ class TranscribeAudioUseCase:
                 timing_ctx.set_output_size(len(structured_dialogue))
                 timing_ctx.add_metadata(turns=len(structured_dialogue))
 
-            LOGGER.info(
-                f"Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns"
-            )
+            LOGGER.info(f"Mapped speakers to Doctor/Patient: {len(structured_dialogue)} turns")
 
             LOGGER.info(f"Raw transcript length: {len(raw_transcript)} characters")
-            LOGGER.info(
-                f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}"
-            )
+            LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
             # Apply PII removal to raw transcript and structured dialogue
             with TimingContext("PII_Removal", LOGGER) as timing_ctx:
@@ -486,15 +420,9 @@ class TranscribeAudioUseCase:
 
                 # Parallel PII removal for raw transcript and structured dialogue (CPU-bound, use threads)
                 if structured_dialogue:
-                    raw_transcript_cleaned, structured_dialogue_cleaned = (
-                        await asyncio.gather(
-                            asyncio.to_thread(
-                                self._remove_pii_from_text, raw_transcript
-                            ),
-                            asyncio.to_thread(
-                                self._remove_pii_from_dialogue, structured_dialogue
-                            ),
-                        )
+                    raw_transcript_cleaned, structured_dialogue_cleaned = await asyncio.gather(
+                        asyncio.to_thread(self._remove_pii_from_text, raw_transcript),
+                        asyncio.to_thread(self._remove_pii_from_dialogue, structured_dialogue),
                     )
                     raw_transcript = raw_transcript_cleaned
                     structured_dialogue = structured_dialogue_cleaned
@@ -504,16 +432,12 @@ class TranscribeAudioUseCase:
                 timing_ctx.set_output_size(len(raw_transcript))
                 timing_ctx.add_metadata(
                     transcript_chars=len(raw_transcript),
-                    dialogue_turns=(
-                        len(structured_dialogue) if structured_dialogue else 0
-                    ),
+                    dialogue_turns=(len(structured_dialogue) if structured_dialogue else 0),
                 )
 
             # Validate PII removal (conditional aggressive pass only if needed)
             with TimingContext("PII_Validation", LOGGER) as timing_ctx:
-                pii_validation = self._validate_pii_removal(
-                    raw_transcript, structured_dialogue
-                )
+                pii_validation = self._validate_pii_removal(raw_transcript, structured_dialogue)
                 timing_ctx.add_metadata(
                     pii_detected=pii_validation["pii_detected"],
                     pii_count=pii_validation["pii_count"],
@@ -523,24 +447,16 @@ class TranscribeAudioUseCase:
                 LOGGER.warning(
                     f"⚠️ PII validation: {pii_validation['pii_count']} PII items still detected after removal"
                 )
-                for pii_type, value, location in pii_validation["pii_items"][
-                    :10
-                ]:  # Show first 10
+                for pii_type, value, location in pii_validation["pii_items"][:10]:  # Show first 10
                     LOGGER.warning(f"  - {pii_type}: {value} (in {location})")
                 # Conditional aggressive pass: only if PII still detected
                 if structured_dialogue and pii_validation["pii_count"] > 0:
                     LOGGER.info("Attempting conditional aggressive PII removal pass...")
-                    structured_dialogue = self._aggressive_pii_removal_from_dialogue(
-                        structured_dialogue
-                    )
+                    structured_dialogue = self._aggressive_pii_removal_from_dialogue(structured_dialogue)
                     # Re-validate
-                    pii_validation_retry = self._validate_pii_removal(
-                        raw_transcript, structured_dialogue
-                    )
+                    pii_validation_retry = self._validate_pii_removal(raw_transcript, structured_dialogue)
                     if pii_validation_retry["pii_detected"]:
-                        LOGGER.warning(
-                            f"⚠️ PII still detected after retry: {pii_validation_retry['pii_count']} items"
-                        )
+                        LOGGER.warning(f"⚠️ PII still detected after retry: {pii_validation_retry['pii_count']} items")
                     else:
                         LOGGER.info("✓ Additional PII removal pass successful")
             else:
@@ -566,25 +482,17 @@ class TranscribeAudioUseCase:
                     "llm_latency_sec": llm_latency,
                     "total_transcript_time_sec": total_transcript_time,
                     "transcript_chars": len(raw_transcript),
-                    "structured_dialogue_turns": (
-                        len(structured_dialogue) if structured_dialogue else 0
-                    ),
+                    "structured_dialogue_turns": (len(structured_dialogue) if structured_dialogue else 0),
                 },
             )
 
             # Validate completeness
             if structured_dialogue:
-                completeness = self._validate_completeness(
-                    structured_dialogue, raw_transcript
-                )
+                completeness = self._validate_completeness(structured_dialogue, raw_transcript)
                 LOGGER.info(f"Completeness check:")
                 LOGGER.info(f"  - Dialogue turns: {completeness['dialogue_turns']}")
-                LOGGER.info(
-                    f"  - Transcript sentences: {completeness['transcript_sentences']}"
-                )
-                LOGGER.info(
-                    f"  - Completeness ratio: {completeness['completeness_ratio']:.2%}"
-                )
+                LOGGER.info(f"  - Transcript sentences: {completeness['transcript_sentences']}")
+                LOGGER.info(f"  - Completeness ratio: {completeness['completeness_ratio']:.2%}")
                 LOGGER.info(f"  - Character ratio: {completeness['char_ratio']:.2%}")
 
                 if not completeness["is_complete"]:
@@ -592,9 +500,7 @@ class TranscribeAudioUseCase:
                         f"⚠️  Dialogue completeness is below threshold (0.70): {completeness['completeness_ratio']:.2%}"
                     )
                 else:
-                    LOGGER.info(
-                        f"✓ Dialogue completeness meets threshold: {completeness['completeness_ratio']:.2%}"
-                    )
+                    LOGGER.info(f"✓ Dialogue completeness meets threshold: {completeness['completeness_ratio']:.2%}")
 
             # Complete transcription with both raw transcript and structured dialogue
             visit.complete_transcription_with_data(
@@ -603,19 +509,13 @@ class TranscribeAudioUseCase:
                 structured_dialogue=structured_dialogue,  # Store structured dialogue separately
             )
 
-            LOGGER.info(
-                f"About to save patient {request.patient_id} with visit {request.visit_id}"
-            )
+            LOGGER.info(f"About to save patient {request.patient_id} with visit {request.visit_id}")
             LOGGER.info(f"Visit status: {visit.status}")
             LOGGER.info(
                 f"Transcription session status: {visit.transcription_session.transcription_status if visit.transcription_session else 'None'}"
             )
-            LOGGER.info(
-                f"Transcript length: {len(raw_transcript) if raw_transcript else 0}"
-            )
-            LOGGER.info(
-                f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}"
-            )
+            LOGGER.info(f"Transcript length: {len(raw_transcript) if raw_transcript else 0}")
+            LOGGER.info(f"Structured dialogue turns: {len(structured_dialogue) if structured_dialogue else 0}")
 
             # Save updated visit with db_saved_at timestamp
             db_saved_at = datetime.utcnow()
@@ -627,58 +527,28 @@ class TranscribeAudioUseCase:
             await self._visit_repository.save(visit)
 
             # Calculate latency timings
-            enqueued_at = (
-                visit.transcription_session.enqueued_at
-                if visit.transcription_session
-                else None
-            )
-            dequeued_at = (
-                visit.transcription_session.dequeued_at
-                if visit.transcription_session
-                else None
-            )
+            enqueued_at = visit.transcription_session.enqueued_at if visit.transcription_session else None
+            dequeued_at = visit.transcription_session.dequeued_at if visit.transcription_session else None
             azure_job_created_at = (
-                visit.transcription_session.azure_job_created_at
-                if visit.transcription_session
-                else None
+                visit.transcription_session.azure_job_created_at if visit.transcription_session else None
             )
-            first_poll_at = (
-                visit.transcription_session.first_poll_at
-                if visit.transcription_session
-                else None
-            )
+            first_poll_at = visit.transcription_session.first_poll_at if visit.transcription_session else None
             results_downloaded_at = (
-                visit.transcription_session.results_downloaded_at
-                if visit.transcription_session
-                else None
+                visit.transcription_session.results_downloaded_at if visit.transcription_session else None
             )
-            started_at = (
-                visit.transcription_session.started_at
-                if visit.transcription_session
-                else None
-            )
+            started_at = visit.transcription_session.started_at if visit.transcription_session else None
 
             # Calculate stage durations - ensure all are numeric (default to 0.0 if missing)
-            queue_wait = (
-                (dequeued_at - enqueued_at).total_seconds()
-                if enqueued_at and dequeued_at
-                else 0.0
-            )
+            queue_wait = (dequeued_at - enqueued_at).total_seconds() if enqueued_at and dequeued_at else 0.0
             azure_run = (
                 (results_downloaded_at - azure_job_created_at).total_seconds()
                 if azure_job_created_at and results_downloaded_at
                 else 0.0
             )
             download_parse = (
-                (db_saved_at - results_downloaded_at).total_seconds()
-                if results_downloaded_at and db_saved_at
-                else 0.0
+                (db_saved_at - results_downloaded_at).total_seconds() if results_downloaded_at and db_saved_at else 0.0
             )
-            total_elapsed = (
-                (db_saved_at - started_at).total_seconds()
-                if started_at and db_saved_at
-                else 0.0
-            )
+            total_elapsed = (db_saved_at - started_at).total_seconds() if started_at and db_saved_at else 0.0
 
             # Clear INFO-level success log with all metrics (always numeric)
             LOGGER.info(
@@ -720,20 +590,10 @@ class TranscribeAudioUseCase:
             )
 
             # Calculate elapsed time for failure log - ensure numeric
-            started_at = (
-                visit.transcription_session.started_at
-                if visit.transcription_session
-                else None
-            )
+            started_at = visit.transcription_session.started_at if visit.transcription_session else None
             failure_time = datetime.utcnow()
-            total_elapsed = (
-                (failure_time - started_at).total_seconds() if started_at else 0.0
-            )
-            transcription_id = (
-                visit.transcription_session.transcription_id
-                if visit.transcription_session
-                else None
-            )
+            total_elapsed = (failure_time - started_at).total_seconds() if started_at else 0.0
+            transcription_id = visit.transcription_session.transcription_id if visit.transcription_session else None
 
             # Mark transcription as failed with clean error message
             visit.fail_transcription(clean_error_message)
@@ -796,17 +656,9 @@ class TranscribeAudioUseCase:
                 match_text = match.group(0)
                 # Check if it's a relative date by checking context
                 match_start = match.start()
-                context_before = cleaned_text[
-                    max(0, match_start - 30) : match_start
-                ].lower()
-                if not any(
-                    rel_word in context_before for rel_word in relative_date_words
-                ):
-                    cleaned_text = (
-                        cleaned_text[:match_start]
-                        + "[DATE]"
-                        + cleaned_text[match.end() :]
-                    )
+                context_before = cleaned_text[max(0, match_start - 30) : match_start].lower()
+                if not any(rel_word in context_before for rel_word in relative_date_words):
+                    cleaned_text = cleaned_text[:match_start] + "[DATE]" + cleaned_text[match.end() :]
                     pii_removed.append(("date", match_text))
                     break  # Only replace first occurrence per pattern
 
@@ -814,11 +666,7 @@ class TranscribeAudioUseCase:
         for compiled_pattern in self._compiled_pii_patterns["age"]:
             for match in compiled_pattern.finditer(cleaned_text):
                 age_value = match.group(1) if match.groups() else match.group(0)
-                cleaned_text = (
-                    cleaned_text[: match.start()]
-                    + "[AGE]"
-                    + cleaned_text[match.end() :]
-                )
+                cleaned_text = cleaned_text[: match.start()] + "[AGE]" + cleaned_text[match.end() :]
                 pii_removed.append(("age", age_value))
                 break  # Only replace first occurrence per pattern
 
@@ -844,20 +692,14 @@ class TranscribeAudioUseCase:
                     name_part = match.group(1) if match.group(1) else matched_text
                 else:
                     # For patterns without capture groups, extract name after prefix
-                    if (
-                        "Dr" in matched_text
-                        or "Doctor" in matched_text
-                        or "MD" in matched_text
-                    ):
+                    if "Dr" in matched_text or "Doctor" in matched_text or "MD" in matched_text:
                         name_part = re.sub(
                             r"^(?:Dr|Doctor|Dr\.|MD|MD\.)\s+",
                             "",
                             matched_text,
                             flags=re.IGNORECASE,
                         )
-                    elif any(
-                        prefix in matched_text for prefix in ["Mr", "Mrs", "Ms", "Miss"]
-                    ):
+                    elif any(prefix in matched_text for prefix in ["Mr", "Mrs", "Ms", "Miss"]):
                         name_part = re.sub(
                             r"^(?:Mr|Mrs|Ms|Miss|Mr\.|Mrs\.|Ms\.|Miss\.)\s+",
                             "",
@@ -892,8 +734,7 @@ class TranscribeAudioUseCase:
                 # Also check if any medical term is contained in the name (for compound terms)
                 if not is_medical_term:
                     is_medical_term = any(
-                        med_term in name_lower or name_lower in med_term
-                        for med_term in self._medical_term_whitelist
+                        med_term in name_lower or name_lower in med_term for med_term in self._medical_term_whitelist
                     )
 
                 # Additional check: if the matched word is part of a medical phrase, don't remove it
@@ -928,14 +769,9 @@ class TranscribeAudioUseCase:
                         # Double-check if the matched word could be a medication name
                         # Common medication name patterns (usually lowercase in speech, but might be capitalized)
                         common_med_patterns = [
-                            r"\b"
-                            + re.escape(name_lower)
-                            + r"\s+(?:mg|milligrams|ml|milliliters|tablets|capsules)\b"
+                            r"\b" + re.escape(name_lower) + r"\s+(?:mg|milligrams|ml|milliliters|tablets|capsules)\b"
                         ]
-                        if not any(
-                            re.search(pattern, context, re.IGNORECASE)
-                            for pattern in common_med_patterns
-                        ):
+                        if not any(re.search(pattern, context, re.IGNORECASE) for pattern in common_med_patterns):
                             # If it's not clearly a medication, it might be a name - proceed with removal
                             pass
                         else:
@@ -964,9 +800,7 @@ class TranscribeAudioUseCase:
 
         return cleaned_text
 
-    def _remove_pii_from_dialogue(
-        self, dialogue: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
+    def _remove_pii_from_dialogue(self, dialogue: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Remove PII from structured dialogue."""
         if not dialogue:
             return dialogue
@@ -986,9 +820,7 @@ class TranscribeAudioUseCase:
 
         return cleaned_dialogue
 
-    def _aggressive_pii_removal_from_dialogue(
-        self, dialogue: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
+    def _aggressive_pii_removal_from_dialogue(self, dialogue: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Apply additional aggressive PII removal pass to structured dialogue using pre-compiled patterns."""
         if not dialogue:
             return dialogue
@@ -1008,9 +840,7 @@ class TranscribeAudioUseCase:
             # Use pre-compiled aggressive patterns (faster than compiling on each call)
             for compiled_pattern in self._aggressive_name_patterns:
                 for match in compiled_pattern.finditer(cleaned_text):
-                    name_candidate = (
-                        match.group(1) if match.groups() else match.group(0)
-                    )
+                    name_candidate = match.group(1) if match.groups() else match.group(0)
                     name_lower = name_candidate.lower().strip()
 
                     # Fast medical term check using frozenset (O(1) lookup)
@@ -1025,23 +855,15 @@ class TranscribeAudioUseCase:
 
                     if not is_medical:
                         # Replace with [NAME]
-                        cleaned_text = (
-                            cleaned_text[: match.start()]
-                            + "[NAME]"
-                            + cleaned_text[match.end() :]
-                        )
-                        LOGGER.debug(
-                            f"Aggressive PII removal: removed '{name_candidate}' from dialogue"
-                        )
+                        cleaned_text = cleaned_text[: match.start()] + "[NAME]" + cleaned_text[match.end() :]
+                        LOGGER.debug(f"Aggressive PII removal: removed '{name_candidate}' from dialogue")
                         break  # Break to avoid multiple replacements of same match
 
             cleaned_dialogue.append({speaker: cleaned_text})
 
         return cleaned_dialogue
 
-    def _validate_pii_removal(
-        self, text: str, dialogue: Optional[List[Dict[str, str]]] = None
-    ) -> Dict[str, Any]:
+    def _validate_pii_removal(self, text: str, dialogue: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """Validate that PII has been removed from output."""
         pii_found = []
 
@@ -1061,12 +883,7 @@ class TranscribeAudioUseCase:
                             for pattern in patterns:
                                 matches = re.findall(pattern, text, re.IGNORECASE)
                                 if matches:
-                                    pii_found.extend(
-                                        [
-                                            (pii_type, m, f"dialogue-{speaker}")
-                                            for m in matches
-                                        ]
-                                    )
+                                    pii_found.extend([(pii_type, m, f"dialogue-{speaker}") for m in matches])
 
         return {
             "pii_detected": len(pii_found) > 0,
@@ -1089,18 +906,12 @@ class TranscribeAudioUseCase:
         last_error = None
         for attempt in range(max_retries):
             try:
-                result = await self._process_single_chunk(
-                    client, system_prompt, user_prompt, settings, logger
-                )
+                result = await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
                 if result and result.strip():
-                    logger.info(
-                        f"✓ Chunk processing succeeded on attempt {attempt + 1}/{max_retries}"
-                    )
+                    logger.info(f"✓ Chunk processing succeeded on attempt {attempt + 1}/{max_retries}")
                     return result, True
                 else:
-                    logger.warning(
-                        f"Chunk processing returned empty result (attempt {attempt + 1}/{max_retries})"
-                    )
+                    logger.warning(f"Chunk processing returned empty result (attempt {attempt + 1}/{max_retries})")
                     last_error = "Empty result from LLM"
             except Exception as e:
                 last_error = str(e)
@@ -1108,15 +919,10 @@ class TranscribeAudioUseCase:
 
                 # Check for specific error types
                 is_rate_limit = any(
-                    keyword in error_str
-                    for keyword in ["rate limit", "429", "too many requests", "quota"]
+                    keyword in error_str for keyword in ["rate limit", "429", "too many requests", "quota"]
                 )
-                is_timeout = any(
-                    keyword in error_str for keyword in ["timeout", "timed out", "504"]
-                )
-                is_connection = any(
-                    keyword in error_str for keyword in ["connection", "network", "dns"]
-                )
+                is_timeout = any(keyword in error_str for keyword in ["timeout", "timed out", "504"])
+                is_connection = any(keyword in error_str for keyword in ["connection", "network", "dns"])
                 is_service_error = any(
                     keyword in error_str
                     for keyword in [
@@ -1129,23 +935,15 @@ class TranscribeAudioUseCase:
                 )
 
                 # Only retry on transient errors
-                is_transient = (
-                    is_rate_limit or is_timeout or is_connection or is_service_error
-                )
+                is_transient = is_rate_limit or is_timeout or is_connection or is_service_error
 
                 if is_transient:
                     error_type = (
                         "rate limit"
                         if is_rate_limit
-                        else (
-                            "timeout"
-                            if is_timeout
-                            else ("connection" if is_connection else "service error")
-                        )
+                        else ("timeout" if is_timeout else ("connection" if is_connection else "service error"))
                     )
-                    logger.warning(
-                        f"Transient {error_type} error on attempt {attempt + 1}/{max_retries}: {e}"
-                    )
+                    logger.warning(f"Transient {error_type} error on attempt {attempt + 1}/{max_retries}: {e}")
                     if attempt < max_retries - 1:
                         delay = min(base_delay * (2**attempt), max_delay)
                         logger.info(f"Retrying in {delay} seconds...")
@@ -1153,9 +951,7 @@ class TranscribeAudioUseCase:
                         continue
                 else:
                     # Non-transient error, log and return
-                    logger.error(
-                        f"Non-transient error on attempt {attempt + 1}/{max_retries}: {e}"
-                    )
+                    logger.error(f"Non-transient error on attempt {attempt + 1}/{max_retries}: {e}")
                     logger.error(f"Error type: {type(e).__name__}")
                     import traceback
 
@@ -1169,9 +965,7 @@ class TranscribeAudioUseCase:
                 logger.info(f"Retrying in {delay} seconds due to empty result...")
                 await asyncio.sleep(delay)
 
-        logger.error(
-            f"Failed to process chunk after {max_retries} attempts. Last error: {last_error}"
-        )
+        logger.error(f"Failed to process chunk after {max_retries} attempts. Last error: {last_error}")
         return "", False
 
     def _validate_completeness(
@@ -1187,9 +981,7 @@ class TranscribeAudioUseCase:
             }
 
         # Count sentences in transcript
-        transcript_sentences = len(
-            [s for s in re.split(r"(?<=[.!?])\s+", transcript) if s.strip()]
-        )
+        transcript_sentences = len([s for s in re.split(r"(?<=[.!?])\s+", transcript) if s.strip()])
 
         # Count dialogue turns
         dialogue_turns = len(dialogue)
@@ -1199,22 +991,16 @@ class TranscribeAudioUseCase:
         # A reasonable ratio would be: dialogue_turns / transcript_sentences
         # But we need to account for the fact that dialogue turns are often multiple sentences
         # So we use a more lenient threshold
-        completeness_ratio = (
-            dialogue_turns / transcript_sentences if transcript_sentences > 0 else 0.0
-        )
+        completeness_ratio = dialogue_turns / transcript_sentences if transcript_sentences > 0 else 0.0
 
         # Alternative: Estimate based on character count
-        dialogue_text = " ".join(
-            [list(turn.values())[0] for turn in dialogue if isinstance(turn, dict)]
-        )
+        dialogue_text = " ".join([list(turn.values())[0] for turn in dialogue if isinstance(turn, dict)])
         dialogue_chars = len(dialogue_text)
         transcript_chars = len(transcript)
         char_ratio = dialogue_chars / transcript_chars if transcript_chars > 0 else 0.0
 
         # Use the higher ratio (more lenient)
-        final_ratio = max(
-            completeness_ratio, char_ratio * 0.8
-        )  # Scale char ratio slightly
+        final_ratio = max(completeness_ratio, char_ratio * 0.8)  # Scale char ratio slightly
 
         is_complete = final_ratio >= threshold
 
@@ -1228,9 +1014,7 @@ class TranscribeAudioUseCase:
             "char_ratio": char_ratio,
         }
 
-    def _recover_partial_json(
-        self, partial_json: str, logger
-    ) -> Optional[List[Dict[str, str]]]:
+    def _recover_partial_json(self, partial_json: str, logger) -> Optional[List[Dict[str, str]]]:
         """Try to recover dialogue from partial or malformed JSON."""
         if not partial_json:
             return None
@@ -1250,9 +1034,7 @@ class TranscribeAudioUseCase:
                 recovered.append({speaker: text})
 
             if recovered:
-                logger.info(
-                    f"Recovered {len(recovered)} dialogue turns from partial JSON using regex"
-                )
+                logger.info(f"Recovered {len(recovered)} dialogue turns from partial JSON using regex")
                 return recovered
 
         # Strategy 2: Try to fix common JSON issues
@@ -1447,9 +1229,7 @@ class TranscribeAudioUseCase:
         overlap_chars = 200  # Reduced overlap (200 chars is sufficient for context, saves processing)
 
         # Split into sentences for better chunking
-        sentences = [
-            s.strip() for s in re.split(r"(?<=[.!?])\s+", raw_transcript) if s.strip()
-        ]
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw_transcript) if s.strip()]
 
         if len(raw_transcript) <= max_chars_per_chunk:
             # Single chunk processing
@@ -1470,19 +1250,14 @@ class TranscribeAudioUseCase:
                     f"Follow the conversation flow and use the identification rules to assign speakers correctly.\n\n"
                     f"OUTPUT: Return ONLY a JSON array starting with [ and ending with ]. Do not use markdown, code blocks, or any other formatting."
                 )
-            return await self._process_single_chunk(
-                client, system_prompt, user_prompt, settings, logger
-            )
+            return await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
 
         # Multi-chunk processing with overlap
         chunks = []
         current_chunk = ""
 
         for sentence in sentences:
-            if (
-                len(current_chunk) + len(sentence) + 1 > max_chars_per_chunk
-                and current_chunk
-            ):
+            if len(current_chunk) + len(sentence) + 1 > max_chars_per_chunk and current_chunk:
                 chunks.append(current_chunk.strip())
                 # Start new chunk with overlap from previous
                 overlap_start = max(0, len(current_chunk) - overlap_chars)
@@ -1493,16 +1268,12 @@ class TranscribeAudioUseCase:
         if current_chunk:
             chunks.append(current_chunk.strip())
 
-        logger.info(
-            f"Processing transcript in {len(chunks)} chunks with {overlap_chars} char overlap"
-        )
+        logger.info(f"Processing transcript in {len(chunks)} chunks with {overlap_chars} char overlap")
         logger.info(f"Total chunks to process: {len(chunks)}")
 
         # Log chunk details for debugging
         for i, chunk in enumerate(chunks):
-            logger.info(
-                f"Chunk {i+1}/{len(chunks)}: {len(chunk)} chars, preview: {chunk[:100]}..."
-            )
+            logger.info(f"Chunk {i+1}/{len(chunks)}: {len(chunk)} chars, preview: {chunk[:100]}...")
 
         # Process chunks with parallel execution (bounded concurrency)
         # Strategy: Process chunks in parallel with semaphore limit (3 concurrent LLM calls)
@@ -1511,18 +1282,14 @@ class TranscribeAudioUseCase:
         from ...core.utils.timing import TimingContext
 
         with TimingContext("LLM_ChunkProcessing", logger) as timing_ctx:
-            timing_ctx.add_metadata(
-                chunk_count=len(chunks), max_chars_per_chunk=max_chars_per_chunk
-            )
+            timing_ctx.add_metadata(chunk_count=len(chunks), max_chars_per_chunk=max_chars_per_chunk)
 
             # Bounded concurrency: max 3 concurrent LLM calls (cost-neutral, just faster)
             semaphore = asyncio.Semaphore(3)
             chunk_results = [None] * len(chunks)  # Pre-allocate list to maintain order
             previous_chunk_turns = []  # Store last 3 turns for context
 
-            async def process_chunk_with_context(
-                chunk_idx: int, chunk_text: str, prev_turns: List[Dict[str, str]]
-            ):
+            async def process_chunk_with_context(chunk_idx: int, chunk_text: str, prev_turns: List[Dict[str, str]]):
                 """Process a single chunk with context and retry logic."""
                 async with semaphore:  # Limit concurrent LLM calls
                     chunk_start_time = time.time()
@@ -1541,10 +1308,7 @@ class TranscribeAudioUseCase:
                             context_text = (
                                 "CONTEXTO DE CONVERSACIÓN PREVIA:\n"
                                 + "\n".join(
-                                    [
-                                        f"{list(turn.keys())[0]}: {list(turn.values())[0]}"
-                                        for turn in context_turns
-                                    ]
+                                    [f"{list(turn.keys())[0]}: {list(turn.values())[0]}" for turn in context_turns]
                                 )
                                 + "\n\n"
                             )
@@ -1552,10 +1316,7 @@ class TranscribeAudioUseCase:
                             context_text = (
                                 "PREVIOUS CONVERSATION CONTEXT:\n"
                                 + "\n".join(
-                                    [
-                                        f"{list(turn.keys())[0]}: {list(turn.values())[0]}"
-                                        for turn in context_turns
-                                    ]
+                                    [f"{list(turn.keys())[0]}: {list(turn.values())[0]}" for turn in context_turns]
                                 )
                                 + "\n\n"
                             )
@@ -1591,28 +1352,18 @@ class TranscribeAudioUseCase:
                     )
 
                     chunk_processing_time = time.time() - chunk_start_time
-                    logger.info(
-                        f"Chunk {chunk_idx+1}/{len(chunks)} processing time: {chunk_processing_time:.2f}s"
-                    )
+                    logger.info(f"Chunk {chunk_idx+1}/{len(chunks)} processing time: {chunk_processing_time:.2f}s")
 
                     if not success or not chunk_result:
                         logger.warning(
                             f"Chunk {chunk_idx+1} processing failed after retries, attempting fallback extraction"
                         )
-                        fallback_dialogue = self._extract_dialogue_fallback(
-                            chunk_text, logger, language
-                        )
+                        fallback_dialogue = self._extract_dialogue_fallback(chunk_text, logger, language)
                         if fallback_dialogue:
                             return fallback_dialogue, (
-                                fallback_dialogue[-3:]
-                                if len(fallback_dialogue) >= 3
-                                else fallback_dialogue
+                                fallback_dialogue[-3:] if len(fallback_dialogue) >= 3 else fallback_dialogue
                             )
-                        return [
-                            {
-                                "Doctor": f"[Chunk {chunk_idx+1} processing failed - unable to extract dialogue]"
-                            }
-                        ], []
+                        return [{"Doctor": f"[Chunk {chunk_idx+1} processing failed - unable to extract dialogue]"}], []
 
                     # Parse result
                     parsed = None
@@ -1620,19 +1371,14 @@ class TranscribeAudioUseCase:
                         try:
                             cleaned_result = chunk_result.strip()
                             if not cleaned_result.endswith("]"):
-                                recovered = self._recover_partial_json(
-                                    cleaned_result, logger
-                                )
+                                recovered = self._recover_partial_json(cleaned_result, logger)
                                 if recovered:
                                     parsed = recovered
                                 else:
                                     if cleaned_result.startswith("["):
                                         last_complete_idx = cleaned_result.rfind("},")
                                         if last_complete_idx != -1:
-                                            cleaned_result = (
-                                                cleaned_result[: last_complete_idx + 1]
-                                                + "]"
-                                            )
+                                            cleaned_result = cleaned_result[: last_complete_idx + 1] + "]"
                                         else:
                                             cleaned_result = cleaned_result + "]"
 
@@ -1640,22 +1386,14 @@ class TranscribeAudioUseCase:
                                 try:
                                     parsed = json.loads(cleaned_result)
                                 except json.JSONDecodeError:
-                                    parsed = self._recover_partial_json(
-                                        chunk_result, logger
-                                    )
+                                    parsed = self._recover_partial_json(chunk_result, logger)
 
                             if parsed and isinstance(parsed, list):
-                                return parsed, (
-                                    parsed[-3:] if len(parsed) >= 3 else parsed
-                                )
+                                return parsed, (parsed[-3:] if len(parsed) >= 3 else parsed)
                         except Exception as e:
                             logger.warning(f"Chunk {chunk_idx+1} parsing error: {e}")
 
-                    return [
-                        {
-                            "Doctor": f"[Chunk {chunk_idx+1} processing failed - invalid format]"
-                        }
-                    ], []
+                    return [{"Doctor": f"[Chunk {chunk_idx+1} processing failed - invalid format]"}], []
 
             # Process chunks sequentially but with optimized chunk sizes
             # Note: Parallel processing is limited by context dependency (each chunk needs previous chunk's context)
@@ -1667,43 +1405,31 @@ class TranscribeAudioUseCase:
                 progress_percent = ((i + 1) / len(chunks)) * 100
 
                 logger.info(f"=" * 60)
-                logger.info(
-                    f"📦 Processing chunk {i+1}/{len(chunks)} ({progress_percent:.1f}% complete)"
-                )
+                logger.info(f"📦 Processing chunk {i+1}/{len(chunks)} ({progress_percent:.1f}% complete)")
                 if i > 0:
                     elapsed = time.time() - start_time
                     avg_time_per_chunk = elapsed / i
                     remaining_chunks = len(chunks) - (i + 1)
                     estimated_remaining = avg_time_per_chunk * remaining_chunks
-                    logger.info(
-                        f"⏱️  Elapsed: {elapsed:.1f}s | Estimated remaining: {estimated_remaining:.1f}s"
-                    )
+                    logger.info(f"⏱️  Elapsed: {elapsed:.1f}s | Estimated remaining: {estimated_remaining:.1f}s")
 
                 # Process chunk with context
-                result, prev_turns = await process_chunk_with_context(
-                    i, chunk, previous_chunk_turns
-                )
+                result, prev_turns = await process_chunk_with_context(i, chunk, previous_chunk_turns)
                 chunk_results[i] = result
                 if prev_turns:
                     previous_chunk_turns = prev_turns
 
                 chunk_processing_time = time.time() - chunk_start_time
-                logger.info(
-                    f"Chunk {i+1}/{len(chunks)} completed in {chunk_processing_time:.2f}s"
-                )
+                logger.info(f"Chunk {i+1}/{len(chunks)} completed in {chunk_processing_time:.2f}s")
 
             # Filter out None results (shouldn't happen, but safety check)
             chunk_results = [r for r in chunk_results if r is not None]
 
         total_processing_time = time.time() - start_time
         timing_ctx.duration = total_processing_time
-        timing_ctx.add_metadata(
-            avg_time_per_chunk=total_processing_time / len(chunks) if chunks else 0
-        )
+        timing_ctx.add_metadata(avg_time_per_chunk=total_processing_time / len(chunks) if chunks else 0)
         logger.info(f"=" * 60)
-        logger.info(
-            f"📊 All {len(chunks)} chunks processed in {total_processing_time:.2f}s (parallel execution)"
-        )
+        logger.info(f"📊 All {len(chunks)} chunks processed in {total_processing_time:.2f}s (parallel execution)")
 
         # Merge and clean up overlapping content
         merged_dialogue = self._merge_chunk_results(chunk_results, logger)
@@ -1743,9 +1469,7 @@ class TranscribeAudioUseCase:
                 logger.info(f"=== STARTING LLM CALL ===")
                 logger.info(f"Deployment: {settings.azure_openai.deployment_name}")
                 logger.info(f"Max tokens: {max_tokens}")
-                logger.info(
-                    f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}"
-                )
+                logger.info(f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}")
                 logger.info(f"System prompt length: {len(system_prompt)} characters")
                 logger.info(f"User prompt length: {len(user_prompt)} characters")
                 logger.info(f"User prompt preview: {user_prompt[:300]}...")
@@ -1783,9 +1507,7 @@ class TranscribeAudioUseCase:
                 logger.error(f"=== LLM CALL FAILED ===")
                 logger.error(f"Error: {str(e)}")
                 logger.error(f"Deployment: {settings.azure_openai.deployment_name}")
-                logger.error(
-                    f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}"
-                )
+                logger.error(f"Azure OpenAI configured: {bool(settings.azure_openai.api_key)}")
                 logger.error(f"Endpoint: {settings.azure_openai.endpoint}")
                 import traceback
 
@@ -1805,19 +1527,14 @@ class TranscribeAudioUseCase:
         try:
             # Simple heuristic-based extraction
             # Split by sentences and alternate between Doctor and Patient based on patterns
-            sentences = [
-                s.strip() for s in re.split(r"(?<=[.!?])\s+", raw_chunk) if s.strip()
-            ]
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw_chunk) if s.strip()]
 
             if not sentences:
                 return None
 
             dialogue = []
             patient_label = (
-                "Paciente"
-                if (language or "en").lower()
-                in ["sp", "es", "es-es", "es-mx", "spanish"]
-                else "Patient"
+                "Paciente" if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
             )
             next_speaker = "Doctor"
 
@@ -1867,17 +1584,9 @@ class TranscribeAudioUseCase:
 
                 # Patient signals
                 is_patient = (
-                    sentence.startswith(
-                        ("I", "I've", "I'm", "I have", "Yo", "Tengo", "He estado")
-                    )
-                    or any(
-                        word in sentence_lower
-                        for word in ["yes", "no", "okay", "sí", "no", "bien"]
-                    )
-                    or any(
-                        pattern in sentence_lower
-                        for pattern in ["it hurts", "i feel", "me duele", "siento"]
-                    )
+                    sentence.startswith(("I", "I've", "I'm", "I have", "Yo", "Tengo", "He estado"))
+                    or any(word in sentence_lower for word in ["yes", "no", "okay", "sí", "no", "bien"])
+                    or any(pattern in sentence_lower for pattern in ["it hurts", "i feel", "me duele", "siento"])
                 )
 
                 # Determine speaker
@@ -1890,9 +1599,7 @@ class TranscribeAudioUseCase:
                 else:
                     # Use context-based assignment
                     speaker = next_speaker
-                    next_speaker = (
-                        patient_label if next_speaker == "Doctor" else "Doctor"
-                    )
+                    next_speaker = patient_label if next_speaker == "Doctor" else "Doctor"
 
                 dialogue.append({speaker: sentence})
 
@@ -1969,9 +1676,7 @@ class TranscribeAudioUseCase:
 
                     # Semantic similarity check (fuzzy match)
                     # Compare similarity of text content (not exact dict match)
-                    similarity_score = self._calculate_similarity(
-                        merged_tail, chunk_head
-                    )
+                    similarity_score = self._calculate_similarity(merged_tail, chunk_head)
                     if similarity_score > 0.85:  # 85% similarity threshold
                         merged.extend(chunk[overlap_size:])
                         logger.info(
@@ -1984,14 +1689,10 @@ class TranscribeAudioUseCase:
                 merged.extend(chunk)
                 logger.info(f"Chunk {i}: No overlap found, added {len(chunk)} turns")
 
-        logger.info(
-            f"Merged {len(chunk_results)} chunks into {len(merged)} dialogue turns"
-        )
+        logger.info(f"Merged {len(chunk_results)} chunks into {len(merged)} dialogue turns")
         return merged
 
-    def _calculate_similarity(
-        self, turns1: List[Dict[str, str]], turns2: List[Dict[str, str]]
-    ) -> float:
+    def _calculate_similarity(self, turns1: List[Dict[str, str]], turns2: List[Dict[str, str]]) -> float:
         """Calculate semantic similarity between two turn sequences."""
         if len(turns1) != len(turns2):
             return 0.0
@@ -2071,9 +1772,7 @@ class TranscribeAudioUseCase:
                 f"Transcript length {len(raw_transcript)} exceeds simple_max_chars={simple_max_chars}, "
                 "redirecting to chunking strategy"
             )
-            return await self._process_transcript_with_chunking(
-                client, raw_transcript, settings, logger, language
-            )
+            return await self._process_transcript_with_chunking(client, raw_transcript, settings, logger, language)
 
         if (language or "en").lower() in ["sp", "es", "es-es", "es-mx", "spanish"]:
             user_prompt = f"TRANSCRIPCIÓN: {raw_transcript}\n\nConvierte a diálogo Doctor-Paciente en formato JSON."
@@ -2082,12 +1781,8 @@ class TranscribeAudioUseCase:
 
         try:
             logger.info("Starting simplified LLM processing...")
-            result = await self._process_single_chunk(
-                client, system_prompt, user_prompt, settings, logger
-            )
-            logger.info(
-                f"Simplified processing completed: {len(result) if result else 0} characters"
-            )
+            result = await self._process_single_chunk(client, system_prompt, user_prompt, settings, logger)
+            logger.info(f"Simplified processing completed: {len(result) if result else 0} characters")
             return result
         except Exception as e:
             logger.error(f"Simplified processing failed: {e}")

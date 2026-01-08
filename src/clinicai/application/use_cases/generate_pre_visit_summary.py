@@ -31,9 +31,7 @@ class GeneratePreVisitSummaryUseCase:
         self._visit_repository = visit_repository
         self._question_service = question_service
 
-    async def execute(
-        self, request: PreVisitSummaryRequest, doctor_id: str
-    ) -> PreVisitSummaryResponse:
+    async def execute(self, request: PreVisitSummaryRequest, doctor_id: str) -> PreVisitSummaryResponse:
         """Execute the pre-visit summary generation use case."""
         try:
             # Store original request patient_id for image querying
@@ -61,13 +59,9 @@ class GeneratePreVisitSummaryUseCase:
                 logger.error(f"Invalid visit_id format: {request.visit_id}, error: {e}")
                 raise VisitNotFoundError(request.visit_id) from e
 
-            visit = await self._visit_repository.find_by_patient_and_visit_id(
-                request.patient_id, visit_id, doctor_id
-            )
+            visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
             if not visit:
-                logger.warning(
-                    f"Visit not found: visit_id={request.visit_id}, patient_id={request.patient_id[:50]}"
-                )
+                logger.warning(f"Visit not found: visit_id={request.visit_id}, patient_id={request.patient_id[:50]}")
                 raise VisitNotFoundError(request.visit_id)
 
             # Check if intake is completed
@@ -107,9 +101,7 @@ class GeneratePreVisitSummaryUseCase:
                 # Query with OR condition to find images stored with either format
                 from beanie.operators import Or
 
-                logger.info(
-                    f"[GeneratePreVisitSummary] Querying medication images for visit {visit.visit_id.value}"
-                )
+                logger.info(f"[GeneratePreVisitSummary] Querying medication images for visit {visit.visit_id.value}")
                 logger.info(
                     f"[GeneratePreVisitSummary] Patient internal_id: {patient_internal_id[:50]}..., encoded_id: {patient_encoded_id[:50]}..."
                 )
@@ -119,8 +111,7 @@ class GeneratePreVisitSummaryUseCase:
                     Or(
                         MedicationImageMongo.patient_id == patient_internal_id,
                         MedicationImageMongo.patient_id == patient_encoded_id,
-                        MedicationImageMongo.patient_id
-                        == original_request_patient_id,  # Check original request ID
+                        MedicationImageMongo.patient_id == original_request_patient_id,  # Check original request ID
                     ),
                     MedicationImageMongo.visit_id == visit.visit_id.value,
                 ).to_list()
@@ -150,10 +141,10 @@ class GeneratePreVisitSummaryUseCase:
                         }
                         for d in docs
                     ]
-                    medication_images_info = f"Patient uploaded {len(docs)} medication image(s): {', '.join([d.filename for d in docs])}"
-                    logger.info(
-                        f"[GeneratePreVisitSummary] Medication images list: {medication_images_list}"
+                    medication_images_info = (
+                        f"Patient uploaded {len(docs)} medication image(s): {', '.join([d.filename for d in docs])}"
                     )
+                    logger.info(f"[GeneratePreVisitSummary] Medication images list: {medication_images_list}")
                 else:
                     logger.warning(
                         f"[GeneratePreVisitSummary] No medication images found for visit {visit.visit_id.value} (checked both internal_id={patient_internal_id[:50]}... and encoded_id={patient_encoded_id[:50]}...)"
@@ -169,14 +160,12 @@ class GeneratePreVisitSummaryUseCase:
                 logger.info(
                     f"Generating pre-visit summary for visit {request.visit_id}, patient {request.patient_id[:50]}"
                 )
-                summary_result = (
-                    await self._question_service.generate_pre_visit_summary(
-                        patient_data,
-                        intake_answers,
-                        language=patient.language,
-                        medication_images_info=medication_images_info,
-                        doctor_id=doctor_id,
-                    )
+                summary_result = await self._question_service.generate_pre_visit_summary(
+                    patient_data,
+                    intake_answers,
+                    language=patient.language,
+                    medication_images_info=medication_images_info,
+                    doctor_id=doctor_id,
                 )
             except Exception as ai_error:
                 logger.error(
@@ -188,15 +177,11 @@ class GeneratePreVisitSummaryUseCase:
                         "error_type": type(ai_error).__name__,
                     },
                 )
-                raise ValueError(
-                    f"Failed to generate summary: {str(ai_error)}"
-                ) from ai_error
+                raise ValueError(f"Failed to generate summary: {str(ai_error)}") from ai_error
 
             # Validate summary_result structure
             if not isinstance(summary_result, dict):
-                logger.error(
-                    f"Invalid summary_result type: {type(summary_result)}, expected dict"
-                )
+                logger.error(f"Invalid summary_result type: {type(summary_result)}, expected dict")
                 raise ValueError(
                     f"AI service returned invalid summary format: expected dict, got {type(summary_result)}"
                 )
@@ -205,9 +190,7 @@ class GeneratePreVisitSummaryUseCase:
                 logger.error(
                     f"Invalid summary_result structure: missing 'summary' key. Keys: {list(summary_result.keys())}"
                 )
-                raise ValueError(
-                    "AI service returned invalid summary format: missing 'summary' field"
-                )
+                raise ValueError("AI service returned invalid summary format: missing 'summary' field")
 
             # Attach medication images to summary result (already queried above)
             if medication_images_list:
@@ -220,12 +203,8 @@ class GeneratePreVisitSummaryUseCase:
                     red_flags=summary_result.get("red_flags", []),
                 )
             except Exception as store_error:
-                logger.error(
-                    f"Failed to store pre-visit summary: {store_error}", exc_info=True
-                )
-                raise ValueError(
-                    f"Failed to store summary: {str(store_error)}"
-                ) from store_error
+                logger.error(f"Failed to store pre-visit summary: {store_error}", exc_info=True)
+                raise ValueError(f"Failed to store summary: {str(store_error)}") from store_error
 
             # Optionally reflect step completion in workflow
             try:
@@ -241,17 +220,11 @@ class GeneratePreVisitSummaryUseCase:
                     f"Failed to save visit after summary generation: {save_error}",
                     exc_info=True,
                 )
-                raise ValueError(
-                    f"Failed to save visit: {str(save_error)}"
-                ) from save_error
+                raise ValueError(f"Failed to save visit: {str(save_error)}") from save_error
 
             # Get the generated_at timestamp from the stored summary (not visit.updated_at)
             stored_summary = visit.get_pre_visit_summary()
-            generated_at = (
-                stored_summary.get("generated_at")
-                if stored_summary
-                else datetime.utcnow().isoformat()
-            )
+            generated_at = stored_summary.get("generated_at") if stored_summary else datetime.utcnow().isoformat()
 
             # Structured per-visit LLM interaction log (no system prompt)
             try:
@@ -283,24 +256,16 @@ class GeneratePreVisitSummaryUseCase:
             except Exception as e:
                 logger.warning(f"Failed to append structured pre-visit log: {e}")
 
-            logger.info(
-                f"Successfully generated pre-visit summary for visit {request.visit_id}"
-            )
+            logger.info(f"Successfully generated pre-visit summary for visit {request.visit_id}")
             return PreVisitSummaryResponse(
                 patient_id=patient.patient_id.value,
                 visit_id=visit.visit_id.value,
                 summary=summary_result["summary"],
                 generated_at=generated_at,
                 medication_images=(
-                    summary_result.get("medication_images")
-                    if isinstance(summary_result, dict)
-                    else None
+                    summary_result.get("medication_images") if isinstance(summary_result, dict) else None
                 ),
-                red_flags=(
-                    summary_result.get("red_flags")
-                    if isinstance(summary_result, dict)
-                    else None
-                ),
+                red_flags=(summary_result.get("red_flags") if isinstance(summary_result, dict) else None),
             )
 
         except (PatientNotFoundError, VisitNotFoundError, ValueError) as e:
@@ -312,9 +277,7 @@ class GeneratePreVisitSummaryUseCase:
                 f"Unexpected error in GeneratePreVisitSummaryUseCase.execute: {type(e).__name__}: {e}",
                 exc_info=True,
                 extra={
-                    "patient_id": (
-                        request.patient_id[:50] if request.patient_id else None
-                    ),
+                    "patient_id": (request.patient_id[:50] if request.patient_id else None),
                     "visit_id": request.visit_id,
                     "error_type": type(e).__name__,
                 },

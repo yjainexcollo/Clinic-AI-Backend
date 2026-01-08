@@ -34,33 +34,23 @@ class MongoPatientRepository(PatientRepository):
             db = client[settings.database.db_name]
             collection = db["patients"]
 
-            await collection.update_one(
-                {"_id": patient_mongo.id}, {"$unset": {"revision_id": ""}}
-            )
+            await collection.update_one({"_id": patient_mongo.id}, {"$unset": {"revision_id": ""}})
 
         # Return the domain entity
         return await self._mongo_to_domain(patient_mongo)
 
-    async def find_by_id(
-        self, patient_id: PatientId, doctor_id: str
-    ) -> Optional[Patient]:
+    async def find_by_id(self, patient_id: PatientId, doctor_id: str) -> Optional[Patient]:
         """Find a patient by ID."""
-        patient_mongo = await PatientMongo.find_one(
-            {"patient_id": patient_id.value, "doctor_id": doctor_id}
-        )
+        patient_mongo = await PatientMongo.find_one({"patient_id": patient_id.value, "doctor_id": doctor_id})
 
         if not patient_mongo:
             return None
 
         return await self._mongo_to_domain(patient_mongo)
 
-    async def find_by_name_and_mobile(
-        self, name: str, mobile: str, doctor_id: str
-    ) -> Optional[Patient]:
+    async def find_by_name_and_mobile(self, name: str, mobile: str, doctor_id: str) -> Optional[Patient]:
         """Find a patient by name and mobile number using optimized indexes."""
-        patient_mongo = await PatientMongo.find_one(
-            {"name": name, "mobile": mobile, "doctor_id": doctor_id}
-        )
+        patient_mongo = await PatientMongo.find_one({"name": name, "mobile": mobile, "doctor_id": doctor_id})
 
         if not patient_mongo:
             return None
@@ -69,22 +59,13 @@ class MongoPatientRepository(PatientRepository):
 
     async def exists_by_id(self, patient_id: PatientId, doctor_id: str) -> bool:
         """Check if a patient exists by ID."""
-        count = await PatientMongo.find(
-            {"patient_id": patient_id.value, "doctor_id": doctor_id}
-        ).count()
+        count = await PatientMongo.find({"patient_id": patient_id.value, "doctor_id": doctor_id}).count()
 
         return count > 0
 
-    async def find_all(
-        self, doctor_id: str, limit: int = 100, offset: int = 0
-    ) -> List[Patient]:
+    async def find_all(self, doctor_id: str, limit: int = 100, offset: int = 0) -> List[Patient]:
         """Find all patients with pagination."""
-        patients_mongo = (
-            await PatientMongo.find({"doctor_id": doctor_id})
-            .skip(offset)
-            .limit(limit)
-            .to_list()
-        )
+        patients_mongo = await PatientMongo.find({"doctor_id": doctor_id}).skip(offset).limit(limit).to_list()
 
         result = []
         for patient_mongo in patients_mongo:
@@ -94,9 +75,7 @@ class MongoPatientRepository(PatientRepository):
 
     async def find_by_mobile(self, mobile: str, doctor_id: str) -> List[Patient]:
         """Find all patients with the same mobile number (family members)."""
-        patients_mongo = await PatientMongo.find(
-            {"mobile": mobile, "doctor_id": doctor_id}
-        ).to_list()
+        patients_mongo = await PatientMongo.find({"mobile": mobile, "doctor_id": doctor_id}).to_list()
 
         result = []
         for patient_mongo in patients_mongo:
@@ -106,9 +85,7 @@ class MongoPatientRepository(PatientRepository):
 
     async def delete(self, patient_id: PatientId, doctor_id: str) -> bool:
         """Delete a patient by ID."""
-        result = await PatientMongo.find_one(
-            {"patient_id": patient_id.value, "doctor_id": doctor_id}
-        ).delete()
+        result = await PatientMongo.find_one({"patient_id": patient_id.value, "doctor_id": doctor_id}).delete()
 
         return result is not None
 

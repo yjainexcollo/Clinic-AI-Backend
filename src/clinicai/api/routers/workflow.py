@@ -129,9 +129,7 @@ async def create_walk_in_visit(
 
     except Exception as e:
         logger.error("Error creating walk-in visit", exc_info=True)
-        return fail(
-            http_request, error="INTERNAL_ERROR", message="An unexpected error occurred"
-        )
+        return fail(http_request, error="INTERNAL_ERROR", message="An unexpected error occurred")
 
 
 @router.get(
@@ -201,6 +199,4 @@ async def get_available_workflow_steps(
         raise
     except Exception as e:
         logger.error("Error getting available workflow steps", exc_info=True)
-        return fail(
-            request, error="INTERNAL_ERROR", message="An unexpected error occurred"
-        )
+        return fail(request, error="INTERNAL_ERROR", message="An unexpected error occurred")

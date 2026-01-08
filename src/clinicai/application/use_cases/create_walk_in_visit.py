@@ -50,15 +50,11 @@ class CreateWalkInVisitResponse:
 class CreateWalkInVisitUseCase:
     """Use case for creating walk-in visits."""
 
-    def __init__(
-        self, patient_repository: PatientRepository, visit_repository: VisitRepository
-    ):
+    def __init__(self, patient_repository: PatientRepository, visit_repository: VisitRepository):
         self._patient_repository = patient_repository
         self._visit_repository = visit_repository
 
-    async def execute(
-        self, request: CreateWalkInVisitRequest, doctor_id: str
-    ) -> CreateWalkInVisitResponse:
+    async def execute(self, request: CreateWalkInVisitRequest, doctor_id: str) -> CreateWalkInVisitResponse:
         """Execute the create walk-in visit use case."""
 
         # Check if patient already exists

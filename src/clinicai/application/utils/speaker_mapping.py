@@ -34,11 +34,7 @@ def map_speakers_to_doctor_patient(
 
     # Determine labels based on language
     doctor_label = "Doctor"
-    patient_label = (
-        "Paciente"
-        if language.lower() in ["sp", "es", "es-es", "es-mx", "spanish"]
-        else "Patient"
-    )
+    patient_label = "Paciente" if language.lower() in ["sp", "es", "es-es", "es-mx", "spanish"] else "Patient"
 
     # Extract speaker IDs and their content
     speaker_content: Dict[str, List[str]] = {}
@@ -62,9 +58,7 @@ def map_speakers_to_doctor_patient(
 
     # If only one speaker, attempt to infer Doctor/Patient roles heuristically
     if len(speaker_content) == 1:
-        logger.warning(
-            "Only one speaker detected in diarization, attempting content-based role mapping"
-        )
+        logger.warning("Only one speaker detected in diarization, attempting content-based role mapping")
         single_speaker_id = next(iter(speaker_content.keys()))
         single_speaker_turns = speaker_content[single_speaker_id]
         combined_text = " ".join(single_speaker_turns).lower()
@@ -129,9 +123,7 @@ def map_speakers_to_doctor_patient(
         mapped_dialogue: List[Dict[str, str]] = []
 
         if doctor_score != patient_score:
-            mapped_label = (
-                doctor_label if doctor_score > patient_score else patient_label
-            )
+            mapped_label = doctor_label if doctor_score > patient_score else patient_label
             logger.info(
                 "Mapping all single-speaker turns to %s based on heuristic score",
                 mapped_label,
@@ -143,17 +135,13 @@ def map_speakers_to_doctor_patient(
                 else:
                     mapped_dialogue.append(turn)
         else:
-            logger.info(
-                "Heuristic scores tied; alternating turns between Doctor and Patient"
-            )
+            logger.info("Heuristic scores tied; alternating turns between Doctor and Patient")
             next_label = doctor_label
             for turn in structured_dialogue:
                 if isinstance(turn, dict) and len(turn) == 1:
                     text = list(turn.values())[0]
                     mapped_dialogue.append({next_label: text})
-                    next_label = (
-                        patient_label if next_label == doctor_label else doctor_label
-                    )
+                    next_label = patient_label if next_label == doctor_label else doctor_label
                 else:
                     mapped_dialogue.append(turn)
 
@@ -271,10 +259,7 @@ def map_speakers_to_doctor_patient(
             1
             for text in texts
             if len(text.split()) <= 5
-            and any(
-                word in text.lower()
-                for word in ["yes", "no", "okay", "sí", "no", "bien"]
-            )
+            and any(word in text.lower() for word in ["yes", "no", "okay", "sí", "no", "bien"])
         )
         patient_score += short_responses * 0.5
 
@@ -312,9 +297,7 @@ def map_speakers_to_doctor_patient(
         )
     else:
         # More than 2 speakers - map first to Doctor, rest to Patient
-        logger.warning(
-            f"More than 2 speakers detected ({len(speaker_scores)}), using simple mapping"
-        )
+        logger.warning(f"More than 2 speakers detected ({len(speaker_scores)}), using simple mapping")
         for i, speaker_id in enumerate(speaker_order):
             if i == 0:
                 speaker_mapping[speaker_id] = doctor_label
@@ -341,9 +324,7 @@ def map_speakers_to_doctor_patient(
             mapped_dialogue.append(turn)
         else:
             # Unknown speaker, default to Patient
-            logger.warning(
-                f"Unknown speaker ID: {speaker_id}, defaulting to {patient_label}"
-            )
+            logger.warning(f"Unknown speaker ID: {speaker_id}, defaulting to {patient_label}")
             mapped_dialogue.append({patient_label: text})
 
     return mapped_dialogue

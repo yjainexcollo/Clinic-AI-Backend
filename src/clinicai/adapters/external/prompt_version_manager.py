@@ -142,8 +142,7 @@ def _get_git_commit_hash() -> Optional[str]:
                     commit_hash = result.stdout.strip()
                     if commit_hash:
                         logger.debug(
-                            f"Using git commit from git command (branch: {current_branch}): "
-                            f"{commit_hash[:8]}..."
+                            f"Using git commit from git command (branch: {current_branch}): " f"{commit_hash[:8]}..."
                         )
                         return commit_hash
             else:
@@ -184,23 +183,16 @@ class PromptVersionManager:
 
             # Check if unique index exists
             indexes = await collection.list_indexes().to_list(length=None)
-            has_unique_index = any(
-                idx.get("name") == "scenario_1" and idx.get("unique") is True
-                for idx in indexes
-            )
+            has_unique_index = any(idx.get("name") == "scenario_1" and idx.get("unique") is True for idx in indexes)
 
             if not has_unique_index:
                 try:
                     # Create unique index on scenario field
-                    await collection.create_index(
-                        "scenario", unique=True, name="scenario_1"
-                    )
+                    await collection.create_index("scenario", unique=True, name="scenario_1")
                     logger.info("✅ Created unique index on 'scenario' field")
                 except Exception as index_error:
                     # If index creation fails due to duplicates, log warning but continue
-                    if "duplicate key" in str(index_error).lower() or "E11000" in str(
-                        index_error
-                    ):
+                    if "duplicate key" in str(index_error).lower() or "E11000" in str(index_error):
                         logger.warning(
                             "⚠️  Cannot create unique index due to duplicate scenarios. "
                             "Run cleanup manually or delete duplicates first."
@@ -241,21 +233,15 @@ class PromptVersionManager:
             # Track documents by scenario (using field values, not enum values)
             docs_by_scenario: Dict[str, List[PromptVersionMongo]] = {}
             invalid_docs = []
-            migration_candidates: Dict[str, PromptVersionMongo] = (
-                {}
-            )  # field_value -> doc to migrate
+            migration_candidates: Dict[str, PromptVersionMongo] = {}  # field_value -> doc to migrate
 
             for doc in all_docs:
                 scenario = getattr(doc, "scenario", None)
 
                 # Check if document has 'versions' field (new structure)
-                if not hasattr(doc, "versions") or not isinstance(
-                    getattr(doc, "versions", None), list
-                ):
+                if not hasattr(doc, "versions") or not isinstance(getattr(doc, "versions", None), list):
                     invalid_docs.append(doc)
-                    logger.info(
-                        f"🗑️  Marking document for deletion: old structure (no versions array), ID: {doc.id}"
-                    )
+                    logger.info(f"🗑️  Marking document for deletion: old structure (no versions array), ID: {doc.id}")
                     continue
 
                 # Check if scenario is an enum value that needs migration
@@ -266,9 +252,7 @@ class PromptVersionManager:
                         f"ID: {doc.id}. Will migrate or delete if duplicate exists."
                     )
                     # Check if correct document already exists
-                    existing_correct = await PromptVersionMongo.find_one(
-                        {"scenario": correct_field_value}
-                    )
+                    existing_correct = await PromptVersionMongo.find_one({"scenario": correct_field_value})
                     if existing_correct:
                         # Correct document exists, mark enum-value doc for deletion
                         invalid_docs.append(doc)
@@ -282,12 +266,8 @@ class PromptVersionManager:
                             migration_candidates[correct_field_value] = doc
                         else:
                             # Multiple enum-value docs for same scenario, keep the one with more versions
-                            existing_candidate = migration_candidates[
-                                correct_field_value
-                            ]
-                            if len(getattr(doc, "versions", [])) > len(
-                                getattr(existing_candidate, "versions", [])
-                            ):
+                            existing_candidate = migration_candidates[correct_field_value]
+                            if len(getattr(doc, "versions", [])) > len(getattr(existing_candidate, "versions", [])):
                                 invalid_docs.append(existing_candidate)
                                 migration_candidates[correct_field_value] = doc
                             else:
@@ -297,9 +277,7 @@ class PromptVersionManager:
                 # Check if scenario is valid (must be in expected_scenarios)
                 if scenario not in expected_scenarios:
                     invalid_docs.append(doc)
-                    logger.info(
-                        f"🗑️  Marking document for deletion: invalid scenario '{scenario}', ID: {doc.id}"
-                    )
+                    logger.info(f"🗑️  Marking document for deletion: invalid scenario '{scenario}', ID: {doc.id}")
                     continue
 
                 # Group by scenario (valid field value)
@@ -327,9 +305,7 @@ class PromptVersionManager:
                 try:
                     original_scenario = getattr(enum_doc, "scenario", None)
                     # Check again if correct document exists (race condition check)
-                    existing_correct = await PromptVersionMongo.find_one(
-                        {"scenario": correct_field_value}
-                    )
+                    existing_correct = await PromptVersionMongo.find_one({"scenario": correct_field_value})
                     if existing_correct:
                         # Correct document was created in parallel, delete enum-value doc
                         invalid_docs.append(enum_doc)
@@ -366,9 +342,7 @@ class PromptVersionManager:
 
             total_removed = len(invalid_docs)
             # Count successfully migrated documents (not in invalid_docs)
-            total_migrated = sum(
-                1 for doc in migration_candidates.values() if doc not in invalid_docs
-            )
+            total_migrated = sum(1 for doc in migration_candidates.values() if doc not in invalid_docs)
 
             if total_removed > 0 or total_migrated > 0:
                 logger.info(
@@ -424,15 +398,11 @@ class PromptVersionManager:
                 logger.info(f"✅ {scenario.value}: {version}")
                 return (scenario, version)
             except Exception as e:
-                logger.error(
-                    f"❌ Failed to process {scenario.value}: {e}", exc_info=True
-                )
+                logger.error(f"❌ Failed to process {scenario.value}: {e}", exc_info=True)
                 # Fallback to hardcoded version if available
                 fallback_version = PROMPT_VERSIONS.get(scenario)
                 if fallback_version:
-                    logger.warning(
-                        f"⚠️  Using fallback version for {scenario.value}: {fallback_version}"
-                    )
+                    logger.warning(f"⚠️  Using fallback version for {scenario.value}: {fallback_version}")
                     return (scenario, fallback_version)
                 else:
                     raise
@@ -457,9 +427,7 @@ class PromptVersionManager:
         logger.info(f"✅ Prompt version detection completed: {len(versions)} scenarios")
         return versions
 
-    async def _get_or_create_scenario_document(
-        self, scenario: PromptScenario
-    ) -> PromptVersionMongo:
+    async def _get_or_create_scenario_document(self, scenario: PromptScenario) -> PromptVersionMongo:
         """
         Get or create the document for a specific scenario.
 
@@ -483,14 +451,10 @@ class PromptVersionManager:
             doc = PromptVersionMongo(scenario=scenario_value, versions=[])
             try:
                 await doc.insert()
-                logger.info(
-                    f"📝 Created new prompt versions document for scenario: {scenario_value}"
-                )
+                logger.info(f"📝 Created new prompt versions document for scenario: {scenario_value}")
             except Exception as e:
                 # If insert fails (e.g., duplicate key), try to find again (race condition)
-                logger.warning(
-                    f"Insert failed for {scenario_value}, trying to find existing document: {e}"
-                )
+                logger.warning(f"Insert failed for {scenario_value}, trying to find existing document: {e}")
                 doc = await PromptVersionMongo.find_one({"scenario": scenario_value})
                 if not doc:
                     raise
@@ -527,9 +491,7 @@ class PromptVersionManager:
         version_doc = await self._get_or_create_scenario_document(scenario)
 
         # Find current version in versions array
-        current_version_entry = next(
-            (v for v in version_doc.versions if v.is_current), None
-        )
+        current_version_entry = next((v for v in version_doc.versions if v.is_current), None)
 
         if current_version_entry:
             current_major = current_version_entry.major_version
@@ -590,9 +552,7 @@ class PromptVersionManager:
                     return current_version_entry.version
 
             # Case 3: No change
-            logger.debug(
-                f"{scenario.value}: No change detected (v{current_version_entry.version})"
-            )
+            logger.debug(f"{scenario.value}: No change detected (v{current_version_entry.version})")
             return current_version_entry.version
 
         else:
@@ -665,8 +625,7 @@ class PromptVersionManager:
 
         git_info = f" (git: {git_commit[:8]}...)" if git_commit else " (no git commit)"
         logger.info(
-            f"📝 Created new version: {scenario.value} → {version_string} "
-            f"(hash: {template_hash[:8]}...){git_info}"
+            f"📝 Created new version: {scenario.value} → {version_string} " f"(hash: {template_hash[:8]}...){git_info}"
         )
 
         return version_string

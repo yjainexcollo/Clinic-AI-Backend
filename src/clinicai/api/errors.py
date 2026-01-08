@@ -1,7 +1,5 @@
 class APIError(Exception):
-    def __init__(
-        self, code: str, message: str, http_status: int = 400, details: dict = None
-    ):
+    def __init__(self, code: str, message: str, http_status: int = 400, details: dict = None):
         super().__init__(message)
         self.code = code
         self.message = message
@@ -42,9 +40,7 @@ class DownstreamError(APIError):
 # Domain-specific
 class PatientNotFoundError(NotFoundError):
     def __init__(self, patient_id: str):
-        super().__init__(
-            f"Patient not found ({patient_id})", {"patient_id": patient_id}
-        )
+        super().__init__(f"Patient not found ({patient_id})", {"patient_id": patient_id})
 
 
 class VisitNotFoundError(NotFoundError):

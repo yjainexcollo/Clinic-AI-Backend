@@ -123,9 +123,7 @@ async def append_phase_call(
 
     # Debug logging if enabled
     if settings.llm_interaction.enable_debug_logging:
-        logger.debug(
-            f"[{agent_name}] Logging phase call: visit_id={visit_id}, patient_id={patient_id}, phase={phase}"
-        )
+        logger.debug(f"[{agent_name}] Logging phase call: visit_id={visit_id}, patient_id={patient_id}, phase={phase}")
 
     doc = await _get_or_create(visit_id, patient_id)
 

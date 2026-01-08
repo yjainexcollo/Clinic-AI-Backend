@@ -20,9 +20,7 @@ try:
 except ImportError:
     TRACING_AVAILABLE = False
     tracer = None
-    logger.warning(
-        "OpenTelemetry tracing not available. Install 'opentelemetry-api' for tracing support."
-    )
+    logger.warning("OpenTelemetry tracing not available. Install 'opentelemetry-api' for tracing support.")
 
 
 @contextmanager
@@ -69,9 +67,7 @@ def set_span_status(span, success: bool, error_message: Optional[str] = None):
         if success:
             span.set_status(Status(StatusCode.OK))
         else:
-            span.set_status(
-                Status(StatusCode.ERROR, error_message or "Operation failed")
-            )
+            span.set_status(Status(StatusCode.ERROR, error_message or "Operation failed"))
     except Exception as e:
         logger.warning(f"Failed to set span status: {e}")
 

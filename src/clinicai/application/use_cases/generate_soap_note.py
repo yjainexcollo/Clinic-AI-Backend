@@ -26,9 +26,7 @@ class GenerateSoapNoteUseCase:
         self._visit_repository = visit_repository
         self._soap_service = soap_service
 
-    async def execute(
-        self, request: SoapGenerationRequest, doctor_id: str
-    ) -> SoapGenerationResponse:
+    async def execute(self, request: SoapGenerationRequest, doctor_id: str) -> SoapGenerationResponse:
         """Execute the SOAP note generation use case."""
         # Find patient
         patient_id = PatientId(request.patient_id)
@@ -38,9 +36,7 @@ class GenerateSoapNoteUseCase:
 
         # Find visit
         visit_id = VisitId(request.visit_id)
-        visit = await self._visit_repository.find_by_patient_and_visit_id(
-            request.patient_id, visit_id, doctor_id
-        )
+        visit = await self._visit_repository.find_by_patient_and_visit_id(request.patient_id, visit_id, doctor_id)
         if not visit:
             raise VisitNotFoundError(request.visit_id)
 
@@ -52,39 +48,27 @@ class GenerateSoapNoteUseCase:
         transcript_text = visit.get_transcript()
         has_transcript_text = bool(transcript_text)
         transcription_status = (
-            visit.transcription_session.transcription_status
-            if visit.transcription_session
-            else "None"
+            visit.transcription_session.transcription_status if visit.transcription_session else "None"
         )
 
         # Log detailed information for debugging
         import logging
 
         logger = logging.getLogger("clinicai")
-        logger.info(
-            f"[GenerateSOAP] Visit check - workflow_type: {visit.workflow_type.value}, status: {visit.status}"
-        )
+        logger.info(f"[GenerateSOAP] Visit check - workflow_type: {visit.workflow_type.value}, status: {visit.status}")
         logger.info(
             f"[GenerateSOAP] Transcription - status: {transcription_status}, has_transcript_check: {has_transcript}, has_transcript_text: {has_transcript_text}, transcript_length: {len(transcript_text) if transcript_text else 0}"
         )
-        logger.info(
-            f"[GenerateSOAP] Vitals - exists: {bool(visit.vitals)}, can_generate: {can_generate}"
-        )
+        logger.info(f"[GenerateSOAP] Vitals - exists: {bool(visit.vitals)}, can_generate: {can_generate}")
 
         if not can_generate:
             # More detailed error message
             error_details = []
             if not has_transcript:
-                error_details.append(
-                    f"Transcript not complete (transcription_status: {transcription_status})"
-                )
+                error_details.append(f"Transcript not complete (transcription_status: {transcription_status})")
             if not visit.vitals:
                 error_details.append("Vitals not stored")
-            if (
-                visit.workflow_type.value == "scheduled"
-                and has_transcript
-                and visit.vitals
-            ):
+            if visit.workflow_type.value == "scheduled" and has_transcript and visit.vitals:
                 error_details.append(
                     f"Status issue: current_status='{visit.status}', expected one of ['soap_generation', 'transcription_completed', 'transcription']"
                 )
@@ -121,9 +105,7 @@ class GenerateSoapNoteUseCase:
         pre_visit_summary = visit.get_pre_visit_summary()
         vitals = visit.get_vitals()
         # Optional per-visit SOAP template (may come from request or already stored on visit)
-        template = (
-            request.template or getattr(visit, "get_soap_template", lambda: None)()
-        )
+        template = request.template or getattr(visit, "get_soap_template", lambda: None)()
 
         try:
             # Get patient language for SOAP generation
@@ -187,9 +169,7 @@ class GenerateSoapNoteUseCase:
             except Exception as e:
                 import logging
 
-                logging.getLogger("clinicai").warning(
-                    f"Failed to append structured SOAP log: {e}"
-                )
+                logging.getLogger("clinicai").warning(f"Failed to append structured SOAP log: {e}")
 
             return SoapGenerationResponse(
                 patient_id=patient.patient_id.value,

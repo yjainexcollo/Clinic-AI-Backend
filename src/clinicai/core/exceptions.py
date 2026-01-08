@@ -58,18 +58,14 @@ class AuthenticationError(ClinicAIException):
 class AuthorizationError(ClinicAIException):
     """Raised when there's an authorization error."""
 
-    def __init__(
-        self, message: str = "Access denied", details: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def __init__(self, message: str = "Access denied", details: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message, "AUTHORIZATION_ERROR", details)
 
 
 class ExternalServiceError(ClinicAIException):
     """Raised when there's an external service error."""
 
-    def __init__(
-        self, service: str, message: str, details: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def __init__(self, service: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
         self.service = service
         full_message = f"{service} service error: {message}"
         super().__init__(full_message, "EXTERNAL_SERVICE_ERROR", details)
@@ -92,9 +88,7 @@ class DeepgramError(ExternalServiceError):
 class PatientNotFoundError(ClinicAIException):
     """Raised when a patient is not found."""
 
-    def __init__(
-        self, patient_id: str, details: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def __init__(self, patient_id: str, details: Optional[Dict[str, Any]] = None) -> None:
         message = f"Patient with ID '{patient_id}' not found"
         super().__init__(message, "PATIENT_NOT_FOUND", details)
 
@@ -102,9 +96,7 @@ class PatientNotFoundError(ClinicAIException):
 class ConsultationNotFoundError(ClinicAIException):
     """Raised when a consultation is not found."""
 
-    def __init__(
-        self, consultation_id: str, details: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def __init__(self, consultation_id: str, details: Optional[Dict[str, Any]] = None) -> None:
         message = f"Consultation with ID '{consultation_id}' not found"
         super().__init__(message, "CONSULTATION_NOT_FOUND", details)
 
@@ -112,9 +104,7 @@ class ConsultationNotFoundError(ClinicAIException):
 class DuplicatePatientError(ClinicAIException):
     """Raised when trying to create a duplicate patient."""
 
-    def __init__(
-        self, patient_id: str, details: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def __init__(self, patient_id: str, details: Optional[Dict[str, Any]] = None) -> None:
         message = f"Patient with ID '{patient_id}' already exists"
         super().__init__(message, "DUPLICATE_PATIENT", details)
 
