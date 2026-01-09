@@ -6,7 +6,7 @@ azure:
   resource_group: "clinic-ai"
   app_name: "clinic-ai-backend-sandbox"
   slot_name: "production"
-  health_url: "https://clinic-ai-backend-sandbox.azurewebsites.net/health"
+  health_url: "https://clinic-ai-backend-sandbox-f8hheme5gdhrb7f0.centralindia-01.azurewebsites.net/health"
 
 acr:
   login_server: "clinicaiacr.azurecr.io"

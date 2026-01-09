@@ -220,11 +220,24 @@ class AzureOpenAISettings(BaseSettings):
     @validator("endpoint")
     def validate_endpoint(cls, v: str) -> str:
         """Validate Azure OpenAI endpoint format."""
-        if v and not (v.startswith("https://") and ".openai.azure.com" in v):
-            # Allow empty string for optional use
-            if v == "":
-                return v
-            raise ValueError("Invalid Azure OpenAI endpoint format. Must be: https://xxx.openai.azure.com/")
+        # Allow empty string for optional use
+        if v == "":
+            return v
+        
+        # Accept all Azure OpenAI endpoint formats
+        valid_endpoints = [
+            ".openai.azure.com",           # Old format
+            ".cognitiveservices.azure.com", # Cognitive Services format
+            ".services.ai.azure.com"        # New AI Services format
+        ]
+        
+        if v and not (v.startswith("https://") and any(domain in v for domain in valid_endpoints)):
+            raise ValueError(
+                "Invalid Azure OpenAI endpoint format. Must be one of: "
+                "https://xxx.openai.azure.com/, "
+                "https://xxx.cognitiveservices.azure.com/, or "
+                "https://xxx.services.ai.azure.com/"
+            )
         return v
 
 
