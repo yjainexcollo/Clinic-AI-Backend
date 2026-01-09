@@ -1,13 +1,12 @@
 # Development Environment Configuration
-# REPLACE_ME: Update these placeholders with actual Azure resource names when ready.
 # This file contains NO secrets - only resource names and URLs.
 
 azure:
   subscription_id: "f3ac2634-4e07-4d24-adc5-3e607e4bd177"
   resource_group: "clinic-ai"
-  app_name: "clinicai-backend-devlop"
+  app_name: "clinicai-backend-dev"
   slot_name: "production"
-  health_url: "https://clinicai-backend-devlop-f0gmafaregddcghg.centralindia-01.azurewebsites.net/health"
+  health_url: "https://clinicai-backend-dev.azurewebsites.net/health"
 
 acr:
   login_server: "clinicaiacr.azurecr.io"

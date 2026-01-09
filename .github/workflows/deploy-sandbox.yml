@@ -1,20 +1,19 @@
-# Sandbox Deployment Workflow
-# This workflow deploys to the Sandbox environment.
-# Currently workflow_dispatch only; will auto-deploy on push to sandbox once Azure is configured.
-
 name: Deploy to Sandbox
 
 on:
+  push:
+    branches: [sandbox]
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: 'Docker image tag (default: sha-<commit>)'
-        required: false
-        type: string
+
+env:
+  ACR_LOGIN_SERVER: clinicaiacr.azurecr.io
+  IMAGE_NAME: clinicai-backend
+  AZURE_WEBAPP_NAME: clinic-ai-backend-sandbox
+  RESOURCE_GROUP: clinic-ai
 
 jobs:
-  deploy:
-    name: Deploy to Sandbox
+  build-and-deploy:
+    name: Build & Deploy to Sandbox
     runs-on: ubuntu-latest
     environment: sandbox
     
@@ -22,69 +21,64 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Read environment config
-        id: config
-        uses: ./.github/actions/read-config
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
         with:
-          environment: 'sandbox'
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Compute image tag
-        id: image
-        run: |
-          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
-            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
-          else
-            IMAGE_TAG="sha-${GITHUB_SHA:0:7}"
-          fi
-          
-          FULL_IMAGE="${{ steps.config.outputs.acr_login_server }}/${{ steps.config.outputs.acr_repository }}:${IMAGE_TAG}"
-          
-          echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
-          
-          echo "📦 Docker image: ${FULL_IMAGE}"
-
-      - name: Validate required secrets
-        uses: ./.github/actions/validate-secrets
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
         with:
-          required: 'AZURE_CLIENT_ID,AZURE_TENANT_ID,AZURE_SUBSCRIPTION_ID,ACR_LOGIN_SERVER,ACR_USERNAME,ACR_PASSWORD'
-          environment: 'sandbox'
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:sandbox-latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-      - name: Build & Push Docker Image (PLACEHOLDER)
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Wait for deployment
+        run: sleep 60
+
+      - name: Health Check
         run: |
-          echo "⚠️  Azure phase pending - Docker build & push not enabled yet"
-          echo ""
-          echo "When enabled, this step will:"
-          echo "  1. Build Docker image from ${{ steps.config.outputs.dockerfile }}"
-          echo "  2. Tag as ${{ steps.image.outputs.full_image }}"
-          echo "  3. Push to ACR"
-          echo ""
-          echo "To enable: Add real Docker build/push steps after Azure setup"
+          echo "🧪 Testing health endpoint..."
+          for i in {1..10}; do
+            if curl -f -k https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health; then
+              echo "✅ Health check passed!"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/10 failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ Health check failed after 10 attempts"
           exit 1
 
-      - name: Deploy to Azure App Service (PLACEHOLDER)
+      - name: Deployment Summary
+        if: always()
         run: |
-          echo "⚠️  Azure phase pending - App Service deployment not enabled yet"
-          echo ""
-          echo "When enabled, this step will:"
-          echo "  1. Login to Azure"
-          echo "  2. Deploy image to App Service: ${{ steps.config.outputs.app_name }}"
-          echo "  3. Slot: ${{ steps.config.outputs.slot_name }}"
-          echo ""
-          echo "To enable: Add real Azure deployment steps after setup"
-          exit 1
-
-      - name: Health check (PLACEHOLDER)
-        uses: ./.github/actions/health-check
-        with:
-          url: ${{ steps.config.outputs.health_url }}
-          retries: 10
-          delay_seconds: 10
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** Sandbox" >> $GITHUB_STEP_SUMMARY
+          echo "- **App Service:** ${{ env.AZURE_WEBAPP_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL:** https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
