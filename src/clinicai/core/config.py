@@ -223,14 +223,14 @@ class AzureOpenAISettings(BaseSettings):
         # Allow empty string for optional use
         if v == "":
             return v
-        
+
         # Accept all Azure OpenAI endpoint formats
         valid_endpoints = [
-            ".openai.azure.com",           # Old format
-            ".cognitiveservices.azure.com", # Cognitive Services format
-            ".services.ai.azure.com"        # New AI Services format
+            ".openai.azure.com",  # Old format
+            ".cognitiveservices.azure.com",  # Cognitive Services format
+            ".services.ai.azure.com",  # New AI Services format
         ]
-        
+
         if v and not (v.startswith("https://") and any(domain in v for domain in valid_endpoints)):
             raise ValueError(
                 "Invalid Azure OpenAI endpoint format. Must be one of: "
