@@ -58,11 +58,19 @@ jobs:
       - name: Wait for deployment
         run: sleep 60
 
+      - name: Read environment config
+        id: config
+        uses: ./.github/actions/read-config
+        with:
+          environment: 'sandbox'
+
       - name: Health Check
         run: |
           echo "🧪 Testing health endpoint..."
+          HEALTH_URL="${{ steps.config.outputs.health_url }}"
+          echo "Testing: $HEALTH_URL"
           for i in {1..10}; do
-            if curl -f -k https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health; then
+            if curl -f -k "$HEALTH_URL"; then
               echo "✅ Health check passed!"
               exit 0
             fi
