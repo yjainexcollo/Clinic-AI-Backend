@@ -2,7 +2,7 @@
 # This workflow deploys to the Production environment.
 # ALWAYS workflow_dispatch only with manual confirmation required.
 
-name: Deploy to Production
+name: 🚀 Deploy to Production
 
 on:
   workflow_dispatch:
@@ -11,14 +11,15 @@ on:
         description: 'Type "DEPLOY" to confirm production deployment'
         required: true
         type: string
-      image_tag:
-        description: 'Docker image tag (default: sha-<commit>)'
-        required: false
-        type: string
+
+env:
+  ACR_LOGIN_SERVER: clinicaiacr.azurecr.io
+  IMAGE_NAME: clinicai-backend
+  RESOURCE_GROUP: clinic-ai
 
 jobs:
   validate-confirmation:
-    name: Validate Confirmation
+    name: ✅ Validate Confirmation
     runs-on: ubuntu-latest
     steps:
       - name: Check deployment confirmation
@@ -30,79 +31,85 @@ jobs:
           fi
           echo "✅ Production deployment confirmed"
 
-  deploy:
-    name: Deploy to Production
+  build-and-deploy:
+    name: 🚀 Build & Deploy to Production
     runs-on: ubuntu-latest
     needs: validate-confirmation
     environment: production
     
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: Read environment config
+      - name: 📋 Read environment config
         id: config
         uses: ./.github/actions/read-config
         with:
           environment: 'production'
 
-      - name: Compute image tag
-        id: image
-        run: |
-          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
-            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
-          else
-            IMAGE_TAG="sha-${GITHUB_SHA:0:7}"
-          fi
-          
-          FULL_IMAGE="${{ steps.config.outputs.acr_login_server }}/${{ steps.config.outputs.acr_repository }}:${IMAGE_TAG}"
-          
-          echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
-          
-          echo "📦 Docker image: ${FULL_IMAGE}"
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Validate required secrets
-        uses: ./.github/actions/validate-secrets
+      - name: 🔐 Log in to Azure Container Registry
+        uses: docker/login-action@v3
         with:
-          required: 'AZURE_CLIENT_ID,AZURE_TENANT_ID,AZURE_SUBSCRIPTION_ID,ACR_LOGIN_SERVER,ACR_USERNAME,ACR_PASSWORD'
-          environment: 'production'
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build & Push Docker Image (PLACEHOLDER)
+      - name: 🐳 Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.config.outputs.docker_context }}
+          file: ${{ steps.config.outputs.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:production-latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: 🔐 Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PRODUCTION }}
+
+      - name: 🚀 Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ steps.config.outputs.app_name }}
+          slot-name: ${{ steps.config.outputs.slot_name }}
+          images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: ⏳ Wait for deployment
+        run: sleep 90
+
+      - name: 🏥 Health Check
         run: |
-          echo "⚠️  Azure phase pending - Docker build & push not enabled yet"
-          echo ""
-          echo "When enabled, this step will:"
-          echo "  1. Build Docker image from ${{ steps.config.outputs.dockerfile }}"
-          echo "  2. Tag as ${{ steps.image.outputs.full_image }}"
-          echo "  3. Push to ACR"
-          echo ""
-          echo "To enable: Add real Docker build/push steps after Azure setup"
+          echo "🧪 Testing production health endpoint..."
+          HEALTH_URL="${{ steps.config.outputs.health_url }}"
+          echo "Testing: $HEALTH_URL"
+          
+          for i in {1..15}; do
+            if curl -f -k "$HEALTH_URL"; then
+              echo "✅ Production health check passed!"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/15 failed, retrying in 15s..."
+            sleep 15
+          done
+          
+          echo "❌ Production health check failed after 15 attempts"
           exit 1
 
-      - name: Deploy to Azure App Service (PLACEHOLDER)
+      - name: 📊 Deployment Summary
+        if: always()
         run: |
-          echo "⚠️  Azure phase pending - App Service deployment not enabled yet"
-          echo ""
-          echo "When enabled, this step will:"
-          echo "  1. Login to Azure"
-          echo "  2. Deploy image to App Service: ${{ steps.config.outputs.app_name }}"
-          echo "  3. Slot: ${{ steps.config.outputs.slot_name }}"
-          echo ""
-          echo "To enable: Add real Azure deployment steps after setup"
-          exit 1
-
-      - name: Health check (PLACEHOLDER)
-        uses: ./.github/actions/health-check
-        with:
-          url: ${{ steps.config.outputs.health_url }}
-          retries: 10
-          delay_seconds: 10
+          echo "## 🚀 Production Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** Production 🔴" >> $GITHUB_STEP_SUMMARY
+          echo "- **App Service:** ${{ steps.config.outputs.app_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health URL:** ${{ steps.config.outputs.health_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

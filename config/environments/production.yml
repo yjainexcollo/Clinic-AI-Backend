@@ -1,16 +1,15 @@
 # Production Environment Configuration
-# REPLACE_ME: Update these placeholders with actual Azure resource names when ready.
 # This file contains NO secrets - only resource names and URLs.
 
 azure:
-  subscription_id: "REPLACE_ME"
-  resource_group: "REPLACE_ME_RG"
-  app_name: "REPLACE_ME_APP"
+  subscription_id: "f3ac2634-4e07-4d24-adc5-3e607e4bd177"
+  resource_group: "clinic-ai"
+  app_name: "clinic-ai-backend"
   slot_name: "production"
-  health_url: "https://REPLACE_ME.azurewebsites.net/health"
+  health_url: "https://clinic-ai-backend-b4anbydmd2gfa4fd.centralindia-01.azurewebsites.net/health"
 
 acr:
-  login_server: "REPLACE_ME.azurecr.io"
+  login_server: "clinicaiacr.azurecr.io"
   repository: "clinicai-backend"
 
 docker:
@@ -19,5 +18,5 @@ docker:
 
 deployment:
   blue_green: false
-  timeout_seconds: 300
+  timeout_seconds: 600
 
