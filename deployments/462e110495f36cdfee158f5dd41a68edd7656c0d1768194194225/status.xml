@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<deployment>
+  <id>462e110495f36cdfee158f5dd41a68edd7656c0d1768194194225</id>
+  <author>yjainexcollo</author>
+  <deployer>GitHub</deployer>
+  <authorEmail />
+  <message>{"type":"Deployment","sha":"462e110495f36cdfee158f5dd41a68edd7656c0d","repoName":"yjainexcollo/Clinic-AI-Backend","actor":"yjainexcollo","slotName":"production"}</message>
+  <progress />
+  <status>Success</status>
+  <statusText />
+  <lastSuccessEndTime>2026-01-12T05:03:16.5255131Z</lastSuccessEndTime>
+  <receivedTime>2026-01-12T05:03:16.5255131Z</receivedTime>
+  <startTime>2026-01-12T05:03:16.5255131Z</startTime>
+  <endTime>2026-01-12T05:03:16.5255131Z</endTime>
+  <complete>True</complete>
+  <is_temp>False</is_temp>
+  <is_readonly>True</is_readonly>
+  <buildSummary />
+</deployment>
