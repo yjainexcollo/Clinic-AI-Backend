@@ -86,135 +86,123 @@ runs:
         
         echo "📄 Reading config from: $CONFIG_FILE"
         
-        # Parse YAML, validate, and write outputs directly to $GITHUB_OUTPUT
+        # Create temporary Python script
+        cat > /tmp/parse_config.py << 'ENDOFPYTHON'
+        import yaml
+        import sys
+        import os
+        
+        REQUIRED_KEYS = [
+            ('azure.app_name', ['azure', 'app_name']),
+            ('azure.resource_group', ['azure', 'resource_group']),
+            ('azure.health_url', ['azure', 'health_url']),
+            ('acr.login_server', ['acr', 'login_server']),
+            ('acr.repository', ['acr', 'repository']),
+            ('docker.dockerfile', ['docker', 'dockerfile']),
+        ]
+        
+        OPTIONAL_KEYS = [
+            ('azure.slot_name', ['azure', 'slot_name'], 'production'),
+            ('azure.subscription_id', ['azure', 'subscription_id'], 'REPLACE_ME'),
+            ('docker.context', ['docker', 'context'], '.'),
+        ]
+        
+        OUTPUT_MAPPING = {
+            'azure.app_name': 'app_name',
+            'azure.resource_group': 'resource_group',
+            'azure.health_url': 'health_url',
+            'azure.slot_name': 'slot_name',
+            'azure.subscription_id': 'subscription_id',
+            'acr.login_server': 'acr_login_server',
+            'acr.repository': 'acr_repository',
+            'docker.dockerfile': 'dockerfile',
+            'docker.context': 'docker_context',
+        }
+        
+        def get_nested_value(data, keys):
+            current = data
+            for key in keys:
+                if not isinstance(current, dict) or key not in current:
+                    return None
+                current = current[key]
+            return current
+        
+        def write_output(key, value):
+            github_output = os.environ.get('GITHUB_OUTPUT')
+            if not github_output:
+                print(f"WARNING: GITHUB_OUTPUT not set, would write {key}={value}")
+                return
+            with open(github_output, 'a') as f:
+                delimiter = 'EOF'
+                f.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+        
+        def main():
+            config_file = os.environ.get('CONFIG_FILE', '')
+            
+            try:
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+                
+                if not isinstance(config, dict):
+                    print(f"ERROR: Invalid YAML structure in {config_file}")
+                    sys.exit(1)
+                
+                missing_keys = []
+                for key_name, key_path in REQUIRED_KEYS:
+                    value = get_nested_value(config, key_path)
+                    if value is None:
+                        missing_keys.append(key_name)
+                
+                if missing_keys:
+                    print("ERROR: Missing required configuration keys:")
+                    for key in missing_keys:
+                        print(f"  - {key}")
+                    sys.exit(1)
+                
+                values = {}
+                
+                for key_name, key_path in REQUIRED_KEYS:
+                    value = get_nested_value(config, key_path)
+                    values[key_name] = str(value)
+                
+                for key_name, key_path, default in OPTIONAL_KEYS:
+                    value = get_nested_value(config, key_path)
+                    values[key_name] = str(value if value is not None else default)
+                
+                for key_name, output_name in OUTPUT_MAPPING.items():
+                    value = values[key_name]
+                    write_output(output_name, value)
+                    print(f"Set output: {output_name}={value}")
+                
+                print("")
+                print(f"Config loaded for environment: {os.environ.get('ENVIRONMENT', 'unknown')}")
+                print(f"  App Name:        {values['azure.app_name']}")
+                print(f"  Resource Group:  {values['azure.resource_group']}")
+                print(f"  Subscription:    {values['azure.subscription_id']}")
+                print(f"  Health URL:      {values['azure.health_url']}")
+                print(f"  ACR:             {values['acr.login_server']}/{values['acr.repository']}")
+                print(f"  Dockerfile:      {values['docker.dockerfile']}")
+                print(f"  Docker Context:  {values['docker.context']}")
+                print("Configuration validated and loaded successfully")
+                
+            except FileNotFoundError:
+                print(f"ERROR: Config file not found: {config_file}")
+                sys.exit(1)
+            except yaml.YAMLError as e:
+                print(f"ERROR: YAML parsing error: {e}")
+                sys.exit(1)
+            except Exception as e:
+                print(f"ERROR: Unexpected error: {e}")
+                sys.exit(1)
+        
+        if __name__ == '__main__':
+            main()
+        ENDOFPYTHON
+        
+        # Run the Python script
         export CONFIG_FILE
-        python3 << 'EOFPYTHON'
-import yaml
-import sys
-import os
-
-# Required keys that must exist in YAML
-REQUIRED_KEYS = {
-    'azure.app_name': ['azure', 'app_name'],
-    'azure.resource_group': ['azure', 'resource_group'],
-    'azure.health_url': ['azure', 'health_url'],
-    'acr.login_server': ['acr', 'login_server'],
-    'acr.repository': ['acr', 'repository'],
-    'docker.dockerfile': ['docker', 'dockerfile'],
-}
-
-# Optional keys with defaults
-OPTIONAL_KEYS = {
-    'azure.slot_name': (['azure', 'slot_name'], 'production'),
-    'azure.subscription_id': (['azure', 'subscription_id'], 'REPLACE_ME'),
-    'docker.context': (['docker', 'context'], '.'),
-}
-
-# Output key mapping (YAML path -> output name)
-OUTPUT_MAPPING = {
-    'azure.app_name': 'app_name',
-    'azure.resource_group': 'resource_group',
-    'azure.health_url': 'health_url',
-    'azure.slot_name': 'slot_name',
-    'azure.subscription_id': 'subscription_id',
-    'acr.login_server': 'acr_login_server',
-    'acr.repository': 'acr_repository',
-    'docker.dockerfile': 'dockerfile',
-    'docker.context': 'docker_context',
-}
-
-def get_nested_value(data, keys):
-    """Safely get nested dictionary value."""
-    current = data
-    for key in keys:
-        if not isinstance(current, dict) or key not in current:
-            return None
-        current = current[key]
-    return current
-
-def write_output(key, value):
-    """Write to GitHub Actions output file (multiline-safe)."""
-    github_output = os.environ.get('GITHUB_OUTPUT')
-    if not github_output:
-        print(f"⚠️  GITHUB_OUTPUT not set, would write: {key}={value}")
-        return
-    
-    # Use EOF delimiter for multiline-safe output
-    with open(github_output, 'a') as f:
-        delimiter = 'EOF'
-        f.write(f"{key}<<{delimiter}\n")
-        f.write(f"{value}\n")
-        f.write(f"{delimiter}\n")
-
-def main():
-    config_file = os.environ.get('CONFIG_FILE', '')
-    
-    try:
-        # Load YAML
-        with open(config_file, 'r') as f:
-            config = yaml.safe_load(f)
-        
-        if not isinstance(config, dict):
-            print(f"❌ Invalid YAML structure in {config_file}")
-            sys.exit(1)
-        
-        # Validate required keys
-        missing_keys = []
-        for key_name, key_path in REQUIRED_KEYS.items():
-            value = get_nested_value(config, key_path)
-            if value is None:
-                missing_keys.append(key_name)
-        
-        if missing_keys:
-            print(f"❌ Missing required configuration keys:")
-            for key in missing_keys:
-                print(f"   - {key}")
-            sys.exit(1)
-        
-        # Collect all values (required + optional with defaults)
-        values = {}
-        
-        # Get required values
-        for key_name, key_path in REQUIRED_KEYS.items():
-            value = get_nested_value(config, key_path)
-            values[key_name] = str(value)
-        
-        # Get optional values with defaults
-        for key_name, (key_path, default) in OPTIONAL_KEYS.items():
-            value = get_nested_value(config, key_path)
-            values[key_name] = str(value if value is not None else default)
-        
-        # Write outputs to GITHUB_OUTPUT
-        for key_name, output_name in OUTPUT_MAPPING.items():
-            value = values[key_name]
-            write_output(output_name, value)
-            print(f"✓ Set output: {output_name}={value}")
-        
-        # Display summary
-        print("")
-        print(f"📋 Config loaded for environment: ${{ inputs.environment }}")
-        print(f"   App Name:        {values['azure.app_name']}")
-        print(f"   Resource Group:  {values['azure.resource_group']}")
-        print(f"   Subscription:    {values['azure.subscription_id']}")
-        print(f"   Health URL:      {values['azure.health_url']}")
-        print(f"   ACR:             {values['acr.login_server']}/{values['acr.repository']}")
-        print(f"   Dockerfile:      {values['docker.dockerfile']}")
-        print(f"   Docker Context:  {values['docker.context']}")
-        print("✅ Configuration validated and loaded successfully")
-        
-    except FileNotFoundError:
-        print(f"❌ Config file not found: {config_file}")
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"❌ YAML parsing error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main()
-EOFPYTHON
+        export ENVIRONMENT="${{ inputs.environment }}"
+        python3 /tmp/parse_config.py
         
         # Check if Python script succeeded
         if [ $? -ne 0 ]; then
