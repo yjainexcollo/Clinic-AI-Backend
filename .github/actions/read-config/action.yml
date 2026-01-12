@@ -1,5 +1,28 @@
+#
+# Read Environment Config - Composite Action
+#
+# PURPOSE:
+#   Load environment-specific configuration from YAML files (dev.yml, sandbox.yml, production.yml).
+#   YAML config files contain METADATA ONLY - no secrets or credentials.
+#   Secrets are provided via GitHub Secrets and Azure App Service configuration.
+#
+# REQUIRED YAML STRUCTURE:
+#   azure:
+#     app_name: <string>           # Required
+#     resource_group: <string>      # Required
+#     health_url: <string>          # Required
+#     slot_name: <string>           # Optional, default: "production"
+#     subscription_id: <string>     # Optional, default: "REPLACE_ME"
+#   acr:
+#     login_server: <string>        # Required
+#     repository: <string>          # Required
+#   docker:
+#     dockerfile: <string>          # Required
+#     context: <string>             # Optional, default: "."
+#
+
 name: 'Read Environment Config'
-description: 'Read config/environments/<env>.yml and output values'
+description: 'Read config/environments/<env>.yml and output validated configuration values'
 
 inputs:
   environment:
@@ -10,16 +33,48 @@ inputs:
     required: false
     default: 'config/environments'
 
+outputs:
+  app_name:
+    description: 'Azure App Service name'
+    value: ${{ steps.read-config.outputs.app_name }}
+  resource_group:
+    description: 'Azure Resource Group name'
+    value: ${{ steps.read-config.outputs.resource_group }}
+  health_url:
+    description: 'Health check URL'
+    value: ${{ steps.read-config.outputs.health_url }}
+  slot_name:
+    description: 'Deployment slot name'
+    value: ${{ steps.read-config.outputs.slot_name }}
+  subscription_id:
+    description: 'Azure Subscription ID'
+    value: ${{ steps.read-config.outputs.subscription_id }}
+  acr_login_server:
+    description: 'ACR login server'
+    value: ${{ steps.read-config.outputs.acr_login_server }}
+  acr_repository:
+    description: 'ACR repository name'
+    value: ${{ steps.read-config.outputs.acr_repository }}
+  dockerfile:
+    description: 'Path to Dockerfile'
+    value: ${{ steps.read-config.outputs.dockerfile }}
+  docker_context:
+    description: 'Docker build context'
+    value: ${{ steps.read-config.outputs.docker_context }}
+
 runs:
   using: 'composite'
   steps:
     - name: Install PyYAML
       shell: bash
       run: |
-        pip install pyyaml
+        echo "📦 Installing PyYAML..."
+        python3 -m pip install --upgrade pip --quiet
+        python3 -m pip install "pyyaml==6.0.2" --quiet
+        echo "✅ PyYAML installed"
 
     - name: Read config and set outputs
-      id: config
+      id: read-config
       shell: bash
       run: |
         CONFIG_FILE="${{ inputs.config-dir }}/${{ inputs.environment }}.yml"
@@ -29,71 +84,143 @@ runs:
           exit 1
         fi
         
-        # Parse YAML and extract values using Python
-        python3 << EOF > /tmp/config_output.txt
+        echo "📄 Reading config from: $CONFIG_FILE"
+        
+        # Parse YAML, validate, and write outputs directly to $GITHUB_OUTPUT
+        export CONFIG_FILE
+        python3 << 'EOFPYTHON'
 import yaml
 import sys
 import os
 
-config_file = "${{ inputs.config-dir }}/${{ inputs.environment }}.yml"
-with open(config_file, 'r') as f:
-    config = yaml.safe_load(f)
+# Required keys that must exist in YAML
+REQUIRED_KEYS = {
+    'azure.app_name': ['azure', 'app_name'],
+    'azure.resource_group': ['azure', 'resource_group'],
+    'azure.health_url': ['azure', 'health_url'],
+    'acr.login_server': ['acr', 'login_server'],
+    'acr.repository': ['acr', 'repository'],
+    'docker.dockerfile': ['docker', 'dockerfile'],
+}
 
-app_name = config['azure']['app_name']
-resource_group = config['azure']['resource_group']
-health_url = config['azure']['health_url']
-slot_name = config['azure'].get('slot_name', 'production')
-acr_login_server = config['acr']['login_server']
-acr_repository = config['acr']['repository']
-dockerfile = config['docker']['dockerfile']
+# Optional keys with defaults
+OPTIONAL_KEYS = {
+    'azure.slot_name': (['azure', 'slot_name'], 'production'),
+    'azure.subscription_id': (['azure', 'subscription_id'], 'REPLACE_ME'),
+    'docker.context': (['docker', 'context'], '.'),
+}
 
-print(f"app_name={app_name}")
-print(f"resource_group={resource_group}")
-print(f"health_url={health_url}")
-print(f"slot_name={slot_name}")
-print(f"acr_login_server={acr_login_server}")
-print(f"acr_repository={acr_repository}")
-print(f"dockerfile={dockerfile}")
-EOF
+# Output key mapping (YAML path -> output name)
+OUTPUT_MAPPING = {
+    'azure.app_name': 'app_name',
+    'azure.resource_group': 'resource_group',
+    'azure.health_url': 'health_url',
+    'azure.slot_name': 'slot_name',
+    'azure.subscription_id': 'subscription_id',
+    'acr.login_server': 'acr_login_server',
+    'acr.repository': 'acr_repository',
+    'docker.dockerfile': 'dockerfile',
+    'docker.context': 'docker_context',
+}
+
+def get_nested_value(data, keys):
+    """Safely get nested dictionary value."""
+    current = data
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+def write_output(key, value):
+    """Write to GitHub Actions output file (multiline-safe)."""
+    github_output = os.environ.get('GITHUB_OUTPUT')
+    if not github_output:
+        print(f"⚠️  GITHUB_OUTPUT not set, would write: {key}={value}")
+        return
+    
+    # Use EOF delimiter for multiline-safe output
+    with open(github_output, 'a') as f:
+        delimiter = 'EOF'
+        f.write(f"{key}<<{delimiter}\n")
+        f.write(f"{value}\n")
+        f.write(f"{delimiter}\n")
+
+def main():
+    config_file = os.environ.get('CONFIG_FILE', '')
+    
+    try:
+        # Load YAML
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
         
-        # Read outputs and set them
-        while IFS='=' read -r key value; do
-          echo "${key}=${value}" >> $GITHUB_OUTPUT
-        done < /tmp/config_output.txt
+        if not isinstance(config, dict):
+            print(f"❌ Invalid YAML structure in {config_file}")
+            sys.exit(1)
         
-        # Display for logs
-        APP_NAME=$(grep "^app_name=" /tmp/config_output.txt | cut -d'=' -f2-)
-        RG=$(grep "^resource_group=" /tmp/config_output.txt | cut -d'=' -f2-)
-        HEALTH_URL=$(grep "^health_url=" /tmp/config_output.txt | cut -d'=' -f2-)
-        ACR_SERVER=$(grep "^acr_login_server=" /tmp/config_output.txt | cut -d'=' -f2-)
-        ACR_REPO=$(grep "^acr_repository=" /tmp/config_output.txt | cut -d'=' -f2-)
+        # Validate required keys
+        missing_keys = []
+        for key_name, key_path in REQUIRED_KEYS.items():
+            value = get_nested_value(config, key_path)
+            if value is None:
+                missing_keys.append(key_name)
         
-        echo "📋 Config loaded for ${{ inputs.environment }}:"
-        echo "   App Name: $APP_NAME"
-        echo "   Resource Group: $RG"
-        echo "   Health URL: $HEALTH_URL"
-        echo "   ACR: $ACR_SERVER/$ACR_REPO"
+        if missing_keys:
+            print(f"❌ Missing required configuration keys:")
+            for key in missing_keys:
+                print(f"   - {key}")
+            sys.exit(1)
+        
+        # Collect all values (required + optional with defaults)
+        values = {}
+        
+        # Get required values
+        for key_name, key_path in REQUIRED_KEYS.items():
+            value = get_nested_value(config, key_path)
+            values[key_name] = str(value)
+        
+        # Get optional values with defaults
+        for key_name, (key_path, default) in OPTIONAL_KEYS.items():
+            value = get_nested_value(config, key_path)
+            values[key_name] = str(value if value is not None else default)
+        
+        # Write outputs to GITHUB_OUTPUT
+        for key_name, output_name in OUTPUT_MAPPING.items():
+            value = values[key_name]
+            write_output(output_name, value)
+            print(f"✓ Set output: {output_name}={value}")
+        
+        # Display summary
+        print("")
+        print(f"📋 Config loaded for environment: ${{ inputs.environment }}")
+        print(f"   App Name:        {values['azure.app_name']}")
+        print(f"   Resource Group:  {values['azure.resource_group']}")
+        print(f"   Subscription:    {values['azure.subscription_id']}")
+        print(f"   Health URL:      {values['azure.health_url']}")
+        print(f"   ACR:             {values['acr.login_server']}/{values['acr.repository']}")
+        print(f"   Dockerfile:      {values['docker.dockerfile']}")
+        print(f"   Docker Context:  {values['docker.context']}")
+        print("✅ Configuration validated and loaded successfully")
+        
+    except FileNotFoundError:
+        print(f"❌ Config file not found: {config_file}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"❌ YAML parsing error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        sys.exit(1)
 
-outputs:
-  app_name:
-    description: 'Azure App Service name'
-    value: ${{ steps.config.outputs.app_name }}
-  resource_group:
-    description: 'Azure Resource Group name'
-    value: ${{ steps.config.outputs.resource_group }}
-  health_url:
-    description: 'Health check URL'
-    value: ${{ steps.config.outputs.health_url }}
-  slot_name:
-    description: 'Deployment slot name'
-    value: ${{ steps.config.outputs.slot_name }}
-  acr_login_server:
-    description: 'ACR login server'
-    value: ${{ steps.config.outputs.acr_login_server }}
-  acr_repository:
-    description: 'ACR repository name'
-    value: ${{ steps.config.outputs.acr_repository }}
-  dockerfile:
-    description: 'Path to Dockerfile'
-    value: ${{ steps.config.outputs.dockerfile }}
-
+if __name__ == '__main__':
+    main()
+EOFPYTHON
+        
+        # Check if Python script succeeded
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed to parse and validate config file"
+          exit 1
+        fi
+        
+        echo ""
+        echo "🎉 read-config action completed successfully"
