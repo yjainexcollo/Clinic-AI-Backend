@@ -257,14 +257,21 @@ async def lifespan(app: FastAPI):
             azure_openai_configured = settings.azure_openai.endpoint and settings.azure_openai.api_key
 
             if azure_openai_configured:
-                # Validate endpoint format
-                if (
-                    not settings.azure_openai.endpoint.startswith("https://")
-                    or ".openai.azure.com" not in settings.azure_openai.endpoint
-                ):
+                # Validate endpoint format - accept all Azure OpenAI endpoint formats
+                valid_endpoint_domains = [
+                    ".openai.azure.com",
+                    ".cognitiveservices.azure.com",
+                    ".services.ai.azure.com",
+                ]
+                if not settings.azure_openai.endpoint.startswith("https://"):
                     raise ValueError(
                         f"Invalid Azure OpenAI endpoint format: {settings.azure_openai.endpoint}. "
-                        "Must be: https://xxx.openai.azure.com/"
+                        "Must start with https://"
+                    )
+                if not any(domain in settings.azure_openai.endpoint for domain in valid_endpoint_domains):
+                    raise ValueError(
+                        f"Invalid Azure OpenAI endpoint format: {settings.azure_openai.endpoint}. "
+                        f"Must contain one of: {', '.join(valid_endpoint_domains)}"
                     )
 
                 # Validate deployment names are configured
