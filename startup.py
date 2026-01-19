@@ -255,9 +255,12 @@ if __name__ == "__main__":
             workers=1,
             log_level="info",
             access_log=True,
+            reload=True,  # Enable reload for development
             # Add timeout settings for Azure App Service
             timeout_keep_alive=75,
             timeout_graceful_shutdown=30,
+            # Exclude virtual environment and other non-source directories from reload watching
+            reload_exclude=["*.venv/**", ".venv/**", "**/__pycache__/**", "**/node_modules/**", "**/.git/**"],
         )
     except KeyboardInterrupt:
         msg = "\n⚠️  Shutting down due to keyboard interrupt"

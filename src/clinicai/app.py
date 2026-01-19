@@ -7,12 +7,16 @@ import logging
 import os
 import sys
 import traceback
+import warnings
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+
+# Suppress CosmosDB compatibility warnings (informational only)
+warnings.filterwarnings("ignore", message=".*CosmosDB.*", category=UserWarning)
 
 from clinicai.api.errors import APIError, NotFoundError, ValidationError
 from clinicai.api.schemas.common import ErrorResponse
@@ -445,26 +449,34 @@ async def lifespan(app: FastAPI):
         sys.stderr.flush()
         raise  # Re-raise to fail startup
 
-    yield
-
-    # Shutdown
-    msg = "🛑 Shutting down Clinic-AI Intake Assistant"
-    print(msg, flush=True)
-    logger.info(msg)
-
-    # Stop transcription worker if running
-    if worker_task:
-        msg = "🛑 Stopping transcription worker..."
-        print(msg, flush=True)
-        logger.info(msg)
-        worker_task.cancel()
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Handle graceful shutdown on cancellation
+        logger.debug("Application lifespan cancelled, initiating shutdown")
+    finally:
+        # Shutdown
         try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
-        msg = "✅ Transcription worker stopped"
-        print(msg, flush=True)
-        logger.info(msg)
+            msg = "🛑 Shutting down Clinic-AI Intake Assistant"
+            print(msg, flush=True)
+            logger.info(msg)
+
+            # Stop transcription worker if running
+            if worker_task:
+                msg = "🛑 Stopping transcription worker..."
+                print(msg, flush=True)
+                logger.info(msg)
+                worker_task.cancel()
+                try:
+                    await asyncio.wait_for(worker_task, timeout=5.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+                msg = "✅ Transcription worker stopped"
+                print(msg, flush=True)
+                logger.info(msg)
+        except Exception as e:
+            # Don't let shutdown errors propagate
+            logger.debug(f"Error during shutdown (non-critical): {e}")
 
 
 def create_app() -> FastAPI:

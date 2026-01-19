@@ -703,6 +703,32 @@ class QuestionGenerator:
         q = q.rstrip("?.!,;:")
         if not q.endswith("?"):
             q += "?"
+        
+        # Validate and fix yes/no patterns
+        q_lower = q.lower()
+        binary_patterns = [
+            (r"^do you\b", "Describe whether you"),
+            (r"^have you\b", "Describe if you have"),
+            (r"^are you\b", "Describe whether you are"),
+            (r"^is there\b", "Describe if there is"),
+            (r"^does\b", "Describe whether"),
+            (r"^did you\b", "Describe if you"),
+            (r"^can you\b", "Please describe"),
+            (r"^would you\b", "Please describe"),
+            (r"^will you\b", "Please describe"),
+        ]
+        
+        for pattern, replacement in binary_patterns:
+            if re.match(pattern, q_lower):
+                # Try to fix by replacing the binary verb with descriptive phrase
+                q = re.sub(pattern, replacement, q, flags=re.IGNORECASE)
+                # Ensure it still requires detail
+                if "describe" not in q_lower and "explain" not in q_lower and "tell me" not in q_lower:
+                    if not q.lower().startswith("describe") and not q.lower().startswith("explain"):
+                        q = "Describe " + q[0].lower() + q[1:] if len(q) > 1 else "Describe " + q
+                logger.warning(f"QuestionGenerator: Detected and fixed binary pattern in question: {question} -> {q}")
+                break
+        
         return q
 
     # ----------------------------
@@ -1013,41 +1039,41 @@ class QuestionGenerator:
         ],
     }
     _TOPIC_FALLBACK_Q_EN: Dict[str, str] = {
-        "duration": "How long have you had this problem?",
-        "associated_symptoms": "What other symptoms have you noticed along with this?",
-        "current_medications": "Are you currently taking any medicines or insulin? If yes, which ones and what doses?",
-        "past_medical_history": "Do you have any past medical conditions or surgeries I should know about?",
-        "triggers": "Have you noticed anything that makes it better or worse (food, stress, activity, time of day)?",
-        "travel_history": "Have you travelled anywhere recently (within the last few weeks)?",
-        "lifestyle_functional_impact": "How is this affecting your daily routine—sleep, work, diet, or activity?",
-        "family_history": "Does anyone in your family have similar health conditions (like diabetes, BP, thyroid)?",
-        "allergies": "Do you have any allergies to medicines, foods, or anything else?",
-        "pain_assessment": "If you have pain, where is it and how severe is it on a scale of 0 to 10?",
-        "temporal": "How often does this happen, and is it getting better, worse, or staying the same?",
-        "menstrual_cycle": "When was your last menstrual period, and are your cycles regular?",
-        "past_evaluation": "Have you had any tests or doctor visits for this? What were the results?",
-        "chronic_monitoring": "Do you regularly monitor your condition (e.g., sugar readings)? If yes, what are typical values?",
-        "lab_tests": "Have you had any recent lab tests for this condition (like blood tests), and what do you remember about the results?",
-        "screening": "Have you had any screening tests for complications (like eye, heart, or kidney exams) recently?",
+        "duration": "Describe how long you've had this problem and what you think might have caused it.",
+        "associated_symptoms": "Describe all the other symptoms you've noticed along with this, including when each one started and how severe they feel.",
+        "current_medications": "Describe all the medicines, home remedies, or treatments you're currently taking, including the names, dosages, and how often you take them.",
+        "past_medical_history": "Describe any past medical conditions, hospitalizations, or surgeries you've had, including when they occurred and whether they're still ongoing or resolved.",
+        "triggers": "Describe what brings this on, what makes it worse, and what helps relieve it, including any factors like food, stress, activity, or time of day.",
+        "travel_history": "Describe any recent travel you've had, including where you went, when you traveled, what activities you did, any exposures to food, water, insects, animals, or people, and any symptoms that started during or after travel.",
+        "lifestyle_functional_impact": "Describe how this condition affects your daily routine, including your sleep, work, diet, physical activity, appetite, energy levels, or mood.",
+        "family_history": "Describe any similar health conditions that run in your family, such as diabetes, high blood pressure, or thyroid problems, and explain which family members have them.",
+        "allergies": "Describe any allergies you have to medicines, foods, or anything else, including what reactions you experience.",
+        "pain_assessment": "Describe any pain you're experiencing, including where it's located, how severe it feels on a scale of 0 to 10, what it feels like, and whether it radiates anywhere.",
+        "temporal": "Describe how often this happens and how it's changed over time—whether it's getting better, worse, or staying the same, and any patterns you've noticed.",
+        "menstrual_cycle": "Describe your menstrual cycle, including when your last period was, how regular your cycles are, and any changes you've noticed.",
+        "past_evaluation": "Describe any previous doctor visits, consultations, or evaluations you've had for this problem, including what assessments or opinions were given and what happened afterward.",
+        "chronic_monitoring": "Describe how you monitor this condition, whether at home or with your doctors, including how often you check and what your typical readings or values are.",
+        "lab_tests": "Describe any recent lab tests you've had for this condition, including when and where they were done and what you remember about the results, even if approximate.",
+        "screening": "Describe any screening exams or complication checks you've had for this condition, such as eye, heart, or kidney exams, including when they were last performed and what you were told.",
     }
 
     _TOPIC_FALLBACK_Q_ES: Dict[str, str] = {
-        "duration": "¿Cuánto tiempo ha tenido este problema?",
-        "associated_symptoms": "¿Qué otros síntomas ha notado junto con esto?",
-        "current_medications": "¿Está tomando actualmente algún medicamento o insulina? Si es así, ¿cuáles y qué dosis?",
-        "past_medical_history": "¿Tiene alguna condición médica pasada o cirugías que deba conocer?",
-        "triggers": "¿Ha notado algo que lo mejore o empeore (comida, estrés, actividad, hora del día)?",
-        "travel_history": "¿Ha viajado a algún lugar recientemente (en las últimas semanas)?",
-        "lifestyle_functional_impact": "¿Cómo está afectando esto su rutina diaria: sueño, trabajo, dieta o actividad?",
-        "family_history": "¿Alguien en su familia tiene condiciones de salud similares (como diabetes, presión arterial, tiroides)?",
-        "allergies": "¿Tiene alguna alergia a medicamentos, alimentos o cualquier otra cosa?",
-        "pain_assessment": "Si tiene dolor, ¿dónde está y qué tan severo es en una escala de 0 a 10?",
-        "temporal": "¿Con qué frecuencia ocurre esto y está mejorando, empeorando o se mantiene igual?",
-        "menstrual_cycle": "¿Cuándo fue su último período menstrual y sus ciclos son regulares?",
-        "past_evaluation": "¿Ha tenido alguna prueba o visita al médico por esto? ¿Cuáles fueron los resultados?",
-        "chronic_monitoring": "¿Monitorea regularmente su condición (por ejemplo, lecturas de azúcar)? Si es así, ¿cuáles son los valores típicos?",
-        "lab_tests": "¿Ha tenido alguna prueba de laboratorio reciente para esta condición (como análisis de sangre) y qué recuerda sobre los resultados?",
-        "screening": "¿Ha tenido alguna prueba de detección para complicaciones (como exámenes de ojos, corazón o riñones) recientemente?",
+        "duration": "Describa cuánto tiempo ha tenido este problema y qué cree que pudo haberlo causado.",
+        "associated_symptoms": "Describa todos los otros síntomas que ha notado junto con esto, incluyendo cuándo comenzó cada uno y qué tan severos se sienten.",
+        "current_medications": "Describa todos los medicamentos, remedios caseros o tratamientos que está tomando actualmente, incluyendo los nombres, las dosis y con qué frecuencia los toma.",
+        "past_medical_history": "Describa cualquier condición médica pasada, hospitalizaciones o cirugías que haya tenido, incluyendo cuándo ocurrieron y si aún están en curso o se resolvieron.",
+        "triggers": "Describa qué lo provoca, qué lo empeora y qué ayuda a aliviarlo, incluyendo cualquier factor como comida, estrés, actividad u hora del día.",
+        "travel_history": "Describa cualquier viaje reciente que haya tenido, incluyendo a dónde fue, cuándo viajó, qué actividades hizo, cualquier exposición a comida, agua, insectos, animales o personas, y cualquier síntoma que comenzó durante o después del viaje.",
+        "lifestyle_functional_impact": "Describa cómo esta condición afecta su rutina diaria, incluyendo su sueño, trabajo, dieta, actividad física, apetito, niveles de energía o estado de ánimo.",
+        "family_history": "Describa cualquier condición de salud similar que haya en su familia, como diabetes, presión arterial alta o problemas de tiroides, y explique qué miembros de la familia las tienen.",
+        "allergies": "Describa cualquier alergia que tenga a medicamentos, alimentos o cualquier otra cosa, incluyendo qué reacciones experimenta.",
+        "pain_assessment": "Describa cualquier dolor que esté experimentando, incluyendo dónde está ubicado, qué tan severo se siente en una escala de 0 a 10, cómo se siente y si se irradia a algún lugar.",
+        "temporal": "Describa con qué frecuencia ocurre esto y cómo ha cambiado con el tiempo, si está mejorando, empeorando o se mantiene igual, y cualquier patrón que haya notado.",
+        "menstrual_cycle": "Describa su ciclo menstrual, incluyendo cuándo fue su último período, qué tan regulares son sus ciclos y cualquier cambio que haya notado.",
+        "past_evaluation": "Describa cualquier visita previa al médico, consultas o evaluaciones que haya tenido por este problema, incluyendo qué evaluaciones u opiniones se dieron y qué sucedió después.",
+        "chronic_monitoring": "Describa cómo monitorea esta condición, ya sea en casa o con sus doctores, incluyendo con qué frecuencia revisa y cuáles son sus lecturas o valores típicos.",
+        "lab_tests": "Describa cualquier prueba de laboratorio reciente que haya tenido para esta condición, incluyendo cuándo y dónde se realizaron y qué recuerda sobre los resultados, incluso si son aproximados.",
+        "screening": "Describa cualquier examen de detección o revisión de complicaciones que haya tenido para esta condición, como exámenes de ojos, corazón o riñones, incluyendo cuándo se realizaron por última vez y qué le dijeron.",
     }
 
     def _question_matches_topic(self, chosen_topic: str, question: str, language: str = "en") -> bool:
@@ -1064,7 +1090,7 @@ class QuestionGenerator:
     def _get_fallback_question(self, chosen_topic: str, language: str = "en") -> str:
         lang = self._normalize_language(language)
         fallback_dict = self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
-        default_q = "¿Podría contarme más sobre eso?" if lang == "es" else "Could you tell me more about that?"
+        default_q = "Por favor describa más detalles sobre eso." if lang == "es" else "Please describe more details about that."
         return fallback_dict.get(chosen_topic, default_q)
 
     async def _llm_generate_once(self, system_prompt: str, user_prompt: str) -> str:
@@ -1108,30 +1134,101 @@ class QuestionGenerator:
         # ✅ Clear, focused prompt without refusal option
         system_prompt = f"""You are AGENT-03 "INTAKE QUESTION GENERATOR" for clinical intake interviews.
 Your task: Generate ONE clear, concise medical question about the topic: {chosen_topic}
+
+PRIMARY OBJECTIVE:
+Generate intake questions that CANNOT be answered with "yes", "no", or single-word responses.
+If a question can be answered in a binary way, it MUST be rephrased before output.
+
+NON-NEGOTIABLE CONSTRAINTS:
+1. NEVER generate yes/no, binary, or confirmation-style questions.
+2. NEVER start questions with binary verbs or phrases:
+   - "Do you…" → WRONG
+   - "Have you…" → WRONG
+   - "Are you…" → WRONG
+   - "Is there…" → WRONG
+   - "Does…" → WRONG
+   - "Did you…" → WRONG
+   - "Can you…" → WRONG
+   - "Would you…" → WRONG
+   - "Will you…" → WRONG
+3. ALWAYS start questions with descriptive verbs that require explanation:
+   - "Describe…" → CORRECT
+   - "Explain…" → CORRECT
+   - "Tell me about…" → CORRECT
+   - "What…" (when requiring detailed answer) → CORRECT
+   - "How…" (when requiring detailed answer) → CORRECT
+   - "Please describe…" → CORRECT
+4. Every question must explicitly require explanation, description, or narration - never allow single-word or binary answers.
+5. If a clinical topic naturally leads to yes/no, FORCE elaboration in the same question by starting with "Describe" or "Explain".
+6. Use simple, patient-friendly language (no heavy medical terms unless unavoidable).
+7. Ask ONE clear question at a time.
+
+QUESTION PATTERN EXAMPLES:
+❌ WRONG: "Do you have any allergies?"
+✅ CORRECT: "Describe any allergies you have to medicines, foods, or anything else, including what reactions you experience."
+
+❌ WRONG: "Have you traveled recently?"
+✅ CORRECT: "Describe any recent travel you've had, including where you went, when you traveled, and any symptoms that started during or after travel."
+
+❌ WRONG: "Are you taking any medications?"
+✅ CORRECT: "Describe all the medicines, home remedies, or treatments you're currently taking, including the names, dosages, and how often you take them."
+
+❌ WRONG: "Is there anything else you'd like to share?"
+✅ CORRECT: "Please describe anything else about your symptoms, health, or concerns that you feel is important and hasn't been discussed yet."
+
 Language Requirements:
 - Write the question in {output_language}
 - Use natural, conversational language appropriate for a medical interview in {output_language}
 - Maintain medical terminology appropriate for {output_language}
-Requirements:
+
+Output Requirements:
 - Output ONLY the question text (no quotes, no numbering, no explanations)
 - Question must end with "?"
 - Keep it under {max_words} words
 - Focus ONLY on {chosen_topic} - do not combine with other topics
 - Do not repeat questions from the conversation history
 - Make the question specific and easy for the patient to answer
-Topic-specific guidance:
-- duration: Ask how long they've had the problem AND MANDATORY: what might have caused it (cause of illness is required)
-- current_medications: Ask about medications, home remedies, AND dosages/frequency
-- past_medical_history: If chronic condition, focus on related conditions only. If non-chronic, ask about conditions related to chief complaint AND associated symptoms
-- pain_assessment: Ask about severity (0-10), characterization, AND location/radiation
-- triggers: Ask about what brings it on AND what makes it worse AND what relieves it (relieving factors)
-- travel_history: Ask detailed, comprehensive questions about travel history including: destination(s), time of travel, activities during travel, any exposures (food, water, insects, animals, people), symptoms that started during or after travel, and any preventive measures taken (vaccinations, medications)
-- lifestyle_functional_impact: Ask about daily activities, work, AND routine changes
-- temporal: Ask about frequency AND progression (better/worse/same)
-- chronic_monitoring: Ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values
- - lab_tests: Ask specifically about LAB TEST RESULTS (what lab tests, what results) for this condition.
- - screening: Ask specifically about FORMAL SCREENING EXAMS/COMPLICATION CHECKS (what screening exams, when last done) — DO NOT mix lab tests into screening.
+
+REQUIRED INTAKE AREAS (GUIDELINES):
+1. Chief Complaint: Ask the patient to describe their main concern fully, in their own words, without guiding them to short answers.
+2. Associated Symptoms: Ask the patient to list and describe all symptoms they noticed (major or minor), when each symptom started, how often it occurs, and how severe it feels.
+3. Temporal Pattern: Ask how the condition first began, changed over time, and behaves during the day or across days (progression, fluctuation, or stability).
+4. Past Medical History: Ask the patient to explain any past illnesses, chronic conditions, hospitalizations, or surgeries - when they occurred and whether they are still ongoing or resolved.
+5. Past Evaluation: Ask the patient to describe any previous doctor visits, consultations, or evaluations for this problem or related issues - what assessments or opinions were given, and whether any follow-up was advised and what happened afterward.
+6. Medication & Treatment History: Ask for a detailed explanation of current and recent medications, dosage, duration, and purpose - including over-the-counter medicines, supplements, or alternative treatments, and how consistently they take them.
+7. Daily Life & Functional Impact: Ask how the condition affects daily routine, work or household activities, sleep, physical movement, appetite, energy, or mood.
+8. Deep Diagnostic Context:
+   a. Chronic Monitoring: Ask how the patient monitors their condition (if applicable), what values they usually see, and any recent changes or trends they've noticed.
+   b. Lab Tests: Ask the patient to describe any lab or diagnostic tests done related to this issue - when and where they were done, and what they remember about the results (even approximate or partial).
+   c. Screening for Complications: Ask the patient to explain any screening or follow-up exams done for possible complications - which body systems were checked (eyes, heart, kidneys, etc.), when these were last done and what they were told.
+
+Topic-specific guidance (ALL must start with descriptive verbs, NEVER binary):
+- duration: Start with "Describe" or "Explain" - ask how long they've had the problem AND MANDATORY: what might have caused it (cause of illness is required). NEVER "How long have you had..."
+- current_medications: Start with "Describe" - ask about medications, home remedies, AND dosages/frequency. NEVER "Are you taking..." or "Do you take..."
+- past_medical_history: Start with "Describe" or "Explain" - If chronic condition, focus on related conditions only. If non-chronic, ask about conditions related to chief complaint AND associated symptoms. NEVER "Do you have..." or "Have you had..."
+- pain_assessment: Start with "Describe" - ask about severity (0-10), characterization, AND location/radiation. NEVER "Do you have pain..." or "Is there pain..."
+- triggers: Start with "Describe" - ask about what brings it on AND what makes it worse AND what relieves it (relieving factors). NEVER "Have you noticed..." or "Does anything..."
+- travel_history: Start with "Describe" - ask detailed, comprehensive questions about travel history including: destination(s), time of travel, activities during travel, any exposures (food, water, insects, animals, people), symptoms that started during or after travel, and any preventive measures taken (vaccinations, medications). NEVER "Have you travelled..." or "Did you travel..."
+- lifestyle_functional_impact: Start with "Describe" or "Explain" - ask about daily activities, work, AND routine changes. NEVER "How is this affecting..." (can be answered briefly)
+- temporal: Start with "Describe" - ask about frequency AND progression (better/worse/same). NEVER "How often does this happen..." (can be answered with a number)
+- chronic_monitoring: Start with "Describe" - ask about BOTH home monitoring (self-checks) AND professional/clinical monitoring (clinic/doctor checks), including frequency AND typical readings/values. NEVER "Do you monitor..." or "Have you checked..."
+- lab_tests: Start with "Describe" - ask specifically about LAB TEST RESULTS (what lab tests, what results) for this condition. NEVER "Have you had..." or "Did you get..."
+- screening: Start with "Describe" - ask specifically about FORMAL SCREENING EXAMS/COMPLICATION CHECKS (what screening exams, when last done) — DO NOT mix lab tests into screening. NEVER "Have you had..." or "Did you have..."
+- past_evaluation: Start with "Describe" - ask the patient to describe any previous doctor visits, consultations, or evaluations - what assessments were given and what happened afterward. NEVER "Have you seen..." or "Did you visit..."
+
 IMPORTANT: For deep diagnostic questions (chronic_monitoring, lab_tests, screening), follow the SPECIAL INSTRUCTION provided in the user prompt below.
+
+SELF-CHECK BEFORE RESPONDING:
+Before finalizing, internally verify:
+✔ No question can be answered with yes/no or a single word
+✔ No question begins with a binary verb (Do you, Have you, Are you, Is there, Does, Did you, Can you, Would you, Will you)
+✔ Question starts with descriptive verbs (Describe, Explain, Tell me about, What, How) or phrases that require detailed answers
+✔ Question explicitly requires explanation, description, or narration
+✔ All required intake dimensions are covered
+✔ Any newly identified yes/no risk areas are rewritten into descriptive form
+
+If your question fails ANY of these checks, rewrite it immediately before outputting.
+
 CRITICAL: Write the question in {output_language}. Use natural, conversational {output_language} appropriate for a medical interview.
 Generate the question now.
 """
@@ -1144,7 +1241,8 @@ Generate the question now.
                         "Pregunte sobre cómo el paciente monitorea esta condición crónica TANTO en casa como en entornos clínicos.\n"
                         "Ejemplos: lecturas de azúcar en sangre en casa, controles de presión arterial en casa, y controles con dispositivos o doctores en la clínica.\n"
                         "Formato: Pregunte sobre la frecuencia del monitoreo Y los valores/lecturas típicas (en casa y/o clínica).\n"
-                        "Ejemplo: '¿Con qué frecuencia usted o sus doctores revisan sus lecturas para esta condición, y cuáles son sus valores usuales?'"
+                        "CRÍTICO: NO use frases de sí/no. Requiera explicación detallada.\n"
+                        "Ejemplo: 'Describa cómo monitorea esta condición, ya sea en casa o con sus doctores, incluyendo con qué frecuencia revisa y cuáles son sus lecturas o valores típicos.'"
                     )
                 elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
                     deep_diag_note = (
@@ -1152,15 +1250,17 @@ Generate the question now.
                         "Pregunte sobre RESULTADOS DE PRUEBAS DE LABORATORIO RECIENTES relevantes para esta condición crónica.\n"
                         "Enfóquese en: HbA1c, glucosa en ayunas, pruebas de función renal, paneles de colesterol, pruebas de tiroides, u otras pruebas de laboratorio específicas de la condición.\n"
                         "Formato: Pregunte qué pruebas de laboratorio recientes han tenido Y qué recuerdan sobre los resultados.\n"
-                        "Ejemplo: '¿Ha tenido alguna prueba de laboratorio reciente para esta condición, y qué recuerda sobre los resultados?'"
+                        "CRÍTICO: NO use frases de sí/no. Requiera descripción detallada.\n"
+                        "Ejemplo: 'Describa cualquier prueba de laboratorio reciente que haya tenido para esta condición, incluyendo cuándo y dónde se realizaron, y qué recuerda sobre los resultados, incluso si son aproximados.'"
                     )
                 elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
                     deep_diag_note = (
                         "\n\nPREGUNTA DIAGNÓSTICA PROFUNDA #3 - EXÁMENES DE DETECCIÓN/CHECKS DE COMPLICACIONES (NO PRUEBAS DE LAB):\n"
                         "Pregunte sobre EXÁMENES DE DETECCIÓN FORMALES y CHECKS DE COMPLICACIONES (no pruebas de laboratorio rutinarias) realizados debido a esta condición crónica.\n"
                         "Enfóquese en: exámenes de ojos/pies, imágenes cardíacas o pruebas de esfuerzo, imágenes renales, pruebas de función pulmonar, u otros exámenes de detección.\n"
-                        "Formato: Pregunte si han tenido exámenes de detección Y cuándo fueron realizados por última vez.\n"
-                        "Ejemplo: '¿Ha tenido alguna prueba de detección para complicaciones relacionadas con esta condición (como exámenes de ojos, corazón o riñones), y cuándo fueron realizados por última vez?'"
+                        "Formato: Pregunte sobre exámenes de detección Y cuándo fueron realizados por última vez.\n"
+                        "CRÍTICO: NO use frases de sí/no. Requiera explicación detallada.\n"
+                        "Ejemplo: 'Describa cualquier examen de detección o revisión de complicaciones que haya tenido para esta condición, como exámenes de ojos, corazón o riñones, incluyendo cuándo se realizaron por última vez y qué le dijeron.'"
                     )
             else:
                 if deep_diagnostic_question_num == 1 and chosen_topic == "chronic_monitoring":
@@ -1169,7 +1269,8 @@ Generate the question now.
                         "Ask about how the patient monitors this chronic condition BOTH at home and in clinical settings.\n"
                         "Examples: home blood sugar readings, home BP checks, and clinic-based device or doctor checks.\n"
                         "Format: Ask about frequency of monitoring AND typical values/readings (home and/or clinic).\n"
-                        "Example: 'How often do you or your doctors check your readings for this condition, and what are your usual values?'"
+                        "CRITICAL: Do NOT use yes/no phrasing. Require detailed explanation.\n"
+                        "Example: 'Describe how you monitor this condition, whether at home or with your doctors, including how often you check and what your typical readings or values are.'"
                     )
                 elif deep_diagnostic_question_num == 2 and chosen_topic == "lab_tests":
                     deep_diag_note = (
@@ -1177,15 +1278,17 @@ Generate the question now.
                         "Ask about RECENT LABORATORY TEST RESULTS relevant to this chronic condition.\n"
                         "Focus on: HbA1c, fasting glucose, kidney function tests, cholesterol panels, thyroid labs, or other condition-specific LAB tests.\n"
                         "Format: Ask what recent lab tests they've had AND what they remember about the lab results.\n"
-                        "Example: 'Have you had any recent lab tests for this condition, and what do you remember about the results?'"
+                        "CRITICAL: Do NOT use yes/no phrasing. Require detailed description.\n"
+                        "Example: 'Describe any recent lab tests you've had for this condition, including when and where they were done, and what you remember about the results, even if approximate.'"
                     )
                 elif deep_diagnostic_question_num == 3 and chosen_topic == "screening":
                     deep_diag_note = (
                         "\n\nDEEP DIAGNOSTIC QUESTION #3 - SCREENING/COMPLICATION CHECKS (NO LABS):\n"
                         "Ask about FORMAL SCREENING EXAMS and COMPLICATION CHECKS (not routine labs) done because of this chronic condition.\n"
                         "Focus on: eye/foot exams, cardiac imaging or stress tests, kidney imaging, lung function tests, or other screening exams.\n"
-                        "Format: Ask if they've had screening exams AND when they were last done.\n"
-                        "Example: 'Have you had any screening tests for complications related to this condition (like eye, heart, or kidney exams), and when were they last done?'"
+                        "Format: Ask about screening exams AND when they were last done.\n"
+                        "CRITICAL: Do NOT use yes/no phrasing. Require detailed explanation.\n"
+                        "Example: 'Describe any screening exams or complication checks you've had for this condition, such as eye, heart, or kidney exams, including when they were last performed and what you were told.'"
                     )
         user_prompt = f"""
 CHOSEN TOPIC (MUST FOLLOW): {chosen_topic}{deep_diag_note}
@@ -1425,9 +1528,9 @@ class OpenAIQuestionService(QuestionService):
     def _closing(self, language: str) -> str:
         lang = self._normalize_language(language)
         return (
-            "¿Hay algo más que le gustaría compartir sobre su condición?"
+            "Por favor describa cualquier otra cosa sobre sus síntomas, salud o preocupaciones que sienta que es importante y que no se haya discutido aún. Explique en detalle."
             if lang == "es"
-            else "Is there anything else you'd like to share about your condition?"
+            else "Please describe anything else about your symptoms, health, or concerns that you feel is important and hasn't been discussed yet. Explain in detail."
         )
 
     async def generate_first_question(
@@ -1440,9 +1543,9 @@ class OpenAIQuestionService(QuestionService):
     ) -> str:
         lang = self._normalize_language(language)
         return (
-            "¿Qué problema o preocupación está aquí para discutir hoy?"
+            "Por favor describa en detalle qué problema o preocupación lo trae aquí hoy. Explique todo lo que pueda sobre su situación."
             if lang == "es"
-            else "What problem or concern are you here to discuss today?"
+            else "Please describe in detail what problem or concern brings you here today. Explain everything you can about your situation."
         )
 
     async def generate_next_question(
