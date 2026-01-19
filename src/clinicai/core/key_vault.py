@@ -16,13 +16,6 @@ from azure.keyvault.secrets import SecretClient
 
 logger = logging.getLogger("clinicai")
 
-# Suppress Azure SDK warnings for local development (IMDS endpoint not available)
-# These warnings are expected when running locally without Azure credentials
-azure_logger = logging.getLogger("azure.identity")
-azure_logger.setLevel(logging.ERROR)  # Only show errors, suppress warnings/info
-azure_core_logger = logging.getLogger("azure.core")
-azure_core_logger.setLevel(logging.ERROR)
-
 
 class AzureKeyVaultService:
     """Azure Key Vault service for secrets management."""
@@ -38,42 +31,25 @@ class AzureKeyVaultService:
         self.vault_url = f"https://{vault_name}.vault.azure.net/"
         self._client: Optional[SecretClient] = None
         self._available = False
-        self._is_azure_env = self._check_if_azure_environment()
-
-    @staticmethod
-    def _check_if_azure_environment() -> bool:
-        """Check if running on Azure App Service."""
-        # Check for Azure App Service environment variables
-        azure_indicators = [
-            "WEBSITE_INSTANCE_ID",
-            "WEBSITE_SITE_NAME",
-            "WEBSITE_RESOURCE_GROUP",
-            "APPSETTING_WEBSITE_SITE_NAME",
-        ]
-        return any(os.getenv(indicator) for indicator in azure_indicators)
 
     @property
     def client(self) -> Optional[SecretClient]:
         """Get or create SecretClient."""
         if self._client is None:
-            credential = None
-            
-            # Only try Managed Identity if running on Azure
-            if self._is_azure_env:
+            try:
+                # Try Managed Identity first (for Azure App Service)
+                # This is the recommended approach for production
+                credential = ManagedIdentityCredential()
+                logger.info("Using Managed Identity for Key Vault authentication")
+            except Exception as e:
+                logger.debug(f"Managed Identity not available: {e}, trying DefaultAzureCredential")
                 try:
-                    credential = ManagedIdentityCredential()
-                    logger.info("Using Managed Identity for Key Vault authentication")
-                except Exception as e:
-                    logger.debug(f"Managed Identity not available: {e}, trying DefaultAzureCredential")
-            
-            # Try DefaultAzureCredential (works for Azure CLI, VS Code, Azure PowerShell, etc.)
-            if credential is None:
-                try:
+                    # Fallback to DefaultAzureCredential (for local dev)
+                    # This supports: Azure CLI, VS Code, Azure PowerShell, etc.
                     credential = DefaultAzureCredential()
-                    logger.debug("Using DefaultAzureCredential for Key Vault authentication")
+                    logger.info("Using DefaultAzureCredential for Key Vault authentication")
                 except Exception as e2:
-                    logger.debug(f"DefaultAzureCredential not available: {e2}. Will use environment variables.")
-                    self._available = False
+                    logger.warning(f"Failed to initialize Azure credentials: {e2}")
                     return None
 
             try:
@@ -84,7 +60,7 @@ class AzureKeyVaultService:
                 logger.info(f"✅ Azure Key Vault client initialized: {self.vault_name}")
 
             except Exception as e:
-                logger.debug(f"Failed to create Key Vault client: {e}. Will use environment variables.")
+                logger.error(f"❌ Failed to create Key Vault client: {e}")
                 self._available = False
                 return None
 
@@ -119,22 +95,15 @@ class AzureKeyVaultService:
             logger.info(f"✅ Retrieved secret from Key Vault: {secret_name}")
             return secret.value
         except AzureError as e:
-            # Mark as unavailable if authentication fails (likely local dev)
-            error_str = str(e).lower()
-            if "managedidentitycredential" in error_str or "imds" in error_str or "authentication unavailable" in error_str:
-                logger.debug(f"Key Vault authentication unavailable (likely local dev), falling back to environment variable for: {secret_name}")
-                self._available = False  # Mark as unavailable to prevent future attempts
-            else:
-                logger.debug(f"Failed to get secret from Key Vault: {secret_name}, error: {e}")
-            
+            logger.warning(f"⚠️  Failed to get secret from Key Vault: {secret_name}, error: {e}")
             # Fallback to environment variable
             env_key = secret_name.replace("-", "_").upper()
             env_value = os.getenv(env_key)
             if env_value:
-                logger.debug(f"Using environment variable for: {secret_name}")
+                logger.info(f"   Using environment variable for: {secret_name}")
                 return env_value
             if default is not None:
-                logger.debug(f"Using default value for: {secret_name}")
+                logger.info(f"   Using default value for: {secret_name}")
                 return default
             return None
 
@@ -192,11 +161,6 @@ def get_key_vault_service() -> Optional[AzureKeyVaultService]:
     """
     global _key_vault_service
 
-    # Allow explicit disable via env (e.g., local/dev wants .env only)
-    if os.getenv("DISABLE_KEY_VAULT", "").lower() == "true":
-        logger.debug("Key Vault integration disabled via DISABLE_KEY_VAULT")
-        return None
-
     if _key_vault_service is None:
         vault_name = os.getenv("AZURE_KEY_VAULT_NAME", "Clinic-ai-key-vault")
 
@@ -205,11 +169,11 @@ def get_key_vault_service() -> Optional[AzureKeyVaultService]:
             try:
                 _key_vault_service = AzureKeyVaultService(vault_name)
                 if not _key_vault_service.is_available:
-                    logger.debug(f"Key Vault '{vault_name}' is not available. Using environment variables.")
+                    logger.warning(f"⚠️  Key Vault '{vault_name}' is not available. Using environment variables.")
             except Exception as e:
-                logger.debug(f"Key Vault initialization failed: {e}. Using environment variables.")
+                logger.warning(f"⚠️  Key Vault initialization failed: {e}. Using environment variables.")
                 _key_vault_service = None
         else:
-            logger.debug("AZURE_KEY_VAULT_NAME not set, Key Vault integration disabled")
+            logger.info("AZURE_KEY_VAULT_NAME not set, Key Vault integration disabled")
 
     return _key_vault_service

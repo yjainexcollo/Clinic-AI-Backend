@@ -15,6 +15,5 @@ echo.
 
 REM Start the server
 echo Starting server...
-uvicorn --app-dir src clinicai.app:app --reload --host 0.0.0.0 --port 8000 --reload-exclude ".venv/**" --reload-exclude "**/__pycache__/**"
 
 pause
