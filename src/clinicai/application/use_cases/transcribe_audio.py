@@ -341,7 +341,7 @@ class TranscribeAudioUseCase:
                 )
 
                 # Mark visit transcription as failed with error info
-                visit.mark_transcription_failed(error_message=f"{error_code}: {error_message}")
+                visit.fail_transcription(error_message=f"{error_code}: {error_message}")
                 await self._visit_repository.save(visit)
 
                 # Raise with detailed error information

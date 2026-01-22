@@ -480,11 +480,16 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             else self._settings.azure_speech.enable_speaker_diarization
         )
 
+        # Get timeToLiveHours from config, clamp to >= 6 (Azure requirement for v3.2+)
+        ttl_hours = self._settings.azure_speech.time_to_live_hours
+        ttl_hours = max(6, int(ttl_hours))  # Clamp to minimum 6 hours
+
         properties: Dict[str, Any] = {
             "diarizationEnabled": diarization_enabled,
             "wordLevelTimestampsEnabled": self._settings.azure_speech.enable_word_level_timestamps,  # Default False for faster transcription
             "punctuationMode": "DictatedAndAutomatic",
             "profanityFilterMode": "Masked",
+            "timeToLiveHours": ttl_hours,  # Required for v3.2+ API (must be >= 6)
         }
         # Optionally include maxSpeakers when configured (for newer Speech APIs that support it)
         try:
@@ -517,13 +522,40 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                 timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
+                    logger.info(
+                        f"[Speech] submit transcription endpoint={url} api_version=v3.1 "
+                        f"timeToLiveHours={properties.get('timeToLiveHours', 'N/A')}"
+                    )
                     async with session.post(url, json=payload, headers=headers) as response:
                         if response.status not in (200, 201, 202):
                             error_text = await response.text()
+                            error_json = None
+                            try:
+                                error_json = await response.json()
+                            except Exception:
+                                pass
+                            
+                            # Check for InvalidPayload (400) - non-retryable
+                            is_invalid_payload = (
+                                response.status == 400 
+                                and ("InvalidPayload" in error_text or "timeToLiveHours" in error_text)
+                            )
+                            
                             logger.error(
                                 f"Failed to create transcription job: {response.status} {error_text} "
-                                f"(attempt {attempt + 1}/{max_retries})"
+                                f"(attempt {attempt + 1}/{max_retries}), is_invalid_payload={is_invalid_payload}"
                             )
+                            
+                            # For InvalidPayload (400), don't retry - raise immediately
+                            if is_invalid_payload:
+                                raise AzureSpeechAPIError(
+                                    f"Invalid payload: {error_text}",
+                                    status_code=400,
+                                    error_code="InvalidPayload",
+                                    error_details=error_json or {"message": error_text},
+                                )
+                            
+                            # For other errors, retry if attempts remain
                             if attempt < max_retries - 1:
                                 delay = base_delay * (2**attempt)
                                 await asyncio.sleep(delay)

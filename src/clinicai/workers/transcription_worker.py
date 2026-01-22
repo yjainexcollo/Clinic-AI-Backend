@@ -514,8 +514,20 @@ class TranscriptionWorker:
 
             # Check if this is a permanent error that shouldn't be retried
             from clinicai.domain.errors import VisitNotFoundError
+            from clinicai.adapters.external.transcription_service_azure_speech import (
+                AzureSpeechAPIError,
+            )
 
-            is_permanent_error = isinstance(e, VisitNotFoundError)
+            # Check for InvalidPayload (400) - non-retryable
+            is_invalid_payload = (
+                isinstance(e, AzureSpeechAPIError)
+                and getattr(e, "error_code", None) == "InvalidPayload"
+            ) or (
+                error_code == "InvalidPayload"
+                or (error_type == "AzureSpeechAPIError" and "InvalidPayload" in error_message)
+            )
+
+            is_permanent_error = isinstance(e, VisitNotFoundError) or is_invalid_payload
 
             if is_permanent_error:
                 # Permanent error - mark as failed, but only delete if DB save succeeds

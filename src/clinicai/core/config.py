@@ -391,6 +391,22 @@ class AzureSpeechSettings(BaseSettings):
         default=1800,
         description="Maximum wait time in seconds for batch transcription (30 min)",
     )
+    time_to_live_hours: int = Field(
+        default=48,
+        description="Time to live in hours for transcription job (must be >= 6, default: 48)",
+    )
+
+    @validator("time_to_live_hours")
+    def validate_time_to_live_hours(cls, v: int) -> int:
+        """Validate time to live hours is >= 6 (Azure requirement)."""
+        if v < 6:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"time_to_live_hours ({v}) < 6, clamping to 6 (Azure minimum requirement)"
+            )
+            return 6
+        return v
 
     @validator("region")
     def validate_region(cls, v: str) -> str:
