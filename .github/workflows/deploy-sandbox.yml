@@ -69,62 +69,15 @@ jobs:
           echo "🧪 Testing health endpoint..."
           HEALTH_URL="${{ steps.config.outputs.health_url }}"
           echo "Testing: $HEALTH_URL"
-          
-          # First, verify deployment status using Azure CLI (bypasses IP restrictions)
-          echo "📊 Checking deployment status via Azure CLI..."
-          DEPLOYMENT_STATE=$(az webapp show \
-            --name ${{ env.AZURE_WEBAPP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --query "state" \
-            --output tsv 2>/dev/null || echo "Unknown")
-          
-          echo "   App Service State: $DEPLOYMENT_STATE"
-          
-          if [ "$DEPLOYMENT_STATE" != "Running" ]; then
-            echo "⚠️ App Service is not in Running state: $DEPLOYMENT_STATE"
-            echo "   Waiting 30s for app to start..."
-            sleep 30
-          fi
-          
-          # Try health endpoint with proper headers (bypasses some Azure restrictions)
           for i in {1..10}; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "User-Agent: GitHub-Actions-HealthCheck/1.0" \
-              -H "Accept: application/json" \
-              --max-time 10 \
-              "$HEALTH_URL" 2>/dev/null || echo "000")
-            
-            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
-              echo "✅ Health check passed! (HTTP $HTTP_CODE)"
+            if curl -f -k "$HEALTH_URL"; then
+              echo "✅ Health check passed!"
               exit 0
             fi
-            
-            if [ "$HTTP_CODE" = "403" ]; then
-              echo "⏳ Attempt $i/10: HTTP 403 (Forbidden) - may be blocked by IP restrictions"
-              echo "   💡 To fix: Azure Portal → App Service → Networking → Access restrictions"
-              echo "   💡 Or: App Service → Authentication → Allow unauthenticated requests"
-            elif [ "$HTTP_CODE" != "000" ]; then
-              echo "⏳ Attempt $i/10 returned HTTP $HTTP_CODE, retrying in 10s..."
-            else
-              echo "⏳ Attempt $i/10 failed (connection error), retrying in 10s..."
-            fi
-            
-            if [ $i -lt 10 ]; then
-              sleep 10
-            fi
+            echo "⏳ Attempt $i/10 failed, retrying in 10s..."
+            sleep 10
           done
-          
-          # If health check fails but deployment succeeded, warn but don't fail
-          if [ "$DEPLOYMENT_STATE" = "Running" ]; then
-            echo "⚠️ Health endpoint check failed, but App Service is Running"
-            echo "   This is likely due to Azure App Service IP restrictions or authentication"
-            echo "   Deployment succeeded - app may be accessible from allowed IPs"
-            echo "   💡 Fix: Azure Portal → ${{ env.AZURE_WEBAPP_NAME }} → Networking → Access restrictions"
-            exit 0  # Don't fail deployment if app is running
-          fi
-          
           echo "❌ Health check failed after 10 attempts"
-          echo "   Last HTTP code: $HTTP_CODE"
           exit 1
 
       - name: Deployment Summary
