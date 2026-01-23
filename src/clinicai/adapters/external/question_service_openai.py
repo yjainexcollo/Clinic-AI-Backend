@@ -703,7 +703,7 @@ class QuestionGenerator:
         q = q.rstrip("?.!,;:")
         if not q.endswith("?"):
             q += "?"
-        
+
         # Validate and fix yes/no patterns
         q_lower = q.lower()
         binary_patterns = [
@@ -717,7 +717,7 @@ class QuestionGenerator:
             (r"^would you\b", "Please describe"),
             (r"^will you\b", "Please describe"),
         ]
-        
+
         for pattern, replacement in binary_patterns:
             if re.match(pattern, q_lower):
                 # Try to fix by replacing the binary verb with descriptive phrase
@@ -728,7 +728,7 @@ class QuestionGenerator:
                         q = "Describe " + q[0].lower() + q[1:] if len(q) > 1 else "Describe " + q
                 logger.warning(f"QuestionGenerator: Detected and fixed binary pattern in question: {question} -> {q}")
                 break
-        
+
         return q
 
     # ----------------------------
@@ -1090,7 +1090,9 @@ class QuestionGenerator:
     def _get_fallback_question(self, chosen_topic: str, language: str = "en") -> str:
         lang = self._normalize_language(language)
         fallback_dict = self._TOPIC_FALLBACK_Q_ES if lang == "es" else self._TOPIC_FALLBACK_Q_EN
-        default_q = "Por favor describa más detalles sobre eso." if lang == "es" else "Please describe more details about that."
+        default_q = (
+            "Por favor describa más detalles sobre eso." if lang == "es" else "Please describe more details about that."
+        )
         return fallback_dict.get(chosen_topic, default_q)
 
     async def _llm_generate_once(self, system_prompt: str, user_prompt: str) -> str:

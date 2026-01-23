@@ -1,4 +1,3 @@
-
 """
 Configuration management for Clinic-AI application.
 
@@ -401,10 +400,9 @@ class AzureSpeechSettings(BaseSettings):
         """Validate time to live hours is >= 6 (Azure requirement)."""
         if v < 6:
             import logging
+
             logger = logging.getLogger(__name__)
-            logger.warning(
-                f"time_to_live_hours ({v}) < 6, clamping to 6 (Azure minimum requirement)"
-            )
+            logger.warning(f"time_to_live_hours ({v}) < 6, clamping to 6 (Azure minimum requirement)")
             return 6
         return v
 

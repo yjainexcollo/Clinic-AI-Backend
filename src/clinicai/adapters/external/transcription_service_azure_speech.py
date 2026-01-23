@@ -534,18 +534,17 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                 error_json = await response.json()
                             except Exception:
                                 pass
-                            
+
                             # Check for InvalidPayload (400) - non-retryable
-                            is_invalid_payload = (
-                                response.status == 400 
-                                and ("InvalidPayload" in error_text or "timeToLiveHours" in error_text)
+                            is_invalid_payload = response.status == 400 and (
+                                "InvalidPayload" in error_text or "timeToLiveHours" in error_text
                             )
-                            
+
                             logger.error(
                                 f"Failed to create transcription job: {response.status} {error_text} "
                                 f"(attempt {attempt + 1}/{max_retries}), is_invalid_payload={is_invalid_payload}"
                             )
-                            
+
                             # For InvalidPayload (400), don't retry - raise immediately
                             if is_invalid_payload:
                                 raise AzureSpeechAPIError(
@@ -554,7 +553,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                     error_code="InvalidPayload",
                                     error_details=error_json or {"message": error_text},
                                 )
-                            
+
                             # For other errors, retry if attempts remain
                             if attempt < max_retries - 1:
                                 delay = base_delay * (2**attempt)
