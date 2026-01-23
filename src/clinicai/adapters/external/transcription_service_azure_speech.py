@@ -536,9 +536,8 @@ class AzureSpeechTranscriptionService(TranscriptionService):
                                 pass
 
                             # Check for InvalidPayload (400) - non-retryable
-                            is_invalid_payload = (
-                                response.status == 400
-                                and ("InvalidPayload" in error_text or "timeToLiveHours" in error_text)
+                            is_invalid_payload = response.status == 400 and (
+                                "InvalidPayload" in error_text or "timeToLiveHours" in error_text
                             )
 
                             logger.error(

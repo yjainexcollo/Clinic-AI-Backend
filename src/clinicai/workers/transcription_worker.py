@@ -513,15 +513,14 @@ class TranscriptionWorker:
                     pass
 
             # Check if this is a permanent error that shouldn't be retried
-            from clinicai.domain.errors import VisitNotFoundError
             from clinicai.adapters.external.transcription_service_azure_speech import (
                 AzureSpeechAPIError,
             )
+            from clinicai.domain.errors import VisitNotFoundError
 
             # Check for InvalidPayload (400) - non-retryable
             is_invalid_payload = (
-                isinstance(e, AzureSpeechAPIError)
-                and getattr(e, "error_code", None) == "InvalidPayload"
+                isinstance(e, AzureSpeechAPIError) and getattr(e, "error_code", None) == "InvalidPayload"
             ) or (
                 error_code == "InvalidPayload"
                 or (error_type == "AzureSpeechAPIError" and "InvalidPayload" in error_message)

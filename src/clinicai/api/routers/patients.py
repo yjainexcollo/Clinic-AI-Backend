@@ -1198,7 +1198,7 @@ async def get_intake_status(
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
-        422: {"model": ErrorResponse, "description": "Intake not completed"},
+        422: {"model": ErrorResponse, "description": "Pre-visit summary generation failed"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -1210,13 +1210,13 @@ async def generate_pre_visit_summary(
     question_service: QuestionServiceDep,
 ):
     """
-    Generate pre-visit clinical summary from completed intake data.
+    Generate pre-visit clinical summary from current intake data.
 
     This endpoint:
     1. Validates patient and visit exist
-    2. Checks intake is completed
-    3. Generates AI-powered clinical summary
-    4. Returns structured summary for doctor review
+    2. Uses whatever intake answers are currently available (0 or more)
+    3. Generates AI-powered clinical summary or a fixed message if no answers exist
+    4. Updates visit status to pre_visit_summary_generated
     """
     try:
         # Set IDs in request state for HIPAA audit middleware
@@ -1264,7 +1264,7 @@ async def generate_pre_visit_summary(
         logger.error(f"ValueError in generate_pre_visit_summary: {e}", exc_info=True)
         return fail(
             http_request,
-            error="INTAKE_NOT_COMPLETED",
+            error="PREVISIT_GENERATION_FAILED",
             message=str(e),
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
