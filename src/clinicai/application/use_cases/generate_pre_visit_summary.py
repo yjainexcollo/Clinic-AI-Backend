@@ -67,15 +67,10 @@ class GeneratePreVisitSummaryUseCase:
             # Always allow pre-visit summary generation, regardless of intake completion.
             # If intake is incomplete, log for observability only.
             if not visit.is_intake_complete():
-                question_count = (
-                    visit.intake_session.current_question_count if visit.intake_session else 0
-                )
-                max_questions = (
-                    visit.intake_session.max_questions if visit.intake_session else 0
-                )
+                question_count = visit.intake_session.current_question_count if visit.intake_session else 0
+                max_questions = visit.intake_session.max_questions if visit.intake_session else 0
                 logger.warning(
-                    "Generating pre-visit summary for INCOMPLETE intake: "
-                    "visit_id=%s, question_count=%s/%s",
+                    "Generating pre-visit summary for INCOMPLETE intake: " "visit_id=%s, question_count=%s/%s",
                     request.visit_id,
                     question_count,
                     max_questions,
@@ -98,7 +93,7 @@ class GeneratePreVisitSummaryUseCase:
                 }
                 medication_images_list = None
 
-            # Branch 2: At least one answer -> normal AI-powered summary
+            # Branch 2: At least one answer -> AI-powered summary (two-step evidence-based pipeline)
             else:
                 # Prepare patient data
                 patient_data = {
@@ -114,27 +109,17 @@ class GeneratePreVisitSummaryUseCase:
                 medication_images_info = None
                 medication_images_list = None
                 try:
+                    from beanie.operators import Or
+
                     from clinicai.adapters.db.mongo.models.patient_m import (
                         MedicationImageMongo,
                     )
                     from clinicai.core.utils.crypto import encode_patient_id
-                    from beanie.operators import Or
 
                     # Try both internal ID and encoded ID (in case images were stored with encoded ID)
                     patient_internal_id = str(patient.patient_id.value)
                     patient_encoded_id = encode_patient_id(patient_internal_id)
 
-                    logger.info(
-                        "[GeneratePreVisitSummary] Querying medication images for visit %s",
-                        visit.visit_id.value,
-                    )
-                    logger.info(
-                        "[GeneratePreVisitSummary] Patient internal_id: %s..., encoded_id: %s...",
-                        patient_internal_id[:50],
-                        patient_encoded_id[:50],
-                    )
-
-                    # Also check original request patient_id (might be encoded and different from our encoding)
                     docs = await MedicationImageMongo.find(
                         Or(
                             MedicationImageMongo.patient_id == patient_internal_id,
@@ -144,25 +129,7 @@ class GeneratePreVisitSummaryUseCase:
                         MedicationImageMongo.visit_id == visit.visit_id.value,
                     ).to_list()
 
-                    # If no docs found, try querying all images for this visit to see what patient_ids exist
-                    if not docs:
-                        all_visit_images = await MedicationImageMongo.find(
-                            MedicationImageMongo.visit_id == visit.visit_id.value,
-                        ).to_list()
-                        if all_visit_images:
-                            logger.warning(
-                                "[GeneratePreVisitSummary] No images found with patient_id match, "
-                                "but found %s images for visit %s",
-                                len(all_visit_images),
-                                visit.visit_id.value,
-                            )
-
                     if docs:
-                        logger.info(
-                            "[GeneratePreVisitSummary] Found %s medication images for visit %s",
-                            len(docs),
-                            visit.visit_id.value,
-                        )
                         medication_images_list = [
                             {
                                 "id": str(getattr(d, "id", "")),
@@ -176,11 +143,6 @@ class GeneratePreVisitSummaryUseCase:
                             f"{len(docs)} medication image(s): "
                             f"{', '.join([d.filename for d in docs])}"
                         )
-                    else:
-                        logger.info(
-                            "[GeneratePreVisitSummary] No medication images found for visit %s",
-                            visit.visit_id.value,
-                        )
                 except Exception as e:
                     logger.warning(
                         "Failed to query medication images before summary generation: %s",
@@ -188,12 +150,11 @@ class GeneratePreVisitSummaryUseCase:
                         exc_info=True,
                     )
 
-                # Generate summary using AI service
+                # Generate summary using AI service (internally evidence-based)
                 try:
                     logger.info(
-                        "Generating pre-visit summary for visit %s, patient %s",
+                        "Generating pre-visit summary (evidence-based) for visit %s",
                         request.visit_id,
-                        request.patient_id[:50] if request.patient_id else None,
                     )
                     summary_result = await self._question_service.generate_pre_visit_summary(
                         patient_data,
@@ -216,26 +177,8 @@ class GeneratePreVisitSummaryUseCase:
                     )
                     raise ValueError(f"Failed to generate summary: {str(ai_error)}") from ai_error
 
-                # Validate summary_result structure
-                if not isinstance(summary_result, dict):
-                    logger.error(
-                        "Invalid summary_result type: %s, expected dict",
-                        type(summary_result),
-                    )
-                    raise ValueError(
-                        "AI service returned invalid summary format: "
-                        f"expected dict, got {type(summary_result)}"
-                    )
-
-                if "summary" not in summary_result:
-                    logger.error(
-                        "Invalid summary_result structure: missing 'summary' key. Keys: %s",
-                        list(summary_result.keys()),
-                    )
-                    raise ValueError("AI service returned invalid summary format: missing 'summary' field")
-
                 # Attach medication images to summary result (already queried above)
-                if medication_images_list:
+                if medication_images_list and isinstance(summary_result, dict):
                     summary_result["medication_images"] = medication_images_list
 
             # Store minimal summary in visit for EHR

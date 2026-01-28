@@ -147,9 +147,16 @@ class VisitMongo(Document):
         default=VisitWorkflowType.SCHEDULED,
         description="Workflow type: scheduled or walk_in",
     )
+    # Status tracking fields for analytics/UX – not used for core state machine
+    previous_status: Optional[str] = Field(
+        default=None, description="Previous visit status before the current one"
+    )
     status: str = Field(
         default="intake"
     )  # intake, transcription, soap_generation, prescription_analysis, completed, walk_in_patient
+    next_status: Optional[str] = Field(
+        default=None, description="Best-effort prediction of the next visit status"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

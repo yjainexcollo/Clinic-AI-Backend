@@ -31,6 +31,122 @@ from clinicai.core.constants import (
 
 logger = logging.getLogger("clinicai")
 
+class PrevisitEvidenceItem(BaseModel):
+    """A single extracted fact with a source reference to an intake answer."""
+
+    source_question_number: int = Field(..., ge=1, description="1-based question number in intake flow")
+    raw_text: str = Field(..., min_length=1, description="Exact snippet from the patient's answer")
+
+
+class PrevisitFacts(BaseModel):
+    """Evidence-based structured facts for building a pre-visit summary.
+
+    IMPORTANT:
+    - All fields must be supported by evidence[].
+    - Fields can be omitted/None if not provided by the patient.
+    """
+
+    chief_complaint: Optional[str] = None
+    duration: Optional[str] = None
+    key_symptoms: Optional[List[str]] = None
+    triggers_or_exposures: Optional[str] = None
+    relieving_factors: Optional[str] = None
+    severity: Optional[str] = None
+    meds_reported: Optional[str] = None
+    history_reported: Optional[str] = None
+    ros_reported: Optional[str] = None
+    evidence: List[PrevisitEvidenceItem] = Field(default_factory=list)
+
+
+def _answers_corpus(intake_answers: Dict[str, Any]) -> str:
+    """Concatenate all non-empty answers into a single corpus for substring validation."""
+    qas = (intake_answers or {}).get("questions_asked") or []
+    parts: list[str] = []
+    for qa in qas:
+        ans = (qa.get("answer") or "").strip()
+        if ans:
+            parts.append(ans)
+    return "\n".join(parts)
+
+
+def _validate_previsit_facts_against_answers(facts: PrevisitFacts, intake_answers: Dict[str, Any]) -> PrevisitFacts:
+    """Drop any evidence items whose raw_text isn't present in the intake answers corpus.
+
+    This is a pragmatic anti-hallucination guard.
+    """
+    corpus = _answers_corpus(intake_answers)
+    if not corpus:
+        # No answers -> no evidence, and facts must be empty
+        return PrevisitFacts(evidence=[])
+
+    kept: list[PrevisitEvidenceItem] = []
+    for ev in facts.evidence:
+        if ev.raw_text and ev.raw_text.strip() and ev.raw_text.strip() in corpus:
+            kept.append(ev)
+
+    # If we dropped evidence, we must also drop derived fields to avoid unsupported claims.
+    if len(kept) != len(facts.evidence):
+        return PrevisitFacts(evidence=kept)
+
+    return facts
+
+
+def _facts_to_summary_lines(facts: PrevisitFacts, enabled: dict[str, bool]) -> list[str]:
+    """Convert validated facts to final summary lines (paragraph-style, no extra inference)."""
+    lines: list[str] = []
+    if enabled.get("chief_complaint", True):
+        cc = (facts.chief_complaint or "").strip() or "Not provided."
+        lines.append(f"Chief Complaint: {cc}")
+
+    if enabled.get("hpi", True):
+        # Build a short narrative paragraph from ONLY the provided facts.
+        sentences: list[str] = []
+        cc_text = (facts.chief_complaint or "").strip()
+        duration = (facts.duration or "").strip()
+        symptoms = [s.strip() for s in (facts.key_symptoms or []) if isinstance(s, str) and s.strip()]
+        triggers = (facts.triggers_or_exposures or "").strip()
+        relief = (facts.relieving_factors or "").strip()
+        severity = (facts.severity or "").strip()
+
+        if cc_text and duration:
+            sentences.append(f"Patient reports {cc_text} for {duration}.")
+        elif cc_text:
+            sentences.append(f"Patient reports {cc_text}.")
+        elif duration:
+            sentences.append(f"Duration: {duration}.")
+
+        if symptoms:
+            if len(symptoms) == 1:
+                sentences.append(f"Associated symptom: {symptoms[0]}.")
+            else:
+                sentences.append(f"Associated symptoms include {', '.join(symptoms)}.")
+
+        if triggers:
+            sentences.append(f"Trigger/Exposure: {triggers}.")
+
+        if relief:
+            sentences.append(f"Relieving factor: {relief}.")
+
+        if severity:
+            sentences.append(f"Severity: {severity}.")
+
+        hpi = " ".join(sentences).strip() if sentences else "Not provided."
+        lines.append(f"HPI: {hpi}")
+
+    if enabled.get("history", True):
+        history = (facts.history_reported or "").strip() or "Not provided."
+        lines.append(f"History: {history}")
+
+    if enabled.get("review_of_systems", True):
+        ros = (facts.ros_reported or "").strip() or "Not provided."
+        lines.append(f"Review of Systems: {ros}")
+
+    if enabled.get("current_medication", True):
+        meds = (facts.meds_reported or "").strip() or "Not provided."
+        lines.append(f"Current Medication: {meds}")
+
+    return lines
+
 
 # =============================================================================
 # SHARED UTILITIES
@@ -2130,6 +2246,14 @@ class OpenAIQuestionService(QuestionService):
         enable_ros = enabled_sections.get("review_of_systems", True)
         enable_meds = enabled_sections.get("current_medication", True)
 
+        enabled_map = {
+            "chief_complaint": bool(enable_cc),
+            "hpi": bool(enable_hpi),
+            "history": bool(enable_history),
+            "review_of_systems": bool(enable_ros),
+            "current_medication": bool(enable_meds),
+        }
+
         # Build dynamic English headings based on enabled sections - unified prompt with dynamic language instructions
         output_language = _get_output_language_name(language)
         # Build dynamic English headings based on enabled sections (unified for all languages)
@@ -2311,15 +2435,18 @@ class OpenAIQuestionService(QuestionService):
                 "- Keep medical terminology appropriate for {output_language}.\n\n"
                 "Critical Rules\n"
                 "- Do not invent, guess, or expand beyond the provided input.\n"
+                "- Do not add negative findings (e.g., 'Denies fever/chills') unless the patient explicitly stated the denial in the intake answers.\n"
+                "- Do not infer timing, severity, triggers, relieving factors, associated symptoms, past history, or medications unless explicitly stated.\n"
                 "- Output must be plain text with section headings, one section per line (no extra blank lines).\n"
                 "- Use only the exact headings listed below. Do not add, rename, or reorder headings.\n"
                 "- No bullets, numbering, or markdown formatting.\n"
                 "- Write in a clinical handover tone: short, factual, deduplicated, and neutral.\n"
                 "- Include a section ONLY if it contains actual content from the patient's responses.\n"
-                '- Do not use placeholders like "N/A", "Not provided", "not reported", or "denies".\n'
+                '- If the patient did not provide information for a topic, omit it; if you must state missing information, use ONLY the phrase "Not provided". Do not use "N/A".\n'
+                "- If a question has no answer or an empty answer, ignore that question completely; do not use its wording to infer any content.\n"
                 "- Do not include sections for topics that were not asked about or discussed.\n"
                 "- Do NOT include sections that are not present in the headings list below (for example, omit 'History' if it is not listed).\n"
-                '- Use patient-facing phrasing: "Patient reports …", "Denies …", "On meds: …".\n'
+                '- Use patient-facing phrasing: "Patient reports …". Use "Denies …" ONLY if the patient explicitly denied it in the intake answers.\n'
                 "- Do not include clinician observations, diagnoses, plans, vitals, or exam findings "
                 "(previsit is patient-reported only).\n"
                 '- Normalize obvious medical mispronunciations to correct terms (e.g., "diabities" -> "diabetes") '
@@ -2337,55 +2464,85 @@ class OpenAIQuestionService(QuestionService):
                 f"Intake Responses (FILTERED - only enabled sections' data included):\n{self._format_intake_answers(filtered_intake_answers)}"
             )
 
+        # -----------------------------
+        # Two-step evidence-based pipeline:
+        # 1) Extract facts with evidence (LLM)
+        # 2) Validate evidence against raw answers in code
+        # 3) Build the final summary strictly from validated facts
+        # -----------------------------
+        # Detect abusive language red flags (kept as-is)
         try:
-            # Detect abusive language red flags
-            try:
-                red_flags = await self._detect_red_flags(filtered_intake_answers, lang)
-            except Exception as e:
-                logger.warning(f"Red flag detection failed, continuing without flags: {e}")
-                red_flags = []
+            red_flags = await self._detect_red_flags(filtered_intake_answers, lang)
+        except Exception as e:
+            logger.warning(f"Red flag detection failed, continuing without flags: {e}")
+            red_flags = []
 
+        # Step 1: extract structured facts with evidence
+        extraction_prompt = (
+            "You are extracting patient-reported facts for a Pre-Visit Summary.\n"
+            "Return ONLY valid JSON matching this schema:\n"
+            "{\n"
+            '  "chief_complaint": string|null,\n'
+            '  "duration": string|null,\n'
+            '  "key_symptoms": [string,...]|null,\n'
+            '  "triggers_or_exposures": string|null,\n'
+            '  "relieving_factors": string|null,\n'
+            '  "severity": string|null,\n'
+            '  "meds_reported": string|null,\n'
+            '  "history_reported": string|null,\n'
+            '  "ros_reported": string|null,\n'
+            '  "evidence": [{"source_question_number": int, "raw_text": string}, ...]\n'
+            "}\n\n"
+            "RULES (CRITICAL):\n"
+            "- Do NOT invent, infer, or generalize. Use ONLY what the patient explicitly wrote.\n"
+            "- Every non-null field MUST be supported by at least one evidence item.\n"
+            "- Each evidence.raw_text MUST be an exact substring copied from a patient answer.\n"
+            "- Ignore unanswered/blank answers completely.\n"
+            "- If the data is missing, use null.\n\n"
+            f"Intake Q/A:\n{self._format_intake_answers(filtered_intake_answers)}"
+        )
+
+        try:
             resp = await call_llm_with_telemetry(
                 ai_client=self._client,
                 scenario=PromptScenario.PREVISIT_SUMMARY,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a clinical assistant generating pre-visit summaries. Focus on accuracy, completeness, "
-                            "and clinical relevance. Do not make diagnoses."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": "Return ONLY JSON. No extra text."},
+                    {"role": "user", "content": extraction_prompt},
                 ],
                 model=self._settings.openai.model,
-                max_tokens=min(2000, self._settings.openai.max_tokens),
-                temperature=0.1,
+                max_tokens=min(1200, self._settings.openai.max_tokens),
+                temperature=0.0,
             )
-            response_text = (resp.choices[0].message.content or "").strip()
-            cleaned = self._clean_summary_markdown(response_text)
+            extraction_text = (resp.choices[0].message.content or "").strip()
+            extracted_json = _extract_first_json_object(extraction_text) or {}
+            facts = PrevisitFacts.model_validate(extracted_json)
+            facts = _validate_previsit_facts_against_answers(facts, filtered_intake_answers)
+        except Exception as e:
+            logger.warning(f"Previsit fact extraction failed; falling back to minimal summary: {e}")
+            facts = PrevisitFacts(evidence=[])
 
-            # Post-process to hard-enforce disabled sections (History, Current Medication, etc.)
-            cleaned = self._strip_disabled_sections(
-                cleaned,
-                lang=lang,
-                enable_cc=enable_cc,
-                enable_hpi=enable_hpi,
-                enable_history=enable_history,
-                enable_ros=enable_ros,
-                enable_meds=enable_meds,
-            )
+        # Step 2: build summary strictly from validated facts (no extra inference)
+        summary_lines = _facts_to_summary_lines(facts, enabled_map)
+        cleaned = "\n".join(summary_lines).strip()
+        cleaned = self._strip_disabled_sections(
+            cleaned,
+            lang=lang,
+            enable_cc=enable_cc,
+            enable_hpi=enable_hpi,
+            enable_history=enable_history,
+            enable_ros=enable_ros,
+            enable_meds=enable_meds,
+        )
 
-            return {
-                "summary": cleaned,
-                "structured_data": {
-                    "chief_complaint": "See summary",
-                    "key_findings": ["See summary"],
-                },
-                "red_flags": red_flags,
-            }
-        except Exception:
-            return await self._generate_fallback_summary(patient_data, intake_answers)
+        return {
+            "summary": cleaned,
+            "structured_data": {
+                "chief_complaint": "See summary",
+                "key_findings": ["See summary"],
+            },
+            "red_flags": red_flags,
+        }
 
     # ----------------------
     # Red Flag Detection
@@ -2698,7 +2855,11 @@ Responses to analyze:
             formatted: List[str] = []
             for qa in intake_answers.get("questions_asked", []):
                 q = qa.get("question", "N/A")
-                a = qa.get("answer", "N/A")
+                a_raw = qa.get("answer", "")
+                a = (a_raw or "").strip()
+                # Skip questions that were never answered (empty/blank answers)
+                if not a:
+                    continue
                 formatted.append(f"Q: {q}")
                 formatted.append(f"A: {a}")
                 formatted.append("")

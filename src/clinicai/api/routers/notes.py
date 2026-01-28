@@ -739,7 +739,7 @@ async def get_transcription_status(
 
 @router.post(
     "/soap/generate",
-    response_model=SoapGenerationResponse,
+    response_model=ApiResponse[SoapGenerationResponse],
     status_code=status.HTTP_200_OK,
     tags=["SOAP Note Generation"],
     responses={
@@ -816,13 +816,14 @@ async def generate_soap_note(
         # Convert DTO to response format (encode patient_id for client)
         from ...core.utils.crypto import encode_patient_id
 
-        return {
-            "patient_id": encode_patient_id(result.patient_id),
-            "visit_id": result.visit_id,
-            "soap_note": result.soap_note,
-            "generated_at": result.generated_at,
-            "message": result.message,
-        }
+        response_payload = SoapGenerationResponse(
+            patient_id=encode_patient_id(result.patient_id),
+            visit_id=result.visit_id,
+            soap_note=result.soap_note,
+            generated_at=result.generated_at,
+            message=result.message,
+        )
+        return ok(http_request, data=response_payload, message=result.message)
 
     except ValueError as e:
         error_message = str(e)

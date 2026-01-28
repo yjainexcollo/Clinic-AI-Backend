@@ -410,6 +410,8 @@ class MongoVisitRepository(VisitRepository):
             existing_visit.patient_id = visit.patient_id
             existing_visit.doctor_id = visit.doctor_id
             existing_visit.status = visit.status
+            existing_visit.previous_status = getattr(visit, "previous_status", None)
+            existing_visit.next_status = getattr(visit, "next_status", None)
             existing_visit.updated_at = datetime.utcnow()
             existing_visit.recently_travelled = getattr(visit, "recently_travelled", False)
             existing_visit.symptom = visit.symptom
@@ -429,6 +431,8 @@ class MongoVisitRepository(VisitRepository):
                 symptom=visit.symptom,
                 workflow_type=visit.workflow_type.value,
                 status=visit.status,
+                previous_status=getattr(visit, "previous_status", None),
+                next_status=getattr(visit, "next_status", None),
                 created_at=visit.created_at,
                 updated_at=visit.updated_at,
                 recently_travelled=getattr(visit, "recently_travelled", False),
@@ -557,6 +561,8 @@ class MongoVisitRepository(VisitRepository):
             symptom=visit_symptom,
             workflow_type=VisitWorkflowType(visit_mongo.workflow_type),
             status=visit_mongo.status,
+            previous_status=getattr(visit_mongo, "previous_status", None),
+            next_status=getattr(visit_mongo, "next_status", None),
             created_at=visit_mongo.created_at,
             updated_at=visit_mongo.updated_at,
             recently_travelled=getattr(visit_mongo, "recently_travelled", False),

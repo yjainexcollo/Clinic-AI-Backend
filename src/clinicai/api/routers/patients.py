@@ -1198,6 +1198,7 @@ async def get_intake_status(
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        409: {"model": ErrorResponse, "description": "Pre-visit summary already exists"},
         422: {"model": ErrorResponse, "description": "Pre-visit summary generation failed"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -1243,6 +1244,28 @@ async def generate_pre_visit_summary(
                 f"using as-is: {decode_error}"
             )
             decoded_patient_id = request.patient_id
+
+        # Check if pre-visit summary already exists
+        from ...domain.value_objects.visit_id import VisitId
+
+        visit_id_obj = VisitId(request.visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(decoded_patient_id, visit_id_obj, doctor_id)
+        if not visit:
+            return fail(
+                http_request,
+                error="VISIT_NOT_FOUND",
+                message=f"Visit {request.visit_id} not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check if pre-visit summary already exists
+        if visit.has_pre_visit_summary():
+            return fail(
+                http_request,
+                error="PRE_VISIT_SUMMARY_ALREADY_EXISTS",
+                message="A pre-visit summary has already been generated for this visit. The summary cannot be regenerated. Please proceed to the next step in the workflow.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
         dto_request = PreVisitSummaryRequest(
             patient_id=decoded_patient_id,
@@ -1647,7 +1670,11 @@ async def generate_post_visit_summary(
         # Execute use case - pass doctor_id as second argument
         result = await use_case.execute(decoded_request, doctor_id)
 
-        return ok(http_request, data=result)
+        return ok(
+            http_request,
+            data=result,
+            message="Post-visit summary generated successfully",
+        )
 
     except PatientNotFoundError as e:
         return fail(
@@ -1721,7 +1748,11 @@ async def get_post_visit_summary(
                     "message": "No post-visit summary stored",
                 },
             )
-        return ok(request, data=PostVisitSummaryResponse(**data))
+        return ok(
+            request,
+            data=PostVisitSummaryResponse(**data),
+            message="Post-visit summary retrieved successfully",
+        )
     except PatientNotFoundError as e:
         return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
@@ -1759,6 +1790,7 @@ class VitalsPayload(BaseModel):
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        409: {"model": ErrorResponse, "description": "Vitals already recorded for this visit"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -1817,6 +1849,30 @@ async def store_vitals(
                 },
             )
 
+        # Enforce workflow rules for vitals, especially for scheduled visits
+        # For scheduled workflow, vitals can only be filled AFTER pre-visit
+        # summary is generated. This prevents vitals from being attached while
+        # the visit is still in pure "intake" state.
+        if visit.is_scheduled_workflow():
+            if not visit.pre_visit_summary:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "PRE_VISIT_NOT_GENERATED",
+                        "message": "Pre-visit summary must be generated before vitals can be recorded for scheduled visits.",
+                        "details": {},
+                    },
+                )
+
+        # Disallow editing vitals once they have been recorded
+        if visit.vitals:
+            return fail(
+                request,
+                error="VITALS_ALREADY_EXISTS",
+                message="Vitals have already been recorded for this visit and cannot be modified. Use GET to view the existing values.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         # Convert vitals to dict format
         vitals_dict = {
             "blood_pressure": vitals.bloodPressure,
@@ -1837,20 +1893,14 @@ async def store_vitals(
         # Update visit status based on workflow type
         visit.complete_vitals()  # Handles both walk-in and scheduled workflows
 
-        # Additional status updates for scheduled visits with existing transcripts
-        if visit.is_scheduled_workflow() and visit.is_transcription_complete():
-            # If transcript exists, update to soap_generation
-            if visit.status not in [
-                "soap_generation",
-                "prescription_analysis",
-                "completed",
-            ]:
-                visit.status = "soap_generation"
-
         # Persist visit (not patient)
         await visit_repo.save(visit)
 
-        return ok(request, data={"success": True, "message": "Vitals stored successfully"})
+        return ok(
+            request,
+            data={"success": True, "vitals": visit.vitals},
+            message="Vitals stored successfully",
+        )
 
     except HTTPException:
         raise
@@ -1936,7 +1986,7 @@ async def get_vitals(
                 },
             )
 
-        return ok(request, data=visit.vitals)
+        return ok(request, data=visit.vitals, message="Vitals retrieved successfully")
 
     except HTTPException:
         raise
@@ -2078,6 +2128,8 @@ async def list_patient_visits(
                     symptom=visit.symptom or "",
                     workflow_type=visit.workflow_type.value,
                     status=visit.status,
+                    previous_status=getattr(visit, "previous_status", None),
+                    next_status=getattr(visit, "next_status", None),
                     created_at=visit.created_at,
                     updated_at=visit.updated_at,
                     has_transcript=has_transcript,
@@ -2283,6 +2335,8 @@ async def get_visit_detail(
             symptom=visit.symptom or "",
             workflow_type=visit.workflow_type.value,
             status=visit.status,
+            previous_status=getattr(visit, "previous_status", None),
+            next_status=getattr(visit, "next_status", None),
             created_at=visit.created_at,
             updated_at=visit.updated_at,
             intake_session=intake_session_data,

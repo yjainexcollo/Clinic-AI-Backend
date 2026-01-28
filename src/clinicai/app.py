@@ -19,7 +19,7 @@ from clinicai.api.schemas.common import ErrorResponse
 from clinicai.middleware.request_id_middleware import RequestIDMiddleware
 
 from .api.routers import doctor as doctor_router
-from .api.routers import health, notes, patients, workflow
+from .api.routers import health, notes, patients, status, workflow
 from .core.config import get_settings
 from .core.hipaa_audit import get_audit_logger
 from .domain.errors import DomainError
@@ -518,7 +518,7 @@ def create_app() -> FastAPI:
             description=app.description,
             routes=app.routes,
         )
-        # Define tag order: Health, Patient Registration, Patient Management, Intake + Previsit, Vitals and Transcript, Soap, Postvisit, Audio Management
+        # Define tag order: Health, Patient Registration, Patient Management, Intake + Previsit, Vitals and Transcript, Soap, Postvisit, Check Status, Audio Management
         openapi_schema["tags"] = [
             {"name": "health", "description": "Health and readiness checks"},
             {
@@ -544,6 +544,10 @@ def create_app() -> FastAPI:
             {
                 "name": "Post-Visit Summary",
                 "description": "Post-visit summary generation and retrieval",
+            },
+            {
+                "name": "Check Status",
+                "description": "Workflow flow visualization and visit status tracking",
             },
             {
                 "name": "Audio Management",
@@ -765,11 +769,12 @@ def create_app() -> FastAPI:
     # Register X-Request-ID middleware after CORS etc.
     app.add_middleware(RequestIDMiddleware)
 
-    # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Transcription → Audio → Doctor → Debug
+    # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Status → Transcription → Audio → Doctor → Debug
     app.include_router(health.router)
     app.include_router(patients.router)
     app.include_router(workflow.router)
     app.include_router(notes.router)
+    app.include_router(status.router)
     # Expose doctor preferences routes in OpenAPI/Swagger while keeping runtime behavior unchanged
     app.include_router(doctor_router.router, include_in_schema=True)
 

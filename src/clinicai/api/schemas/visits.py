@@ -44,7 +44,13 @@ class VisitListItemSchema(BaseModel):
     visit_id: str = Field(..., description="Visit ID")
     symptom: str = Field(..., description="Primary symptom")
     workflow_type: str = Field(..., description="Workflow type: scheduled or walk_in")
-    status: str = Field(..., description="Visit status")
+    previous_status: Optional[str] = Field(
+        None, description="Previous visit status (last distinct state)"
+    )
+    status: str = Field(..., description="Current visit status")
+    next_status: Optional[str] = Field(
+        None, description="Best-effort prediction of the next visit status"
+    )
     created_at: datetime = Field(..., description="Visit creation date")
     updated_at: datetime = Field(..., description="Visit last update date")
     has_transcript: bool = Field(False, description="Whether transcript is available")
@@ -61,7 +67,13 @@ class VisitDetailSchema(BaseModel):
     patient_id: str = Field(..., description="Patient ID")
     symptom: str = Field(..., description="Primary symptom")
     workflow_type: str = Field(..., description="Workflow type: scheduled or walk_in")
-    status: str = Field(..., description="Visit status")
+    previous_status: Optional[str] = Field(
+        None, description="Previous visit status (last distinct state)"
+    )
+    status: str = Field(..., description="Current visit status")
+    next_status: Optional[str] = Field(
+        None, description="Best-effort prediction of the next visit status"
+    )
     created_at: datetime = Field(..., description="Visit creation date")
     updated_at: datetime = Field(..., description="Visit last update date")
 
