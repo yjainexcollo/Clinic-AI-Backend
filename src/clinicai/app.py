@@ -807,6 +807,16 @@ def create_app() -> FastAPI:
             ).dict(),
         )
 
+    def _sanitize_for_json(obj):
+        """Recursively make obj JSON-serializable (e.g. ValueError in Pydantic error ctx)."""
+        if isinstance(obj, Exception):
+            return str(obj)
+        if isinstance(obj, dict):
+            return {k: _sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_sanitize_for_json(x) for x in obj]
+        return obj
+
     @app.exception_handler(RequestValidationError)
     async def pydantic_error_handler(request: Request, exc: RequestValidationError):
         req_id = getattr(request.state, "request_id", None)
@@ -827,13 +837,16 @@ def create_app() -> FastAPI:
             msg = error.get("msg", "Validation error")
             error_messages.append(f"{loc}: {msg}")
 
+        # Sanitize so details are JSON-serializable (ctx can contain ValueError etc.)
+        safe_details = _sanitize_for_json(error_details)
+
         return JSONResponse(
             status_code=422,
             content=ErrorResponse(
                 error="INVALID_INPUT",
                 message=f"Input validation failed: {'; '.join(error_messages)}",
                 request_id=req_id or "",
-                details={"errors": error_details, "path": request.url.path},
+                details={"errors": safe_details, "path": request.url.path},
             ).dict(),
         )
 
@@ -885,7 +898,7 @@ async def root():
         "swagger_yaml": "/swagger.yaml",
         "endpoints": {
             "health": "/health",
-            "register_patient": "POST /patients/",
+            "register_patient": "POST /patients/register",
             "answer_intake": "POST /patients/consultations/answer",
             "pre_visit_summary": "POST /patients/summary/previsit",
             "get_summary": "GET /patients/{patient_id}/visits/{visit_id}/summary",
