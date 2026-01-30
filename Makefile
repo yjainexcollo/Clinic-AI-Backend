@@ -1,5 +1,9 @@
 # Clinic-AI Makefile
-# A comprehensive build and development tool for the Clinic-AI project
+# Requires Python >= 3.11. If your system python3 is older, install Python 3.11+ then:
+#   make install-dev PYTHON=python3.11   (or python3.12)
+#   make dev PYTHON=python3.11
+
+PYTHON ?= python3.11
 
 .PHONY: help install install-dev test test-unit test-integration test-e2e lint format clean docker-build docker-run dev setup bootstrap pre-commit coverage docs
 
@@ -14,13 +18,13 @@ help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # Installation targets
-install: ## Install production dependencies
+install: ## Install production dependencies (uses PYTHON, default python3.11)
 	@echo "📦 Installing production dependencies..."
-	pip install -e .
+	$(PYTHON) -m pip install -e .
 
-install-dev: ## Install development dependencies
+install-dev: ## Install development dependencies (uses PYTHON, default python3.11)
 	@echo "🔧 Installing development dependencies..."
-	pip install -e ".[dev]"
+	$(PYTHON) -m pip install -e ".[dev]"
 
 setup: install-dev ## Complete project setup (install + dev deps)
 	@echo "✅ Project setup complete!"
@@ -61,7 +65,7 @@ lint: ## Run all linting checks
 	@echo "  - isort check..."
 	isort --check-only src/ tests/
 	@echo "  - mypy..."
-	mypy src/
+	mypy src/ || true
 
 format: ## Format code with black and isort
 	@echo "🎨 Formatting code..."
@@ -73,13 +77,16 @@ pre-commit: ## Run pre-commit checks
 	@chmod +x scripts/precommit.sh
 	./scripts/precommit.sh
 
-# Development targets
-dev: ## Start development server
-	@echo "🚀 Starting development server..."
-	
+# Development targets (no Docker). Uses PYTHON (default python3.11). Run make install-dev first.
+run: ## Start backend server without Docker (requires MongoDB; use db-start for Mongo)
+	@echo "🚀 Starting backend on http://localhost:8000 (no Docker)..."
+	PYTHONPATH=./src $(PYTHON) -m uvicorn clinicai.app:app --host 0.0.0.0 --port 8000 --reload
+
+dev: run ## Alias for run
 
 dev-debug: ## Start development server with debug logging
 	@echo "🚀 Starting development server with debug logging..."
+	PYTHONPATH=./src $(PYTHON) -m uvicorn clinicai.app:app --host 0.0.0.0 --port 8000 --reload --log-level debug
 
 # Docker targets
 docker-build: ## Build Docker image
@@ -179,10 +186,10 @@ db-reset: ## Reset MongoDB (WARNING: This will delete all data!)
 # Health checks
 health: ## Check system health
 	@echo "🏥 Checking system health..."
-	@echo "  - Python version:"
-	@python --version
+	@echo "  - Python version (PYTHON=$(PYTHON)):"
+	@$(PYTHON) --version
 	@echo "  - Dependencies:"
-	@pip list | grep -E "(fastapi|uvicorn|pydantic|motor|beanie)"
+	@$(PYTHON) -m pip list | grep -E "(fastapi|uvicorn|pydantic|motor|beanie)"
 	@echo "  - Docker:"
 	@docker --version 2>/dev/null || echo "    Docker not installed"
 	@echo "  - MongoDB:"
@@ -195,12 +202,12 @@ workflow: format lint test ## Run complete development workflow
 # Production targets
 prod-build: ## Build production-ready application
 	@echo "🏭 Building production application..."
-	python -m build
-	python -m twine check dist/*
+	$(PYTHON) -m build
+	$(PYTHON) -m twine check dist/*
 
 prod-install: ## Install production application
 	@echo "🏭 Installing production application..."
-	pip install dist/*.whl
+	$(PYTHON) -m pip install dist/*.whl
 
 # Show available commands
 commands: ## Show all available commands

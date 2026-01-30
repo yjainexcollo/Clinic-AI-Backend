@@ -23,16 +23,17 @@ except ImportError:
     logger.warning("OpenTelemetry metrics not available. Install 'opentelemetry-api' for metrics support.")
 
 
-# Initialize custom metrics (lazy initialization)
+# Initialize custom metrics (lazy initialization). Use string annotations so
+# type hints are not evaluated when OpenTelemetry is not installed (Counter/Histogram undefined).
 _metrics_initialized = False
-_ai_request_counter: Optional[Counter] = None
-_ai_latency_histogram: Optional[Histogram] = None
-_ai_token_counter: Optional[Counter] = None
-_transcription_counter: Optional[Counter] = None
-_transcription_latency_histogram: Optional[Histogram] = None
-_request_counter: Optional[Counter] = None
-_request_latency_histogram: Optional[Histogram] = None
-_error_counter: Optional[Counter] = None
+_ai_request_counter: Optional["Counter"] = None
+_ai_latency_histogram: Optional["Histogram"] = None
+_ai_token_counter: Optional["Counter"] = None
+_transcription_counter: Optional["Counter"] = None
+_transcription_latency_histogram: Optional["Histogram"] = None
+_request_counter: Optional["Counter"] = None
+_request_latency_histogram: Optional["Histogram"] = None
+_error_counter: Optional["Counter"] = None
 
 
 def _initialize_metrics():

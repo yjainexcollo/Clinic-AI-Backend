@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from typing import Any, Dict, List, Optional, cast
 
 from ...adapters.db.mongo.repositories.llm_interaction_repository import (
     append_phase_call,
@@ -67,15 +68,10 @@ class GeneratePreVisitSummaryUseCase:
             # Always allow pre-visit summary generation, regardless of intake completion.
             # If intake is incomplete, log for observability only.
             if not visit.is_intake_complete():
-                question_count = (
-                    visit.intake_session.current_question_count if visit.intake_session else 0
-                )
-                max_questions = (
-                    visit.intake_session.max_questions if visit.intake_session else 0
-                )
+                question_count = visit.intake_session.current_question_count if visit.intake_session else 0
+                max_questions = visit.intake_session.max_questions if visit.intake_session else 0
                 logger.warning(
-                    "Generating pre-visit summary for INCOMPLETE intake: "
-                    "visit_id=%s, question_count=%s/%s",
+                    "Generating pre-visit summary for INCOMPLETE intake: " "visit_id=%s, question_count=%s/%s",
                     request.visit_id,
                     question_count,
                     max_questions,
@@ -114,11 +110,12 @@ class GeneratePreVisitSummaryUseCase:
                 medication_images_info = None
                 medication_images_list = None
                 try:
+                    from beanie.operators import Or
+
                     from clinicai.adapters.db.mongo.models.patient_m import (
                         MedicationImageMongo,
                     )
                     from clinicai.core.utils.crypto import encode_patient_id
-                    from beanie.operators import Or
 
                     # Try both internal ID and encoded ID (in case images were stored with encoded ID)
                     patient_internal_id = str(patient.patient_id.value)
@@ -216,16 +213,16 @@ class GeneratePreVisitSummaryUseCase:
                     )
                     raise ValueError(f"Failed to generate summary: {str(ai_error)}") from ai_error
 
-                # Validate summary_result structure
+                # Validate summary_result structure (runtime check; mypy may infer dict from service)
                 if not isinstance(summary_result, dict):
-                    logger.error(
+                    logger.error(  # type: ignore[unreachable]
                         "Invalid summary_result type: %s, expected dict",
                         type(summary_result),
                     )
                     raise ValueError(
-                        "AI service returned invalid summary format: "
-                        f"expected dict, got {type(summary_result)}"
+                        "AI service returned invalid summary format: " f"expected dict, got {type(summary_result)}"
                     )
+                summary_result = cast(Dict[str, Any], summary_result)
 
                 if "summary" not in summary_result:
                     logger.error(
@@ -236,7 +233,7 @@ class GeneratePreVisitSummaryUseCase:
 
                 # Attach medication images to summary result (already queried above)
                 if medication_images_list:
-                    summary_result["medication_images"] = medication_images_list
+                    summary_result["medication_images"] = medication_images_list  # type: ignore[assignment]
 
             # Store minimal summary in visit for EHR
             try:
@@ -299,15 +296,17 @@ class GeneratePreVisitSummaryUseCase:
                 logger.warning(f"Failed to append structured pre-visit log: {e}")
 
             logger.info(f"Successfully generated pre-visit summary for visit {request.visit_id}")
+            summary_text = summary_result["summary"]
+            summary_str = summary_text if isinstance(summary_text, str) else str(summary_text)
+            med_images = cast(Optional[List[Dict[str, Any]]], summary_result.get("medication_images"))
+            red_flags_list = cast(Optional[List[Dict[str, str]]], summary_result.get("red_flags"))
             return PreVisitSummaryResponse(
                 patient_id=patient.patient_id.value,
                 visit_id=visit.visit_id.value,
-                summary=summary_result["summary"],
+                summary=summary_str,
                 generated_at=generated_at,
-                medication_images=(
-                    summary_result.get("medication_images") if isinstance(summary_result, dict) else None
-                ),
-                red_flags=(summary_result.get("red_flags") if isinstance(summary_result, dict) else None),
+                medication_images=med_images,
+                red_flags=red_flags_list,
             )
 
         except (PatientNotFoundError, VisitNotFoundError, ValueError) as e:
@@ -327,7 +326,7 @@ class GeneratePreVisitSummaryUseCase:
             raise
 
 
-def clean_summary_for_patient(response_dict):
+def clean_summary_for_patient(response_dict: Dict[str, Any]) -> Dict[str, Any]:
     # Remove common internal fields not meant for patients
     forbidden = [
         "clinic_name",
