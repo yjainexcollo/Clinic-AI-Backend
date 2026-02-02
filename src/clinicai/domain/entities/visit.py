@@ -234,12 +234,9 @@ class Visit:
         if self.intake_session is None:
             self.intake_session = IntakeSession(symptom=self.symptom)
 
-        # Ensure status tracking fields are initialized
-        # Existing data may not have previous_status/next_status set, so we
-        # derive the next_status from the current workflow and status.
-        if self.previous_status is None:
-            # For freshly created visits, previous_status is intentionally None.
-            self.previous_status = None
+        # Ensure status tracking fields are initialized for legacy records.
+        # New visits should explicitly set previous_status / status / next_status
+        # at creation time (see register / walk-in use cases).
         if self.next_status is None:
             self.next_status = self._compute_next_status(self.status)
 
@@ -262,7 +259,9 @@ class Visit:
 
         self.previous_status = self.status
         self.status = new_status
-        self.next_status = self._compute_next_status(new_status)
+        computed_next = self._compute_next_status(new_status)
+        # Safety: next_status must never equal current status
+        self.next_status = None if computed_next == new_status else computed_next
 
     def _compute_next_status(self, current_status: Optional[str] = None) -> Optional[str]:
         """Best-effort prediction of the next status in the workflow.
@@ -277,12 +276,16 @@ class Visit:
         if self.is_walk_in_workflow():
             # Walk-in: registration -> vitals -> transcription -> soap -> post-visit
             mapping = {
-                "walk_in_patient": "vitals_pending",
-                "vitals_pending": "vitals",
+                # New visits for walk-in start at vials_pending with previous_status=patient_registered
+                "walk_in_patient": "vitals_pending",  # legacy data
+                "vitals_pending": "vitals_in_progress",
+                "vitals_in_progress": "vitals",
                 "vitals": "vitals_completed",
                 "vitals_completed": "transcription_pending",
                 "transcription_pending": "transcription",
-                "transcription": "transcription_completed",
+                "transcription": "transcription_processing",  # legacy alias
+                "transcription_processing": "transcription_completed",
+                "transcription_completed": "soap_pending",
                 "transcription_completed": "soap_pending",
                 "soap_pending": "soap_generation",
                 "soap_generation": "soap_completed",
@@ -291,15 +294,21 @@ class Visit:
                 "post_visit_summary": "post_visit_completed",
             }
         else:
-            # Scheduled: intake -> pre-visit -> vitals -> transcription -> SOAP -> post-visit
+            # Scheduled: patient_registered -> intake_pending -> intake_in_progress -> intake
+            #            -> pre-visit -> vitals -> transcription -> SOAP -> post-visit
             mapping = {
-                "intake": "pre_visit_summary_generated",
+                "patient_registered": "intake_pending",
+                "intake_pending": "intake_in_progress",
+                # While intake is ongoing, the next actionable step is to generate the pre-visit summary
+                "intake_in_progress": "pre_visit_summary_generated",
+                "intake": "pre_visit_summary_generated",  # legacy alias
                 "pre_visit_summary_generated": "vitals_pending",
                 "vitals_pending": "vitals",
                 "vitals": "vitals_completed",
-                "vitals_completed": "transcription",
-                "transcription_pending": "transcription",
-                "transcription": "transcription_completed",
+                "vitals_completed": "transcription_pending",
+                "transcription_pending": "transcription_processing",
+                "transcription": "transcription_processing",  # legacy alias
+                "transcription_processing": "transcription_completed",
                 "transcription_completed": "soap_generation",
                 "soap_generation": "prescription_analysis",
                 "prescription_analysis": "post_visit_summary",
@@ -319,18 +328,40 @@ class Visit:
             question,
             answer,
         )
+        # Intake state machine: once any answer exists, intake is in progress.
+        if self.is_scheduled_workflow():
+            if self.status in ["patient_registered", "intake_pending"]:
+                self._set_status("intake_in_progress")
         self.updated_at = datetime.utcnow()
 
     def set_pending_question(self, question: Optional[str]) -> None:
         """Set the next pending question on the intake session."""
         self.intake_session.set_pending_question(question)
+        # If intake already started (answers exist), keep status in progress.
+        if self.is_scheduled_workflow() and self.intake_session.current_question_count > 0:
+            if self.status in ["intake_pending", "patient_registered"]:
+                self._set_status("intake_in_progress")
+        self.updated_at = datetime.utcnow()
+
+    def reset_intake_session(self) -> None:
+        """Clear intake questions and reset visit back to initial scheduled intake state."""
+        if not self.intake_session:
+            self.intake_session = IntakeSession(symptom=self.symptom)
+        self.intake_session.truncate_after(-1)
+        self.symptom = ""
+        if self.is_scheduled_workflow():
+            # Reset status triple deterministically
+            self.previous_status = "patient_registered"
+            self.status = "intake_pending"
+            self.next_status = "intake_in_progress"
         self.updated_at = datetime.utcnow()
 
     def complete_intake(self) -> None:
         """Complete the intake process."""
         self.intake_session.complete_intake()
-        # Ready for next step in scheduled workflow
-        self._set_status("transcription")
+        # Intake complete; next step is pre-visit summary generation
+        if self.is_scheduled_workflow():
+            self._set_status("intake")
         self.updated_at = datetime.utcnow()
 
     def can_ask_more_questions(self) -> bool:
@@ -396,6 +427,9 @@ class Visit:
             "generated_at": datetime.utcnow().isoformat(),
             "red_flags": red_flags or [],
         }
+        # Reflect workflow progression in status fields
+        if self.is_scheduled_workflow():
+            self._set_status("pre_visit_summary_generated")
         self.updated_at = datetime.utcnow()
 
     def get_pre_visit_summary(self) -> Optional[Dict[str, Any]]:
@@ -413,6 +447,8 @@ class Visit:
             **(summary or {}),
             "stored_at": datetime.utcnow().isoformat(),
         }
+        # Reflect workflow progression in status fields
+        self._set_status("post_visit_summary")
         self.updated_at = datetime.utcnow()
 
     def get_post_visit_summary(self) -> Optional[Dict[str, Any]]:
@@ -437,13 +473,22 @@ class Visit:
             # Allow pre_visit_summary_generated if vitals are stored (vitals can be filled at this stage)
             if self.status == "pre_visit_summary_generated" and self.vitals:
                 return True
-            return self.status in ["vitals", "vitals_completed", "transcription"]
+            return self.status in [
+                "vitals",
+                "vitals_completed",
+                "transcription_pending",
+                "transcription_processing",
+                "transcription_completed",
+                "transcription",  # legacy alias
+            ]
         elif self.is_walk_in_workflow():
             # For walk-in: after vitals are completed
             return self.status in [
                 "vitals_completed",
                 "transcription_pending",
+                "transcription_processing",
                 "transcription",
+                "transcription_completed",
             ]
         return False
 
@@ -459,6 +504,7 @@ class Visit:
                 "vitals_pending",
                 "vitals_completed",
                 "transcription_pending",
+                "transcription_processing",
                 "transcription",
                 "transcription_completed",
                 "soap_generation",
@@ -472,6 +518,7 @@ class Visit:
             return self.status in [
                 "walk_in_patient",
                 "vitals_pending",
+                "vitals_in_progress",
                 "vitals",
                 "vitals_completed",
                 "transcription_pending",
@@ -515,7 +562,7 @@ class Visit:
     def _get_scheduled_workflow_steps(self) -> List[str]:
         """Get available steps for scheduled workflow."""
         steps = []
-        if self.status == "intake":
+        if self.status in ["intake_pending", "intake_in_progress", "intake"]:
             steps.extend(["intake", "pre_visit_summary"])
         elif self.status == "pre_visit_summary_generated":
             # After pre-visit summary, vitals form comes next
@@ -541,6 +588,7 @@ class Visit:
         if self.status in [
             "walk_in_patient",
             "vitals_pending",
+            "vitals_in_progress",
             "vitals",
             "vitals_completed",
             "transcription_pending",
@@ -651,6 +699,9 @@ class Visit:
         ts.started_at = None
         # Do NOT touch transcription_status here; it will be set to "queued" only on success
 
+        # Reflect workflow progression in status fields
+        # (queued/pending transcription job)
+        self._set_status("transcription_pending")
         self.updated_at = datetime.utcnow()
 
     def mark_transcription_enqueued(
@@ -676,6 +727,8 @@ class Visit:
         ts.transcription_status = "queued"
         ts.error_message = None
 
+        # Reflect workflow progression in status fields
+        self._set_status("transcription_pending")
         self.updated_at = datetime.utcnow()
 
     def mark_transcription_enqueue_failed(self, error: str) -> None:
@@ -721,7 +774,7 @@ class Visit:
                 started_at=now,
                 enqueued_at=enqueued_at or now,  # Use provided enqueued_at or fallback to now
             )
-        self._set_status("transcription")
+        self._set_status("transcription_processing")
         self.updated_at = datetime.utcnow()
 
     def complete_transcription(self) -> None:
@@ -730,10 +783,7 @@ class Visit:
             self.transcription_session.transcription_status = "completed"
             self.transcription_session.completed_at = datetime.utcnow()
 
-        if self.is_walk_in_workflow():
-            self._set_status("transcription_completed")
-        else:
-            self._set_status("transcription")
+        self._set_status("transcription_completed")
         self.updated_at = datetime.utcnow()
 
     def start_vitals(self) -> None:
@@ -832,10 +882,9 @@ class Visit:
             self.transcription_session.structured_dialogue = structured_dialogue
 
         # Update status based on workflow type
-        if self.is_walk_in_workflow():
-            self._set_status("transcription_completed")  # Next step is vitals
-        else:
-            self._set_status("soap_generation")  # Scheduled workflow goes directly to SOAP
+        # Both workflows share the same explicit completion state; the next
+        # step (SOAP generation) is reflected via ``next_status``.
+        self._set_status("transcription_completed")
         self.updated_at = datetime.utcnow()
 
     def fail_transcription(self, error_message: str) -> None:

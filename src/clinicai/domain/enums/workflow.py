@@ -15,9 +15,15 @@ class VisitWorkflowType(str, Enum):
 class VisitStatus(str, Enum):
     """Visit status values for different workflow types."""
 
-    # Scheduled workflow statuses (existing)
+    # High-level lifecycle / shared base statuses
+    PATIENT_REGISTERED = "patient_registered"  # Base state after patient registration
+
+    # Scheduled workflow statuses (existing + new granular intake states)
+    INTAKE_PENDING = "intake_pending"  # Intake has not started yet
+    INTAKE_IN_PROGRESS = "intake_in_progress"  # Intake questions in progress
     INTAKE = "intake"
     TRANSCRIPTION = "transcription"
+    TRANSCRIPTION_PROCESSING = "transcription_processing"
     SOAP_GENERATION = "soap_generation"
     PRESCRIPTION_ANALYSIS = "prescription_analysis"
     COMPLETED = "completed"
@@ -27,6 +33,7 @@ class VisitStatus(str, Enum):
     TRANSCRIPTION_PENDING = "transcription_pending"  # Ready for audio upload
     TRANSCRIPTION_COMPLETED = "transcription_completed"  # Audio transcribed
     VITALS_PENDING = "vitals_pending"  # Ready for vitals input
+    VITALS_IN_PROGRESS = "vitals_in_progress"  # Vitals being entered/edited
     VITALS_COMPLETED = "vitals_completed"  # Vitals entered
     SOAP_PENDING = "soap_pending"  # Ready for SOAP generation
     SOAP_COMPLETED = "soap_completed"  # SOAP generated

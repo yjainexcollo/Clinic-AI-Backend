@@ -211,10 +211,7 @@ class GeneratePreVisitSummaryUseCase:
                 raise ValueError(f"Failed to store summary: {str(store_error)}") from store_error
 
             # Optionally reflect step completion in workflow
-            try:
-                visit.status = "pre_visit_summary_generated"
-            except Exception as status_error:
-                logger.warning(f"Failed to update visit status: {status_error}")
+            # Status progression is handled inside Visit.store_pre_visit_summary via _set_status
 
             # Save the updated visit to repository (critical)
             try:

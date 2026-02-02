@@ -942,7 +942,8 @@ async def store_vitals(
                 "prescription_analysis",
                 "completed",
             ]:
-                visit.status = "soap_generation"
+                # Use centralized status transition helper so previous/next are updated too
+                visit._set_status("soap_generation")
 
         await visit_repo.save(visit)
         return {

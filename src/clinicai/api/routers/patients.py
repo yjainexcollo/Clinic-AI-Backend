@@ -1090,10 +1090,8 @@ async def reset_intake_session(
 
         # Reset intake session by truncating all questions (pass -1 to truncate_after to clear all)
         if visit.intake_session:
-            visit.intake_session.truncate_after(-1)
-            visit.symptom = ""  # Reset symptom too
-            visit.status = "intake"  # Reset visit status
-            visit.updated_at = datetime.utcnow()
+            # Use domain helper so status fields are consistent
+            visit.reset_intake_session()
             await visit_repo.save(visit)
             logger.info(f"Reset intake session for patient {internal_patient_id}, visit {visit_id}")
 
