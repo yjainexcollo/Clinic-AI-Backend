@@ -13,25 +13,31 @@ class VisitWorkflowType(str, Enum):
 
 
 class VisitStatus(str, Enum):
-    """Visit status values for different workflow types."""
+    """Visit status values for different workflow stages.
 
-    # Scheduled workflow statuses (existing)
-    INTAKE = "intake"
-    TRANSCRIPTION = "transcription"
-    SOAP_GENERATION = "soap_generation"
-    PRESCRIPTION_ANALYSIS = "prescription_analysis"
-    COMPLETED = "completed"
+    We intentionally expose only high-level flow names (no *_pending /
+    *_in_progress / *_completed suffixes). The eight primary stages are:
 
-    # Walk-in workflow statuses (sequential)
-    WALK_IN_PATIENT = "walk_in_patient"  # Initial state
-    TRANSCRIPTION_PENDING = "transcription_pending"  # Ready for audio upload
-    TRANSCRIPTION_COMPLETED = "transcription_completed"  # Audio transcribed
-    VITALS_PENDING = "vitals_pending"  # Ready for vitals input
-    VITALS_COMPLETED = "vitals_completed"  # Vitals entered
-    SOAP_PENDING = "soap_pending"  # Ready for SOAP generation
-    SOAP_COMPLETED = "soap_completed"  # SOAP generated
-    POST_VISIT_PENDING = "post_visit_pending"  # Ready for post-visit summary
-    POST_VISIT_COMPLETED = "post_visit_completed"  # Post-visit summary generated
+    - patient_registered
+    - intake
+    - pre_visit_summary
+    - vitals
+    - transcription
+    - soap_generation
+    - post_visit_summary
+    - completed
+    """
 
-    # Common statuses
+    # Core visit lifecycle (shared between scheduled and walk-in)
+    PATIENT_REGISTERED = "patient_registered"  # After patient registration
+    INTAKE = "intake"  # Intake form in progress/completed
+    PRE_VISIT_SUMMARY = "pre_visit_summary"  # Pre-visit summary generated
+    VITALS = "vitals"  # Vitals form (entered / editable)
+    TRANSCRIPTION = "transcription"  # Transcript captured / in progress
+    SOAP_GENERATION = "soap_generation"  # SOAP / prescription analysis step
+    POST_VISIT_SUMMARY = "post_visit_summary"  # Post-visit summary generated
+    COMPLETED = "completed"  # Visit fully completed
+
+    # Optional / legacy statuses
+    WALK_IN_PATIENT = "walk_in_patient"  # Legacy initial state for walk-in workflow
     CANCELLED = "cancelled"

@@ -46,9 +46,8 @@ from ..deps import (
     VisitRepositoryDep,
 )
 from ..schemas import ErrorResponse
-from ..schemas.common import ApiResponse, ErrorResponse
+from ..schemas.common import ApiResponse, ErrorResponse, fail, ok
 from ..schemas.medical import SOAPNoteRequest
-from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/notes")
 logger = logging.getLogger("clinicai")
@@ -374,7 +373,7 @@ async def transcribe_audio(
                             "message": f"Scheduled visit not ready for transcription. Current status: {visit.status}. Please fill vitals first before uploading transcript.",
                             "details": {
                                 "current_status": visit.status,
-                                "required_status": "vitals or vitals_completed",
+                                "required_status": "vitals",
                             },
                         },
                     )
@@ -386,7 +385,7 @@ async def transcribe_audio(
                             "message": f"Walk-in visit not ready for transcription. Current status: {visit.status}. Please complete vitals first.",
                             "details": {
                                 "current_status": visit.status,
-                                "required_status": "vitals_completed",
+                                "required_status": "vitals",
                             },
                         },
                     )
@@ -739,7 +738,7 @@ async def get_transcription_status(
 
 @router.post(
     "/soap/generate",
-    response_model=SoapGenerationResponse,
+    response_model=ApiResponse[SoapGenerationResponse],
     status_code=status.HTTP_200_OK,
     tags=["SOAP Note Generation"],
     responses={
@@ -816,13 +815,14 @@ async def generate_soap_note(
         # Convert DTO to response format (encode patient_id for client)
         from ...core.utils.crypto import encode_patient_id
 
-        return {
-            "patient_id": encode_patient_id(result.patient_id),
-            "visit_id": result.visit_id,
-            "soap_note": result.soap_note,
-            "generated_at": result.generated_at,
-            "message": result.message,
-        }
+        response_payload = SoapGenerationResponse(
+            patient_id=encode_patient_id(result.patient_id),
+            visit_id=result.visit_id,
+            soap_note=result.soap_note,
+            generated_at=result.generated_at,
+            message=result.message,
+        )
+        return ok(http_request, data=response_payload, message=result.message)
 
     except ValueError as e:
         error_message = str(e)
@@ -938,10 +938,10 @@ async def store_vitals(
             # If transcript exists, update to soap_generation
             if visit.status not in [
                 "soap_generation",
-                "prescription_analysis",
                 "completed",
             ]:
-                visit.status = "soap_generation"
+                # Use centralized status transition helper so previous/next are updated too
+                visit._set_status("soap_generation")
 
         await visit_repo.save(visit)
         return {

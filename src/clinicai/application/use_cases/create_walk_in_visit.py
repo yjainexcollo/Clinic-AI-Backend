@@ -7,7 +7,7 @@ from clinicai.application.ports.repositories.visit_repo import VisitRepository
 from clinicai.core.config import get_settings
 from clinicai.domain.entities.patient import Patient
 from clinicai.domain.entities.visit import Visit
-from clinicai.domain.enums.workflow import VisitWorkflowType
+from clinicai.domain.enums.workflow import VisitStatus, VisitWorkflowType
 from clinicai.domain.errors import DuplicatePatientError, PatientNotFoundError
 from clinicai.domain.value_objects.patient_id import PatientId
 from clinicai.domain.value_objects.visit_id import VisitId
@@ -103,7 +103,10 @@ class CreateWalkInVisitUseCase:
             doctor_id=doctor_id,
             symptom="",  # No symptom for walk-in
             workflow_type=VisitWorkflowType.WALK_IN,
-            status="walk_in_patient",
+            # Status lifecycle for walk-in visit right after registration
+            previous_status=VisitStatus.PATIENT_REGISTERED.value,
+            status=VisitStatus.VITALS.value,
+            next_status=VisitStatus.TRANSCRIPTION.value,
             recently_travelled=False,  # Default to False for walk-in visits
         )
 
@@ -118,6 +121,6 @@ class CreateWalkInVisitUseCase:
             patient_id=patient.patient_id.value,
             visit_id=visit_id.value,
             workflow_type=VisitWorkflowType.WALK_IN.value,
-            status="walk_in_patient",
+            status=VisitStatus.VITALS.value,
             message="Walk-in visit created successfully. Patient can proceed to transcription.",
         )

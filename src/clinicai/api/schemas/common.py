@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
+from fastapi import Request
+from fastapi import status as http_status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from pydantic.generics import GenericModel
 
@@ -125,3 +128,69 @@ class BlobFileInfo(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     created_at: datetime = Field(..., description="Creation timestamp")
     expires_at: Optional[datetime] = Field(None, description="File expiry date")
+
+
+# ============================================================================
+# RESPONSE HELPER FUNCTIONS
+# ============================================================================
+
+
+def ok(request: Request, data: Any = None, message: str = "Success") -> JSONResponse:
+    """
+    Create a standardized success response.
+
+    Args:
+        request: FastAPI Request object (for extracting request_id if available)
+        data: Response data payload
+        message: Success message
+
+    Returns:
+        JSONResponse with ApiResponse structure
+    """
+    request_id = getattr(request.state, "request_id", None)
+    response = ApiResponse(
+        success=True,
+        message=message,
+        data=data,
+        request_id=request_id or "",
+    )
+    # Use Pydantic v2 JSON-mode dump so nested datetimes etc. are JSON-serializable
+    return JSONResponse(
+        content=response.model_dump(mode="json", exclude_none=True),
+        status_code=http_status.HTTP_200_OK,
+    )
+
+
+def fail(
+    request: Request,
+    error: str,
+    message: str,
+    status_code: int = http_status.HTTP_400_BAD_REQUEST,
+    details: Optional[dict] = None,
+) -> JSONResponse:
+    """
+    Create a standardized error response.
+
+    Args:
+        request: FastAPI Request object (for extracting request_id if available)
+        error: Error code/type
+        message: Human-readable error message
+        status_code: HTTP status code (default: 400)
+        details: Optional additional error details
+
+    Returns:
+        JSONResponse with ErrorResponse structure
+    """
+    request_id = getattr(request.state, "request_id", None)
+    response = ErrorResponse(
+        success=False,
+        error=error,
+        message=message,
+        details=details,
+        request_id=request_id or "",
+    )
+    # Use Pydantic v2 JSON-mode dump so nested datetimes etc. are JSON-serializable
+    return JSONResponse(
+        content=response.model_dump(mode="json", exclude_none=True),
+        status_code=status_code,
+    )

@@ -8,6 +8,7 @@ Formatting-only changes; behavior preserved.
 from ...core.config import get_settings
 from ...domain.entities.patient import Patient
 from ...domain.entities.visit import Visit
+from ...domain.enums.workflow import VisitStatus
 
 # Domain events currently not dispatched here; keeping behavior unchanged.
 from ...domain.value_objects.patient_id import PatientId
@@ -51,7 +52,11 @@ class RegisterPatientUseCase:
                 patient_id=existing_patient.patient_id.value,
                 doctor_id=doctor_id,
                 symptom="",
-                recently_travelled=request.recently_travelled,  # Store travel history on visit (visit-specific)
+                # Status lifecycle for scheduled visit right after registration
+                previous_status=VisitStatus.PATIENT_REGISTERED.value,
+                status=VisitStatus.INTAKE.value,
+                next_status=VisitStatus.PRE_VISIT_SUMMARY.value,
+                recently_travelled=request.recently_travelled,
             )
             settings = get_settings()
             visit.intake_session.max_questions = settings.intake.max_questions
@@ -103,6 +108,10 @@ class RegisterPatientUseCase:
             patient_id=patient_id.value,
             doctor_id=doctor_id,
             symptom="",
+            # Status lifecycle for scheduled visit right after registration
+            previous_status=VisitStatus.PATIENT_REGISTERED.value,
+            status=VisitStatus.INTAKE.value,
+            next_status=VisitStatus.PRE_VISIT_SUMMARY.value,
             recently_travelled=request.recently_travelled,
         )
         settings = get_settings()

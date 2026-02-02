@@ -94,7 +94,7 @@ class GeneratePreVisitSummaryUseCase:
                 }
                 medication_images_list = None
 
-            # Branch 2: At least one answer -> normal AI-powered summary
+            # Branch 2: At least one answer -> AI-powered summary (two-step evidence-based pipeline)
             else:
                 # Prepare patient data
                 patient_data = {
@@ -121,17 +121,6 @@ class GeneratePreVisitSummaryUseCase:
                     patient_internal_id = str(patient.patient_id.value)
                     patient_encoded_id = encode_patient_id(patient_internal_id)
 
-                    logger.info(
-                        "[GeneratePreVisitSummary] Querying medication images for visit %s",
-                        visit.visit_id.value,
-                    )
-                    logger.info(
-                        "[GeneratePreVisitSummary] Patient internal_id: %s..., encoded_id: %s...",
-                        patient_internal_id[:50],
-                        patient_encoded_id[:50],
-                    )
-
-                    # Also check original request patient_id (might be encoded and different from our encoding)
                     docs = await MedicationImageMongo.find(
                         Or(
                             MedicationImageMongo.patient_id == patient_internal_id,
@@ -141,25 +130,7 @@ class GeneratePreVisitSummaryUseCase:
                         MedicationImageMongo.visit_id == visit.visit_id.value,
                     ).to_list()
 
-                    # If no docs found, try querying all images for this visit to see what patient_ids exist
-                    if not docs:
-                        all_visit_images = await MedicationImageMongo.find(
-                            MedicationImageMongo.visit_id == visit.visit_id.value,
-                        ).to_list()
-                        if all_visit_images:
-                            logger.warning(
-                                "[GeneratePreVisitSummary] No images found with patient_id match, "
-                                "but found %s images for visit %s",
-                                len(all_visit_images),
-                                visit.visit_id.value,
-                            )
-
                     if docs:
-                        logger.info(
-                            "[GeneratePreVisitSummary] Found %s medication images for visit %s",
-                            len(docs),
-                            visit.visit_id.value,
-                        )
                         medication_images_list = [
                             {
                                 "id": str(getattr(d, "id", "")),
@@ -173,11 +144,6 @@ class GeneratePreVisitSummaryUseCase:
                             f"{len(docs)} medication image(s): "
                             f"{', '.join([d.filename for d in docs])}"
                         )
-                    else:
-                        logger.info(
-                            "[GeneratePreVisitSummary] No medication images found for visit %s",
-                            visit.visit_id.value,
-                        )
                 except Exception as e:
                     logger.warning(
                         "Failed to query medication images before summary generation: %s",
@@ -185,12 +151,11 @@ class GeneratePreVisitSummaryUseCase:
                         exc_info=True,
                     )
 
-                # Generate summary using AI service
+                # Generate summary using AI service (internally evidence-based)
                 try:
                     logger.info(
-                        "Generating pre-visit summary for visit %s, patient %s",
+                        "Generating pre-visit summary (evidence-based) for visit %s",
                         request.visit_id,
-                        request.patient_id[:50] if request.patient_id else None,
                     )
                     summary_result = await self._question_service.generate_pre_visit_summary(
                         patient_data,
@@ -246,10 +211,7 @@ class GeneratePreVisitSummaryUseCase:
                 raise ValueError(f"Failed to store summary: {str(store_error)}") from store_error
 
             # Optionally reflect step completion in workflow
-            try:
-                visit.status = "pre_visit_summary_generated"
-            except Exception as status_error:
-                logger.warning(f"Failed to update visit status: {status_error}")
+            # Status progression is handled inside Visit.store_pre_visit_summary via _set_status
 
             # Save the updated visit to repository (critical)
             try:
