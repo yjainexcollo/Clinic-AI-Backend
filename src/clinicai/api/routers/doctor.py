@@ -5,13 +5,12 @@ from fastapi import APIRouter, Request, status
 
 from ...adapters.db.mongo.models.patient_m import DoctorPreferencesMongo
 from ...core.config import get_settings
-from ..schemas.common import ApiResponse
+from ..schemas.common import ApiResponse, fail, ok
 from ..schemas.doctor_preferences import (
     DoctorPreferencesResponse,
     PreVisitSectionConfig,
     UpsertDoctorPreferencesRequest,
 )
-from ..schemas.common import fail, ok
 
 router = APIRouter(prefix="/doctor")
 DEFAULT_GLOBAL_CATEGORIES = [

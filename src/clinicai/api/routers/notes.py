@@ -46,9 +46,8 @@ from ..deps import (
     VisitRepositoryDep,
 )
 from ..schemas import ErrorResponse
-from ..schemas.common import ApiResponse, ErrorResponse
+from ..schemas.common import ApiResponse, ErrorResponse, fail, ok
 from ..schemas.medical import SOAPNoteRequest
-from ..schemas.common import fail, ok
 
 router = APIRouter(prefix="/notes")
 logger = logging.getLogger("clinicai")

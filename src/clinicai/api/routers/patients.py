@@ -75,8 +75,7 @@ from ..schemas import (
     VisitListItemSchema,
     VisitListResponse,
 )
-from ..schemas.common import ApiResponse, ErrorResponse
-from ..schemas.common import fail, ok
+from ..schemas.common import ApiResponse, ErrorResponse, fail, ok
 
 router = APIRouter(prefix="/patients")
 logger = logging.getLogger("clinicai")
