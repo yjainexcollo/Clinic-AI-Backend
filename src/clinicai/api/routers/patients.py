@@ -20,7 +20,6 @@ from ...application.dto.patient_dto import (
     EditAnswerRequest,
     PostVisitSummaryRequest,
     PreVisitSummaryRequest,
-    RegisterPatientRequest,
 )
 from ...application.use_cases.answer_intake import AnswerIntakeUseCase
 from ...application.use_cases.generate_post_visit_summary import (
@@ -29,7 +28,9 @@ from ...application.use_cases.generate_post_visit_summary import (
 from ...application.use_cases.generate_pre_visit_summary import (
     GeneratePreVisitSummaryUseCase,
 )
-from ...application.use_cases.register_patient import RegisterPatientUseCase
+from ...application.use_cases.unified_register_patient import (
+    UnifiedRegisterPatientUseCase,
+)
 from ...core.utils.crypto import decode_patient_id, encode_patient_id
 from ...domain.enums.workflow import VisitWorkflowType
 from ...domain.errors import (
@@ -64,12 +65,12 @@ from ..schemas import (
     PatientWithVisitsSchema,
     PostVisitSummaryResponse,
     PreVisitSummaryResponse,
-)
-from ..schemas import RegisterPatientRequest as RegisterPatientRequestSchema
-from ..schemas import (
-    RegisterPatientResponse,
     SoapNoteSchema,
     TranscriptionSessionSchema,
+)
+from ..schemas import UnifiedRegisterPatientRequest as UnifiedRegisterPatientRequestSchema
+from ..schemas import UnifiedRegisterPatientResponse as UnifiedRegisterPatientResponseSchema
+from ..schemas import (
     VisitDetailSchema,
     VisitListItemSchema,
     VisitListResponse,
@@ -82,11 +83,11 @@ logger = logging.getLogger("clinicai")
 
 
 @router.post(
-    "/",
-    response_model=ApiResponse[RegisterPatientResponse],
+    "/register",
+    response_model=ApiResponse[UnifiedRegisterPatientResponseSchema],
     status_code=status.HTTP_201_CREATED,
     tags=["Patient Registration"],
-    summary="Register a new patient and start intake session",
+    summary="Register a patient (scheduled or walk-in)",
     responses={
         201: {"description": "Patient registered successfully"},
         400: {"model": ErrorResponse, "description": "Invalid input"},
@@ -95,25 +96,21 @@ logger = logging.getLogger("clinicai")
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def register_patient(
+async def register_patient_unified(
     http_request: Request,
-    request: RegisterPatientRequestSchema,
+    request: UnifiedRegisterPatientRequestSchema,
     patient_repo: PatientRepositoryDep,
     visit_repo: VisitRepositoryDep,
     question_service: QuestionServiceDep,
 ):
     """
-    Register a new patient and start intake session.
+    Unified patient registration for scheduled and walk-in workflows.
 
-    This endpoint:
-    1. Validates patient data
-    2. Generates patient_id and visit_id
-    3. Creates patient and visit entities
-    4. Generates first question based on primary symptom
-    5. Returns patient_id, visit_id, and first question
+    - workflow_type: "scheduled" or "walk_in"
+    - Scheduled: requires first_name, last_name, consent; returns first_question for intake.
+    - Walk-in: requires name; returns visit ready for vitals.
     """
     try:
-        # Extract doctor_id from middleware
         doctor_id = getattr(http_request.state, "doctor_id", None)
         if not doctor_id:
             return fail(
@@ -123,33 +120,39 @@ async def register_patient(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Convert Pydantic model to DTO
-        dto_request = RegisterPatientRequest(
-            first_name=request.first_name,
-            last_name=request.last_name,
+        if request.workflow_type == "scheduled" and not question_service:
+            return fail(
+                http_request,
+                error="QUESTION_SERVICE_REQUIRED",
+                message="Question service is required for scheduled workflow",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        use_case = UnifiedRegisterPatientUseCase(patient_repo, visit_repo, question_service)
+        result = await use_case.execute(
+            workflow_type=request.workflow_type,
             mobile=request.mobile,
             age=request.age,
             gender=request.gender,
+            language=request.language,
+            first_name=request.first_name,
+            last_name=request.last_name,
             recently_travelled=request.recently_travelled,
             consent=request.consent,
             country=request.country,
-            language=request.language,
+            doctor_id=doctor_id,
         )
 
-        # Execute use case
-        use_case = RegisterPatientUseCase(patient_repo, visit_repo, question_service)
-        result = await use_case.execute(dto_request, doctor_id=doctor_id)
-
-        # Set IDs in request state for HIPAA audit middleware
         http_request.state.audit_patient_id = encode_patient_id(result.patient_id)
         http_request.state.audit_visit_id = result.visit_id
 
-        # Only return opaque patient_id/visit_id, do NOT include internal details
-        response = RegisterPatientResponse(
+        response = UnifiedRegisterPatientResponseSchema(
             patient_id=encode_patient_id(result.patient_id),
             visit_id=result.visit_id,
+            workflow_type=result.workflow_type,
+            status=result.status,
             first_question=result.first_question,
-            message="Patient registered successfully. Intake session started.",
+            message=result.message,
         )
         return ok(http_request, data=response, message="Created")
 
@@ -168,7 +171,6 @@ async def register_patient(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     except InvalidPatientDataError as e:
-        # InvalidPatientDataError indicates validation failure (mobile number, name, age, etc.)
         return fail(
             http_request,
             error="INVALID_PATIENT_DATA",
@@ -176,8 +178,14 @@ async def register_patient(
             details=e.details or {},
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+    except ValueError as e:
+        return fail(
+            http_request,
+            error="VALIDATION_ERROR",
+            message=str(e),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     except Exception as e:
-        # Log full exception details for debugging
         error_type = type(e).__name__
         error_message = str(e)
         logger.exception(
@@ -186,15 +194,10 @@ async def register_patient(
             extra={
                 "error_type": error_type,
                 "error_message": error_message,
-                "request_data": {
-                    "first_name": getattr(request, "first_name", None),
-                    "mobile": getattr(request, "mobile", None),
-                },
+                "workflow_type": getattr(request, "workflow_type", None),
+                "mobile": getattr(request, "mobile", None),
             },
         )
-        # Return error response with more detail in development mode
-        import os
-
         is_dev = os.getenv("APP_ENV", "production") == "development" or os.getenv("DEBUG", "false").lower() == "true"
         error_msg = f"{error_type}: {error_message}" if is_dev else "Internal error occurred."
         return fail(
@@ -1048,6 +1051,14 @@ async def reset_intake_session(
 ):
     """Reset intake session - clear all questions and start fresh."""
     try:
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         # Decode patient ID if needed
         try:
             internal_patient_id = decode_patient_id(patient_id)
@@ -1058,31 +1069,29 @@ async def reset_intake_session(
         from ...domain.value_objects.patient_id import PatientId
         from ...domain.value_objects.visit_id import VisitId
 
-        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             return fail(
                 request,
                 error="PATIENT_NOT_FOUND",
                 message=f"Patient {patient_id} not found",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             return fail(
                 request,
                 error="VISIT_NOT_FOUND",
                 message=f"Visit {visit_id} not found",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         # Reset intake session by truncating all questions (pass -1 to truncate_after to clear all)
         if visit.intake_session:
-            visit.intake_session.truncate_after(-1)
-            visit.symptom = ""  # Reset symptom too
-            visit.status = "intake"  # Reset visit status
-            visit.updated_at = datetime.utcnow()
+            # Use domain helper so status fields are consistent
+            visit.reset_intake_session()
             await visit_repo.save(visit)
             logger.info(f"Reset intake session for patient {internal_patient_id}, visit {visit_id}")
 
@@ -1123,29 +1132,37 @@ async def get_intake_status(
     from ..schemas.common import QuestionAnswer
 
     try:
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            return fail(
+                request,
+                error="MISSING_DOCTOR_ID",
+                message="X-Doctor-ID header is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         # Decode patient ID if needed
         try:
             internal_patient_id = decode_patient_id(patient_id)
         except Exception:
             internal_patient_id = patient_id
 
-        patient = await patient_repo.find_by_id(PatientId(internal_patient_id))
+        patient = await patient_repo.find_by_id(PatientId(internal_patient_id), doctor_id)
         if not patient:
             return fail(
                 request,
                 error="PATIENT_NOT_FOUND",
                 message=f"Patient {patient_id} not found",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             return fail(
                 request,
                 error="VISIT_NOT_FOUND",
                 message=f"Visit {visit_id} not found for patient {patient_id}",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         if not visit.intake_session:
@@ -1153,7 +1170,7 @@ async def get_intake_status(
                 request,
                 error="INTAKE_SESSION_NOT_FOUND",
                 message="No intake session found for this visit",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         intake_session = visit.intake_session
@@ -1198,6 +1215,7 @@ async def get_intake_status(
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        409: {"model": ErrorResponse, "description": "Pre-visit summary already exists"},
         422: {"model": ErrorResponse, "description": "Pre-visit summary generation failed"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -1244,6 +1262,28 @@ async def generate_pre_visit_summary(
             )
             decoded_patient_id = request.patient_id
 
+        # Check if pre-visit summary already exists
+        from ...domain.value_objects.visit_id import VisitId
+
+        visit_id_obj = VisitId(request.visit_id)
+        visit = await visit_repo.find_by_patient_and_visit_id(decoded_patient_id, visit_id_obj, doctor_id)
+        if not visit:
+            return fail(
+                http_request,
+                error="VISIT_NOT_FOUND",
+                message=f"Visit {request.visit_id} not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check if pre-visit summary already exists
+        if visit.has_pre_visit_summary():
+            return fail(
+                http_request,
+                error="PRE_VISIT_SUMMARY_ALREADY_EXISTS",
+                message="A pre-visit summary has already been generated for this visit. The summary cannot be regenerated. Please proceed to the next step in the workflow.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         dto_request = PreVisitSummaryRequest(
             patient_id=decoded_patient_id,
             visit_id=request.visit_id,
@@ -1258,6 +1298,8 @@ async def generate_pre_visit_summary(
             visit_id=result.visit_id,
             summary=result.summary,
             generated_at=result.generated_at,
+            medication_images=result.medication_images,
+            red_flags=result.red_flags,
         )
 
     except ValueError as e:
@@ -1406,7 +1448,7 @@ async def get_pre_visit_summary(
                     visit_id=visit_id,
                 )
 
-                result = await summary_use_case.execute(summary_request)
+                result = await summary_use_case.execute(summary_request, doctor_id=doctor_id)
                 logger.info(f"Successfully generated pre-visit summary for visit {visit_id}")
 
                 # Attach images explicitly in case use case didn't find them
@@ -1647,7 +1689,11 @@ async def generate_post_visit_summary(
         # Execute use case - pass doctor_id as second argument
         result = await use_case.execute(decoded_request, doctor_id)
 
-        return ok(http_request, data=result)
+        return ok(
+            http_request,
+            data=result,
+            message="Post-visit summary generated successfully",
+        )
 
     except PatientNotFoundError as e:
         return fail(
@@ -1721,7 +1767,11 @@ async def get_post_visit_summary(
                     "message": "No post-visit summary stored",
                 },
             )
-        return ok(request, data=PostVisitSummaryResponse(**data))
+        return ok(
+            request,
+            data=PostVisitSummaryResponse(**data),
+            message="Post-visit summary retrieved successfully",
+        )
     except PatientNotFoundError as e:
         return fail(request, error="PATIENT_NOT_FOUND", message=e.message)
     except VisitNotFoundError as e:
@@ -1759,6 +1809,7 @@ class VitalsPayload(BaseModel):
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
         404: {"model": ErrorResponse, "description": "Patient or visit not found"},
+        409: {"model": ErrorResponse, "description": "Vitals already recorded for this visit"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -1817,6 +1868,30 @@ async def store_vitals(
                 },
             )
 
+        # Enforce workflow rules for vitals, especially for scheduled visits
+        # For scheduled workflow, vitals can only be filled AFTER pre-visit
+        # summary is generated. This prevents vitals from being attached while
+        # the visit is still in pure "intake" state.
+        if visit.is_scheduled_workflow():
+            if not visit.pre_visit_summary:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "error": "PRE_VISIT_NOT_GENERATED",
+                        "message": "Pre-visit summary must be generated before vitals can be recorded for scheduled visits.",
+                        "details": {},
+                    },
+                )
+
+        # Disallow editing vitals once they have been recorded
+        if visit.vitals:
+            return fail(
+                request,
+                error="VITALS_ALREADY_EXISTS",
+                message="Vitals have already been recorded for this visit and cannot be modified. Use GET to view the existing values.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         # Convert vitals to dict format
         vitals_dict = {
             "blood_pressure": vitals.bloodPressure,
@@ -1837,20 +1912,14 @@ async def store_vitals(
         # Update visit status based on workflow type
         visit.complete_vitals()  # Handles both walk-in and scheduled workflows
 
-        # Additional status updates for scheduled visits with existing transcripts
-        if visit.is_scheduled_workflow() and visit.is_transcription_complete():
-            # If transcript exists, update to soap_generation
-            if visit.status not in [
-                "soap_generation",
-                "prescription_analysis",
-                "completed",
-            ]:
-                visit.status = "soap_generation"
-
         # Persist visit (not patient)
         await visit_repo.save(visit)
 
-        return ok(request, data={"success": True, "message": "Vitals stored successfully"})
+        return ok(
+            request,
+            data={"success": True, "vitals": visit.vitals},
+            message="Vitals stored successfully",
+        )
 
     except HTTPException:
         raise
@@ -1936,7 +2005,7 @@ async def get_vitals(
                 },
             )
 
-        return ok(request, data=visit.vitals)
+        return ok(request, data=visit.vitals, message="Vitals retrieved successfully")
 
     except HTTPException:
         raise
@@ -2021,7 +2090,7 @@ async def list_patient_visits(
                 request,
                 error="INVALID_PATIENT_ID",
                 message=f"Invalid patient ID format: {str(ve)}",
-                status_message=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
         # Verify patient exists - with doctor_id for data isolation
@@ -2031,7 +2100,7 @@ async def list_patient_visits(
                 request,
                 error="PATIENT_NOT_FOUND",
                 message=f"Patient {patient_id} not found",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         # Get all visits for this patient - with doctor_id for data isolation
@@ -2078,6 +2147,8 @@ async def list_patient_visits(
                     symptom=visit.symptom or "",
                     workflow_type=visit.workflow_type.value,
                     status=visit.status,
+                    previous_status=getattr(visit, "previous_status", None),
+                    next_status=getattr(visit, "next_status", None),
                     created_at=visit.created_at,
                     updated_at=visit.updated_at,
                     has_transcript=has_transcript,
@@ -2177,7 +2248,7 @@ async def get_visit_detail(
                 request,
                 error="INVALID_PATIENT_ID",
                 message=f"Invalid patient ID format: {str(ve)}",
-                status_message=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
         # Get doctor_id from request state
@@ -2197,7 +2268,7 @@ async def get_visit_detail(
                 request,
                 error="PATIENT_NOT_FOUND",
                 message=f"Patient {patient_id} not found",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         # Get visit
@@ -2208,7 +2279,7 @@ async def get_visit_detail(
                 request,
                 error="VISIT_NOT_FOUND",
                 message=f"Visit {visit_id} not found for patient {patient_id}",
-                status_message=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
         # Format intake session
@@ -2283,6 +2354,8 @@ async def get_visit_detail(
             symptom=visit.symptom or "",
             workflow_type=visit.workflow_type.value,
             status=visit.status,
+            previous_status=getattr(visit, "previous_status", None),
+            next_status=getattr(visit, "next_status", None),
             created_at=visit.created_at,
             updated_at=visit.updated_at,
             intake_session=intake_session_data,

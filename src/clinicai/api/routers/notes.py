@@ -739,7 +739,7 @@ async def get_transcription_status(
 
 @router.post(
     "/soap/generate",
-    response_model=SoapGenerationResponse,
+    response_model=ApiResponse[SoapGenerationResponse],
     status_code=status.HTTP_200_OK,
     tags=["SOAP Note Generation"],
     responses={
@@ -816,13 +816,14 @@ async def generate_soap_note(
         # Convert DTO to response format (encode patient_id for client)
         from ...core.utils.crypto import encode_patient_id
 
-        return {
-            "patient_id": encode_patient_id(result.patient_id),
-            "visit_id": result.visit_id,
-            "soap_note": result.soap_note,
-            "generated_at": result.generated_at,
-            "message": result.message,
-        }
+        response_payload = SoapGenerationResponse(
+            patient_id=encode_patient_id(result.patient_id),
+            visit_id=result.visit_id,
+            soap_note=result.soap_note,
+            generated_at=result.generated_at,
+            message=result.message,
+        )
+        return ok(http_request, data=response_payload, message=result.message)
 
     except ValueError as e:
         error_message = str(e)
@@ -941,7 +942,8 @@ async def store_vitals(
                 "prescription_analysis",
                 "completed",
             ]:
-                visit.status = "soap_generation"
+                # Use centralized status transition helper so previous/next are updated too
+                visit._set_status("soap_generation")
 
         await visit_repo.save(visit)
         return {
@@ -1420,14 +1422,24 @@ async def structure_dialogue(
                 },
             )
 
-        patient = await patient_repo.find_by_id(pid)
+        doctor_id = getattr(request.state, "doctor_id", None)
+        if not doctor_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "MISSING_DOCTOR_ID",
+                    "message": "X-Doctor-ID header is required",
+                    "details": {},
+                },
+            )
+        patient = await patient_repo.find_by_id(pid, doctor_id)
         if not patient:
             raise PatientNotFoundError(internal_patient_id)
 
         from ...domain.value_objects.visit_id import VisitId
 
         visit_id_obj = VisitId(visit_id)
-        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj)
+        visit = await visit_repo.find_by_patient_and_visit_id(internal_patient_id, visit_id_obj, doctor_id)
         if not visit:
             raise VisitNotFoundError(visit_id)
         if not visit.transcription_session or not visit.transcription_session.transcript:

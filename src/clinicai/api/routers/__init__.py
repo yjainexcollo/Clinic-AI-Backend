@@ -1,2 +1,2 @@
 # API routers package
-from . import health, notes, patients, workflow
+from . import health, notes, patients, status, workflow

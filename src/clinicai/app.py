@@ -19,7 +19,7 @@ from clinicai.api.schemas.common import ErrorResponse
 from clinicai.middleware.request_id_middleware import RequestIDMiddleware
 
 from .api.routers import doctor as doctor_router
-from .api.routers import health, notes, patients, workflow
+from .api.routers import health, notes, patients, status, workflow
 from .core.config import get_settings
 from .core.hipaa_audit import get_audit_logger
 from .domain.errors import DomainError
@@ -518,7 +518,7 @@ def create_app() -> FastAPI:
             description=app.description,
             routes=app.routes,
         )
-        # Define tag order: Health, Patient Registration, Patient Management, Intake + Previsit, Vitals and Transcript, Soap, Postvisit, Audio Management
+        # Define tag order: Health, Patient Registration, Patient Management, Intake + Previsit, Vitals and Transcript, Soap, Postvisit, Check Status, Audio Management
         openapi_schema["tags"] = [
             {"name": "health", "description": "Health and readiness checks"},
             {
@@ -544,6 +544,10 @@ def create_app() -> FastAPI:
             {
                 "name": "Post-Visit Summary",
                 "description": "Post-visit summary generation and retrieval",
+            },
+            {
+                "name": "Check Status",
+                "description": "Workflow flow visualization and visit status tracking",
             },
             {
                 "name": "Audio Management",
@@ -765,11 +769,12 @@ def create_app() -> FastAPI:
     # Register X-Request-ID middleware after CORS etc.
     app.add_middleware(RequestIDMiddleware)
 
-    # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Transcription → Audio → Doctor → Debug
+    # Include routers in logical order: Health → Patients → Intake → Workflow → Notes → Status → Transcription → Audio → Doctor → Debug
     app.include_router(health.router)
     app.include_router(patients.router)
     app.include_router(workflow.router)
     app.include_router(notes.router)
+    app.include_router(status.router)
     # Expose doctor preferences routes in OpenAPI/Swagger while keeping runtime behavior unchanged
     app.include_router(doctor_router.router, include_in_schema=True)
 
@@ -807,6 +812,16 @@ def create_app() -> FastAPI:
             ).dict(),
         )
 
+    def _sanitize_for_json(obj):
+        """Recursively make obj JSON-serializable (e.g. ValueError in Pydantic error ctx)."""
+        if isinstance(obj, Exception):
+            return str(obj)
+        if isinstance(obj, dict):
+            return {k: _sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_sanitize_for_json(x) for x in obj]
+        return obj
+
     @app.exception_handler(RequestValidationError)
     async def pydantic_error_handler(request: Request, exc: RequestValidationError):
         req_id = getattr(request.state, "request_id", None)
@@ -827,13 +842,16 @@ def create_app() -> FastAPI:
             msg = error.get("msg", "Validation error")
             error_messages.append(f"{loc}: {msg}")
 
+        # Sanitize so details are JSON-serializable (ctx can contain ValueError etc.)
+        safe_details = _sanitize_for_json(error_details)
+
         return JSONResponse(
             status_code=422,
             content=ErrorResponse(
                 error="INVALID_INPUT",
                 message=f"Input validation failed: {'; '.join(error_messages)}",
                 request_id=req_id or "",
-                details={"errors": error_details, "path": request.url.path},
+                details={"errors": safe_details, "path": request.url.path},
             ).dict(),
         )
 
@@ -885,7 +903,7 @@ async def root():
         "swagger_yaml": "/swagger.yaml",
         "endpoints": {
             "health": "/health",
-            "register_patient": "POST /patients/",
+            "register_patient": "POST /patients/register",
             "answer_intake": "POST /patients/consultations/answer",
             "pre_visit_summary": "POST /patients/summary/previsit",
             "get_summary": "GET /patients/{patient_id}/visits/{visit_id}/summary",
