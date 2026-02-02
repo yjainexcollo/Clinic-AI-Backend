@@ -31,6 +31,7 @@ from clinicai.core.constants import (
 
 logger = logging.getLogger("clinicai")
 
+
 class PrevisitEvidenceItem(BaseModel):
     """A single extracted fact with a source reference to an intake answer."""
 

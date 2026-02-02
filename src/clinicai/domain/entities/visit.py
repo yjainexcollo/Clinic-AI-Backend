@@ -567,7 +567,13 @@ class Visit:
         elif self.status == "pre_visit_summary_generated":
             # After pre-visit summary, vitals form comes next
             steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
-        elif self.status in ["vitals", "vitals_pending", "vitals_completed", "transcription", "transcription_completed"]:
+        elif self.status in [
+            "vitals",
+            "vitals_pending",
+            "vitals_completed",
+            "transcription",
+            "transcription_completed",
+        ]:
             # After pre-visit, keep vitals available for edits even if workflow advanced
             steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
         else:
