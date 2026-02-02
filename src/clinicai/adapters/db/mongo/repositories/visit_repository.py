@@ -670,16 +670,20 @@ class MongoVisitRepository(VisitRepository):
                 {"status": 1},
             )
             old_status = (doc or {}).get("status")
+            # Only update previous_status if status is actually changing
+            # If status is already "transcription", don't update previous_status
+            update_fields = {
+                "status": "transcription",
+                "next_status": "soap_generation",
+                "updated_at": now,
+            }
+            if old_status != "transcription":
+                # Status is changing, so update previous_status to the old status
+                update_fields["previous_status"] = old_status
+
             await collection.update_one(
                 {"patient_id": patient_id, "visit_id": visit_id.value, "doctor_id": doctor_id},
-                {
-                    "$set": {
-                        "previous_status": old_status,
-                        "status": "transcription_processing",
-                        "next_status": "transcription_completed",
-                        "updated_at": now,
-                    }
-                },
+                {"$set": update_fields},
             )
         except Exception:
             # Non-fatal; transcription claim succeeded, UI hints may be slightly stale.

@@ -105,8 +105,8 @@ class CreateWalkInVisitUseCase:
             workflow_type=VisitWorkflowType.WALK_IN,
             # Status lifecycle for walk-in visit right after registration
             previous_status=VisitStatus.PATIENT_REGISTERED.value,
-            status=VisitStatus.VITALS_PENDING.value,
-            next_status=VisitStatus.VITALS_IN_PROGRESS.value,
+            status=VisitStatus.VITALS.value,
+            next_status=VisitStatus.TRANSCRIPTION.value,
             recently_travelled=False,  # Default to False for walk-in visits
         )
 
@@ -121,6 +121,6 @@ class CreateWalkInVisitUseCase:
             patient_id=patient.patient_id.value,
             visit_id=visit_id.value,
             workflow_type=VisitWorkflowType.WALK_IN.value,
-            status=VisitStatus.VITALS_PENDING.value,
+            status=VisitStatus.VITALS.value,
             message="Walk-in visit created successfully. Patient can proceed to transcription.",
         )

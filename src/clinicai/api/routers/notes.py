@@ -46,9 +46,8 @@ from ..deps import (
     VisitRepositoryDep,
 )
 from ..schemas import ErrorResponse
-from ..schemas.common import ApiResponse, ErrorResponse
+from ..schemas.common import ApiResponse, ErrorResponse, fail, ok
 from ..schemas.medical import SOAPNoteRequest
-from ..utils.responses import fail, ok
 
 router = APIRouter(prefix="/notes")
 logger = logging.getLogger("clinicai")
@@ -374,7 +373,7 @@ async def transcribe_audio(
                             "message": f"Scheduled visit not ready for transcription. Current status: {visit.status}. Please fill vitals first before uploading transcript.",
                             "details": {
                                 "current_status": visit.status,
-                                "required_status": "vitals or vitals_completed",
+                                "required_status": "vitals",
                             },
                         },
                     )
@@ -386,7 +385,7 @@ async def transcribe_audio(
                             "message": f"Walk-in visit not ready for transcription. Current status: {visit.status}. Please complete vitals first.",
                             "details": {
                                 "current_status": visit.status,
-                                "required_status": "vitals_completed",
+                                "required_status": "vitals",
                             },
                         },
                     )
@@ -939,7 +938,6 @@ async def store_vitals(
             # If transcript exists, update to soap_generation
             if visit.status not in [
                 "soap_generation",
-                "prescription_analysis",
                 "completed",
             ]:
                 # Use centralized status transition helper so previous/next are updated too

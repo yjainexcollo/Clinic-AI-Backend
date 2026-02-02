@@ -75,8 +75,7 @@ from ..schemas import (
     VisitListItemSchema,
     VisitListResponse,
 )
-from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import fail, ok
+from ..schemas.common import ApiResponse, ErrorResponse, fail, ok
 
 router = APIRouter(prefix="/patients")
 logger = logging.getLogger("clinicai")
@@ -1234,7 +1233,7 @@ async def generate_pre_visit_summary(
     1. Validates patient and visit exist
     2. Uses whatever intake answers are currently available (0 or more)
     3. Generates AI-powered clinical summary or a fixed message if no answers exist
-    4. Updates visit status to pre_visit_summary_generated
+    4. Updates visit status to pre_visit_summary
     """
     try:
         # Set IDs in request state for HIPAA audit middleware

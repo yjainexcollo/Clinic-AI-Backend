@@ -70,7 +70,7 @@ class GenerateSoapNoteUseCase:
                 error_details.append("Vitals not stored")
             if visit.workflow_type.value == "scheduled" and has_transcript and visit.vitals:
                 error_details.append(
-                    f"Status issue: current_status='{visit.status}', expected one of ['soap_generation', 'transcription_completed', 'transcription']"
+                    f"Status issue: current_status='{visit.status}', expected one of ['soap_generation', 'transcription']"
                 )
 
             error_msg = (
