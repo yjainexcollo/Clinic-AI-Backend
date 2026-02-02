@@ -680,7 +680,7 @@ class MongoVisitRepository(VisitRepository):
             if old_status != "transcription":
                 # Status is changing, so update previous_status to the old status
                 update_fields["previous_status"] = old_status
-            
+
             await collection.update_one(
                 {"patient_id": patient_id, "visit_id": visit_id.value, "doctor_id": doctor_id},
                 {"$set": update_fields},

@@ -154,7 +154,11 @@ def ok(request: Request, data: Any = None, message: str = "Success") -> JSONResp
         data=data,
         request_id=request_id or "",
     )
-    return JSONResponse(content=response.dict(exclude_none=True), status_code=http_status.HTTP_200_OK)
+    # Use Pydantic v2 JSON-mode dump so nested datetimes etc. are JSON-serializable
+    return JSONResponse(
+        content=response.model_dump(mode="json", exclude_none=True),
+        status_code=http_status.HTTP_200_OK,
+    )
 
 
 def fail(
@@ -185,4 +189,8 @@ def fail(
         details=details,
         request_id=request_id or "",
     )
-    return JSONResponse(content=response.dict(exclude_none=True), status_code=status_code)
+    # Use Pydantic v2 JSON-mode dump so nested datetimes etc. are JSON-serializable
+    return JSONResponse(
+        content=response.model_dump(mode="json", exclude_none=True),
+        status_code=status_code,
+    )
