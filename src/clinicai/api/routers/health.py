@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..schemas.common import ApiResponse
-from ..utils.responses import ok
+from ..schemas.common import ok
 
 router = APIRouter(prefix="/health", tags=["health"])
 

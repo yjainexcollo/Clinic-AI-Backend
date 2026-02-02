@@ -13,7 +13,7 @@ from ...domain.value_objects.patient_id import PatientId
 from ...domain.value_objects.visit_id import VisitId
 from ..deps import PatientRepositoryDep, VisitRepositoryDep
 from ..schemas.common import ApiResponse, ErrorResponse
-from ..utils.responses import fail, ok
+from ..schemas.common import fail, ok
 
 router = APIRouter(prefix="/status")
 logger = logging.getLogger("clinicai")

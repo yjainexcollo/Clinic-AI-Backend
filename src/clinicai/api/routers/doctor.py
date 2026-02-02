@@ -11,7 +11,7 @@ from ..schemas.doctor_preferences import (
     PreVisitSectionConfig,
     UpsertDoctorPreferencesRequest,
 )
-from ..utils.responses import fail, ok
+from ..schemas.common import fail, ok
 
 router = APIRouter(prefix="/doctor")
 DEFAULT_GLOBAL_CATEGORIES = [

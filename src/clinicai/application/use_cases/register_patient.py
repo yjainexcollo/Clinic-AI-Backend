@@ -54,9 +54,9 @@ class RegisterPatientUseCase:
                 symptom="",
                 # Status lifecycle for scheduled visit right after registration
                 previous_status=VisitStatus.PATIENT_REGISTERED.value,
-                status=VisitStatus.INTAKE_PENDING.value,
-                next_status=VisitStatus.INTAKE_IN_PROGRESS.value,
-                recently_travelled=request.recently_travelled,  # Store travel history on visit (visit-specific)
+                status=VisitStatus.INTAKE.value,
+                next_status=VisitStatus.PRE_VISIT_SUMMARY.value,
+                recently_travelled=request.recently_travelled,
             )
             settings = get_settings()
             visit.intake_session.max_questions = settings.intake.max_questions
@@ -110,8 +110,8 @@ class RegisterPatientUseCase:
             symptom="",
             # Status lifecycle for scheduled visit right after registration
             previous_status=VisitStatus.PATIENT_REGISTERED.value,
-            status=VisitStatus.INTAKE_PENDING.value,
-            next_status=VisitStatus.INTAKE_IN_PROGRESS.value,
+            status=VisitStatus.INTAKE.value,
+            next_status=VisitStatus.PRE_VISIT_SUMMARY.value,
             recently_travelled=request.recently_travelled,
         )
         settings = get_settings()

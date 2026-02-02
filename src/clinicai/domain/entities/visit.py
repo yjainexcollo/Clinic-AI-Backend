@@ -276,43 +276,22 @@ class Visit:
         if self.is_walk_in_workflow():
             # Walk-in: registration -> vitals -> transcription -> soap -> post-visit
             mapping = {
-                # New visits for walk-in start at vials_pending with previous_status=patient_registered
-                "walk_in_patient": "vitals_pending",  # legacy data
-                "vitals_pending": "vitals_in_progress",
-                "vitals_in_progress": "vitals",
-                "vitals": "vitals_completed",
-                "vitals_completed": "transcription_pending",
-                "transcription_pending": "transcription",
-                "transcription": "transcription_processing",  # legacy alias
-                "transcription_processing": "transcription_completed",
-                "transcription_completed": "soap_pending",
-                "transcription_completed": "soap_pending",
-                "soap_pending": "soap_generation",
-                "soap_generation": "soap_completed",
-                "soap_completed": "post_visit_pending",
-                "post_visit_pending": "post_visit_summary",
-                "post_visit_summary": "post_visit_completed",
+                "walk_in_patient": "vitals",  # legacy data
+                "patient_registered": "vitals",
+                "vitals": "transcription",
+                "transcription": "soap_generation",
+                "soap_generation": "post_visit_summary",
+                "post_visit_summary": "completed",
             }
         else:
-            # Scheduled: patient_registered -> intake_pending -> intake_in_progress -> intake
-            #            -> pre-visit -> vitals -> transcription -> SOAP -> post-visit
+            # Scheduled: patient_registered -> intake -> pre-visit -> vitals -> transcription -> SOAP -> post-visit
             mapping = {
-                "patient_registered": "intake_pending",
-                "intake_pending": "intake_in_progress",
-                # While intake is ongoing, the next actionable step is to generate the pre-visit summary
-                "intake_in_progress": "pre_visit_summary_generated",
-                "intake": "pre_visit_summary_generated",  # legacy alias
-                "pre_visit_summary_generated": "vitals_pending",
-                "vitals_pending": "vitals",
-                "vitals": "vitals_completed",
-                "vitals_completed": "transcription_pending",
-                "transcription_pending": "transcription_processing",
-                "transcription": "transcription_processing",  # legacy alias
-                "transcription_processing": "transcription_completed",
-                "transcription_completed": "soap_generation",
-                "soap_generation": "prescription_analysis",
-                "prescription_analysis": "post_visit_summary",
-                "post_visit_pending": "post_visit_summary",
+                "patient_registered": "intake",
+                "intake": "pre_visit_summary",
+                "pre_visit_summary": "vitals",
+                "vitals": "transcription",
+                "transcription": "soap_generation",
+                "soap_generation": "post_visit_summary",
                 "post_visit_summary": "completed",
             }
 
@@ -330,8 +309,8 @@ class Visit:
         )
         # Intake state machine: once any answer exists, intake is in progress.
         if self.is_scheduled_workflow():
-            if self.status in ["patient_registered", "intake_pending"]:
-                self._set_status("intake_in_progress")
+            if self.status == "patient_registered":
+                self._set_status("intake")
         self.updated_at = datetime.utcnow()
 
     def set_pending_question(self, question: Optional[str]) -> None:
@@ -339,8 +318,8 @@ class Visit:
         self.intake_session.set_pending_question(question)
         # If intake already started (answers exist), keep status in progress.
         if self.is_scheduled_workflow() and self.intake_session.current_question_count > 0:
-            if self.status in ["intake_pending", "patient_registered"]:
-                self._set_status("intake_in_progress")
+            if self.status == "patient_registered":
+                self._set_status("intake")
         self.updated_at = datetime.utcnow()
 
     def reset_intake_session(self) -> None:
@@ -352,8 +331,8 @@ class Visit:
         if self.is_scheduled_workflow():
             # Reset status triple deterministically
             self.previous_status = "patient_registered"
-            self.status = "intake_pending"
-            self.next_status = "intake_in_progress"
+            self.status = "intake"
+            self.next_status = "pre_visit_summary"
         self.updated_at = datetime.utcnow()
 
     def complete_intake(self) -> None:
@@ -429,7 +408,7 @@ class Visit:
         }
         # Reflect workflow progression in status fields
         if self.is_scheduled_workflow():
-            self._set_status("pre_visit_summary_generated")
+            self._set_status("pre_visit_summary")
         self.updated_at = datetime.utcnow()
 
     def get_pre_visit_summary(self) -> Optional[Dict[str, Any]]:
@@ -469,26 +448,19 @@ class Visit:
     def can_proceed_to_transcription(self) -> bool:
         """Check if visit can proceed to transcription based on workflow type."""
         if self.is_scheduled_workflow():
-            # For scheduled: after vitals are filled (status can be pre_visit_summary_generated with vitals stored) or if already in transcription
-            # Allow pre_visit_summary_generated if vitals are stored (vitals can be filled at this stage)
-            if self.status == "pre_visit_summary_generated" and self.vitals:
+            # For scheduled: after vitals are filled (status can be pre_visit_summary with vitals stored) or if already in transcription
+            # Allow pre_visit_summary if vitals are stored (vitals can be filled at this stage)
+            if self.status == "pre_visit_summary" and self.vitals:
                 return True
             return self.status in [
                 "vitals",
-                "vitals_completed",
-                "transcription_pending",
-                "transcription_processing",
-                "transcription_completed",
-                "transcription",  # legacy alias
+                "transcription",
             ]
         elif self.is_walk_in_workflow():
             # For walk-in: after vitals are completed
             return self.status in [
-                "vitals_completed",
-                "transcription_pending",
-                "transcription_processing",
+                "vitals",
                 "transcription",
-                "transcription_completed",
             ]
         return False
 
@@ -499,17 +471,10 @@ class Visit:
             # and can also be UPDATED later even if the workflow has moved on
             # (e.g., transcription / SOAP / post-visit).
             return self.status in [
-                "pre_visit_summary_generated",
+                "pre_visit_summary",
                 "vitals",
-                "vitals_pending",
-                "vitals_completed",
-                "transcription_pending",
-                "transcription_processing",
                 "transcription",
-                "transcription_completed",
                 "soap_generation",
-                "prescription_analysis",
-                "post_visit_pending",
                 "post_visit_summary",
             ]
         elif self.is_walk_in_workflow():
@@ -517,17 +482,10 @@ class Visit:
             # throughout the workflow (transcription/SOAP/post-visit).
             return self.status in [
                 "walk_in_patient",
-                "vitals_pending",
-                "vitals_in_progress",
+                "patient_registered",
                 "vitals",
-                "vitals_completed",
-                "transcription_pending",
                 "transcription",
-                "transcription_completed",
-                "soap_pending",
                 "soap_generation",
-                "soap_completed",
-                "post_visit_pending",
                 "post_visit_summary",
             ]
         return False
@@ -536,8 +494,13 @@ class Visit:
         """Check if visit can proceed to SOAP generation."""
         if self.is_walk_in_workflow():
             return self.status in [
-                "vitals_completed",
-                "soap_pending",
+                "vitals",
+                "transcription",
+                "soap_generation",
+            ]
+        elif self.is_scheduled_workflow():
+            return self.status in [
+                "transcription",
                 "soap_generation",
             ]
         return False
@@ -546,8 +509,12 @@ class Visit:
         """Check if visit can proceed to post-visit summary."""
         if self.is_walk_in_workflow():
             return self.status in [
-                "soap_completed",
-                "post_visit_pending",
+                "soap_generation",
+                "post_visit_summary",
+            ]
+        elif self.is_scheduled_workflow():
+            return self.status in [
+                "soap_generation",
                 "post_visit_summary",
             ]
         return False
@@ -562,24 +529,21 @@ class Visit:
     def _get_scheduled_workflow_steps(self) -> List[str]:
         """Get available steps for scheduled workflow."""
         steps = []
-        if self.status in ["intake_pending", "intake_in_progress", "intake"]:
+        if self.status == "patient_registered" or self.status == "intake":
             steps.extend(["intake", "pre_visit_summary"])
-        elif self.status == "pre_visit_summary_generated":
+        elif self.status == "pre_visit_summary":
             # After pre-visit summary, vitals form comes next
             steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
         elif self.status in [
             "vitals",
-            "vitals_pending",
-            "vitals_completed",
             "transcription",
-            "transcription_completed",
         ]:
             # After pre-visit, keep vitals available for edits even if workflow advanced
             steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
         else:
             # For other statuses, include common steps
-            if self.status in ["soap_generation", "prescription_analysis"]:
-                # Keep vitals editable even during SOAP/prescription stages
+            if self.status == "soap_generation":
+                # Keep vitals editable even during SOAP stages
                 steps.extend(["vitals", "transcription", "soap_generation", "post_visit_summary"])
             elif self.status not in ["completed"]:
                 # Keep vitals editable during post-visit steps as well
@@ -593,27 +557,20 @@ class Visit:
         # Always allow revisiting vitals for walk-in visits until final completion
         if self.status in [
             "walk_in_patient",
-            "vitals_pending",
-            "vitals_in_progress",
+            "patient_registered",
             "vitals",
-            "vitals_completed",
-            "transcription_pending",
             "transcription",
-            "transcription_completed",
-            "soap_pending",
             "soap_generation",
-            "soap_completed",
-            "post_visit_pending",
             "post_visit_summary",
         ]:
             steps.append("vitals")
 
         # Forward progression: registration -> vitals -> transcription -> soap -> post-visit
-        if self.status in ["vitals_completed", "transcription_pending", "transcription"]:
+        if self.status in ["vitals", "transcription"]:
             steps.append("transcription")
-        if self.status in ["transcription_completed", "soap_pending", "soap_generation"]:
+        if self.status in ["transcription", "soap_generation"]:
             steps.append("soap_generation")
-        if self.status in ["soap_completed", "post_visit_pending", "post_visit_summary"]:
+        if self.status in ["soap_generation", "post_visit_summary"]:
             steps.append("post_visit_summary")
 
         return steps
@@ -707,7 +664,7 @@ class Visit:
 
         # Reflect workflow progression in status fields
         # (queued/pending transcription job)
-        self._set_status("transcription_pending")
+        self._set_status("transcription")
         self.updated_at = datetime.utcnow()
 
     def mark_transcription_enqueued(
@@ -734,7 +691,7 @@ class Visit:
         ts.error_message = None
 
         # Reflect workflow progression in status fields
-        self._set_status("transcription_pending")
+        self._set_status("transcription")
         self.updated_at = datetime.utcnow()
 
     def mark_transcription_enqueue_failed(self, error: str) -> None:
@@ -780,7 +737,7 @@ class Visit:
                 started_at=now,
                 enqueued_at=enqueued_at or now,  # Use provided enqueued_at or fallback to now
             )
-        self._set_status("transcription_processing")
+        self._set_status("transcription")
         self.updated_at = datetime.utcnow()
 
     def complete_transcription(self) -> None:
@@ -789,7 +746,11 @@ class Visit:
             self.transcription_session.transcription_status = "completed"
             self.transcription_session.completed_at = datetime.utcnow()
 
-        self._set_status("transcription_completed")
+        # Don't update status if already in transcription - just update next_status
+        if self.status != "transcription":
+            self._set_status("transcription")
+        else:
+            self.next_status = self._compute_next_status("transcription")
         self.updated_at = datetime.utcnow()
 
     def start_vitals(self) -> None:
@@ -798,7 +759,7 @@ class Visit:
             raise ValueError(f"Cannot start vitals. Current status: {self.status}")
 
         if self.is_walk_in_workflow():
-            self._set_status("vitals_pending")
+            self._set_status("vitals")
         else:
             # For scheduled, keep existing status but refresh next_status hint
             self.next_status = self._compute_next_status(self.status)
@@ -807,24 +768,18 @@ class Visit:
     def complete_vitals(self) -> None:
         """Complete the vitals input process."""
         if self.is_walk_in_workflow():
-            self._set_status("vitals_completed")
+            self._set_status("vitals")
         elif self.is_scheduled_workflow():
-            # For scheduled visits: once vitals are saved and the visit is still
-            # in a pre‑transcription phase, mark them as completed so the UI
-            # and downstream logic can rely on a consistent "vitals_completed"
-            # status just like the walk‑in workflow.
-            #
-            # This covers slightly out‑of‑order flows where vitals might be
-            # entered while the visit is still in "intake" (before a formal
-            # pre‑visit summary) as well as the nominal "pre_visit_summary_generated"
-            # and intermediate vitals statuses.
+            # For scheduled visits: once vitals are saved, mark them as completed
+            # This covers flows where vitals might be entered while the visit is still
+            # in "intake" (before a formal pre-visit summary) as well as the nominal
+            # "pre_visit_summary" and intermediate vitals statuses.
             if self.status in [
                 "intake",
-                "pre_visit_summary_generated",
+                "pre_visit_summary",
                 "vitals",
-                "vitals_pending",
             ]:
-                self._set_status("vitals_completed")
+                self._set_status("vitals")
             # If already in transcription or later stages, don't change status
         self.updated_at = datetime.utcnow()
 
@@ -833,19 +788,13 @@ class Visit:
         if not self.can_proceed_to_soap():
             raise ValueError(f"Cannot start SOAP generation. Current status: {self.status}")
 
-        if self.is_walk_in_workflow():
-            self._set_status("soap_pending")
-        else:
-            self._set_status("soap_generation")
+        self._set_status("soap_generation")
         self.updated_at = datetime.utcnow()
 
     def complete_soap_generation(self) -> None:
         """Complete the SOAP generation process."""
-        if self.is_walk_in_workflow():
-            self._set_status("soap_completed")
-        else:
-            # Scheduled workflow keeps soap_generation until post-visit
-            self._set_status("soap_generation")
+        # Keep soap_generation status until post-visit
+        self._set_status("soap_generation")
         self.updated_at = datetime.utcnow()
 
     def start_post_visit_summary(self) -> None:
@@ -853,18 +802,12 @@ class Visit:
         if not self.can_proceed_to_post_visit():
             raise ValueError(f"Cannot start post-visit summary. Current status: {self.status}")
 
-        if self.is_walk_in_workflow():
-            self._set_status("post_visit_pending")
-        else:
-            self._set_status("post_visit_summary")
+        self._set_status("post_visit_summary")
         self.updated_at = datetime.utcnow()
 
     def complete_post_visit_summary(self) -> None:
         """Complete the post-visit summary generation process."""
-        if self.is_walk_in_workflow():
-            self._set_status("post_visit_completed")
-        else:
-            self._set_status("completed")
+        self._set_status("completed")
         self.updated_at = datetime.utcnow()
 
     def complete_transcription_with_data(
@@ -890,7 +833,11 @@ class Visit:
         # Update status based on workflow type
         # Both workflows share the same explicit completion state; the next
         # step (SOAP generation) is reflected via ``next_status``.
-        self._set_status("transcription_completed")
+        # Don't update status if already in transcription - just update next_status
+        if self.status != "transcription":
+            self._set_status("transcription")
+        else:
+            self.next_status = self._compute_next_status("transcription")
         self.updated_at = datetime.utcnow()
 
     def fail_transcription(self, error_message: str) -> None:
@@ -914,14 +861,10 @@ class Visit:
     def store_soap_note(self, soap_data: Dict[str, Any]) -> None:
         """Store generated SOAP note."""
         # Allow storing SOAP note from various valid statuses
-        valid_statuses_for_soap = ["soap_generation", "soap_pending"]
+        valid_statuses_for_soap = ["soap_generation"]
 
-        # For walk-in workflows, also allow vitals_completed (next step after vitals)
-        if self.is_walk_in_workflow():
-            valid_statuses_for_soap.extend(["vitals_completed", "transcription_completed"])
-        # For scheduled workflows, also allow transcription and transcription_completed
-        elif self.is_scheduled_workflow():
-            valid_statuses_for_soap.extend(["transcription", "transcription_completed"])
+        # For both workflows, also allow transcription (next step after transcription)
+        valid_statuses_for_soap.append("transcription")
 
         if self.status not in valid_statuses_for_soap:
             raise ValueError(
@@ -940,10 +883,8 @@ class Visit:
         )
 
         # Update status appropriately based on workflow type
-        if self.is_walk_in_workflow():
-            self._set_status("soap_completed")
-        else:
-            self._set_status("prescription_analysis")
+        # Keep soap_generation status until post-visit
+        self._set_status("soap_generation")
         self.updated_at = datetime.utcnow()
 
     def store_vitals(self, vitals: Dict[str, Any]) -> None:
@@ -1003,11 +944,9 @@ class Visit:
         if self.workflow_type == VisitWorkflowType.WALK_IN:
             # For walk-in: can generate SOAP after transcription and vitals are completed
             return self.status in [
-                "transcription_completed",
+                "transcription",
                 "vitals",
-                "vitals_completed",
                 "soap_generation",
-                "soap_pending",
             ]
         else:
             # For scheduled: can generate SOAP if transcript exists AND vitals exist
@@ -1015,7 +954,7 @@ class Visit:
             # Status-based checks (fallback for backward compatibility):
             if self.status == "soap_generation":
                 return True
-            if self.status == "transcription_completed":
+            if self.status == "transcription":
                 return True
             # Most permissive: if transcript exists and vitals exist, allow SOAP generation
             # This handles cases where status wasn't updated correctly

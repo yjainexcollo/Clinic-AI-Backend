@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from ..deps import VisitRepositoryDep
 from ..schemas.common import ErrorResponse
-from ..utils.responses import fail, ok
+from ..schemas.common import fail, ok
 
 router = APIRouter(prefix="/workflow")
 logger = logging.getLogger("clinicai")
