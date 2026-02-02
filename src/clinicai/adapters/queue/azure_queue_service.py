@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.queue import QueueClient, QueueServiceClient
@@ -244,7 +244,9 @@ class AzureQueueService:
             )
             raise
 
-    async def dequeue_transcription_job(self, max_messages: int = 1) -> Optional[Dict[str, Any]]:
+    async def dequeue_transcription_job(
+        self, max_messages: int = 1
+    ) -> Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]:
         """
         Dequeue transcription job(s) (non-blocking).
 
@@ -307,7 +309,7 @@ class AzureQueueService:
                         # Return immediately for single-message dequeue
                         if max_messages == 1:
                             return job_dict
-                        valid_messages.push(job_dict)
+                        valid_messages.append(job_dict)
                         continue
 
                     # Log message details with insertion time if available

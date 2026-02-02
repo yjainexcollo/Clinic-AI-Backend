@@ -199,7 +199,7 @@ class HIPAAAuditMiddleware(BaseHTTPMiddleware):
                             "query_params": (dict(request.query_params) if request.query_params else {}),
                             "response_size": response.headers.get("content-length", "0"),
                             "visit_id": visit_id,
-                            "resource_creation": request.method == "POST" and request.url.path == "/patients/",
+                            "resource_creation": request.method == "POST" and request.url.path == "/patients/register",
                         },
                         request_id=request_id,
                         session_id=getattr(request.state, "session_id", None),
