@@ -764,7 +764,9 @@ class AzureSpeechTranscriptionService(TranscriptionService):
 
     async def _get_transcription_results(self, transcription_id: str) -> List[Dict[str, Any]]:
         """Retrieve transcription results."""
-        files_url = f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions/{transcription_id}/files"
+        files_url = (
+            f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions/{transcription_id}/files"
+        )
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
 
         async with aiohttp.ClientSession() as session:
