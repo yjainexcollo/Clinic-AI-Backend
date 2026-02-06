@@ -457,11 +457,12 @@ class Visit:
                 "transcription",
             ]
         elif self.is_walk_in_workflow():
-            # For walk-in: after vitals are completed
-            return self.status in [
-                "vitals",
-                "transcription",
-            ]
+            # For walk-in: after vitals are completed (must have vitals data stored)
+            # Status can be "vitals" but vitals must actually be stored before transcription
+            if self.status == "vitals":
+                return self.vitals is not None and bool(self.vitals)
+            # If already in transcription, allow it
+            return self.status == "transcription"
         return False
 
     def can_proceed_to_vitals(self) -> bool:
