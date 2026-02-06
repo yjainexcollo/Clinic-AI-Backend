@@ -81,8 +81,11 @@ class AzureSpeechAPIError(AzureSpeechTranscriptionError):
 class AzureSpeechTranscriptionService(TranscriptionService):
     """
     Azure Speech Service transcription with speaker diarization.
-    Uses batch transcription REST API for better accuracy and cost efficiency.
+    Uses batch transcription REST API v3.2 for better accuracy and cost efficiency.
     """
+
+    # Azure Speech-to-Text REST API version
+    SPEECH_STT_API_VERSION = "v3.2"
 
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -521,9 +524,9 @@ class AzureSpeechTranscriptionService(TranscriptionService):
             try:
                 timeout = aiohttp.ClientTimeout(total=60)  # 60 second timeout
                 async with aiohttp.ClientSession(timeout=timeout) as session:
-                    url = f"{self._endpoint}/speechtotext/v3.1/transcriptions"
+                    url = f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions"
                     logger.info(
-                        f"[Speech] submit transcription endpoint={url} api_version=v3.1 "
+                        f"[Speech] submit transcription endpoint={url} api_version={self.SPEECH_STT_API_VERSION} "
                         f"timeToLiveHours={properties.get('timeToLiveHours', 'N/A')}"
                     )
                     async with session.post(url, json=payload, headers=headers) as response:
@@ -615,7 +618,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
         """Poll transcription job status until completion with adaptive polling strategy."""
         from ...core.utils.timing import TimingContext
 
-        status_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        status_url = f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions/{transcription_id}"
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
         timeout_seconds = self._settings.azure_speech.batch_max_wait_time
         start_time = time.time()
@@ -761,7 +764,9 @@ class AzureSpeechTranscriptionService(TranscriptionService):
 
     async def _get_transcription_results(self, transcription_id: str) -> List[Dict[str, Any]]:
         """Retrieve transcription results."""
-        files_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}/files"
+        files_url = (
+            f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions/{transcription_id}/files"
+        )
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
 
         async with aiohttp.ClientSession() as session:
@@ -897,7 +902,7 @@ class AzureSpeechTranscriptionService(TranscriptionService):
 
     async def _delete_transcription_job(self, transcription_id: str) -> None:
         """Delete transcription job to clean up resources."""
-        delete_url = f"{self._endpoint}/speechtotext/v3.1/transcriptions/{transcription_id}"
+        delete_url = f"{self._endpoint}/speechtotext/{self.SPEECH_STT_API_VERSION}/transcriptions/{transcription_id}"
         headers = {"Ocp-Apim-Subscription-Key": self._subscription_key}
 
         async with aiohttp.ClientSession() as session:
